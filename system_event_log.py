@@ -140,6 +140,23 @@ class SystemEventLogRepository:
         )
         return int(row["total"] if row else 0)
 
+    def purge_position_snapshot_logs(self) -> int:
+        """Delete legacy high-frequency position snapshot log entries.
+
+        ``position_update`` represented a broker snapshot heartbeat rather than
+        a business event.  It is intentionally removed independently of the
+        normal retention purge so that audit, execution, and risk records stay
+        untouched.
+        """
+        row = self.storage.fetchone(
+            "SELECT COUNT(*) AS total FROM system_event_logs "
+            "WHERE event_type = 'position_update'",
+        )
+        self.storage.execute(
+            "DELETE FROM system_event_logs WHERE event_type = 'position_update'",
+        )
+        return int(row["total"] if row else 0)
+
     @staticmethod
     def _select_sql() -> str:
         return """

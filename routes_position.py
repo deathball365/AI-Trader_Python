@@ -94,18 +94,9 @@ def create_position_routes(engine_manager: TradingEngineManager) -> APIRouter:
             except Exception as exc:
                 logger.warning("结构计划保护止损确认失败: %s", exc)
 
-            # 记录日志
-            if positions:
-                system_log = trading_server.system_log
-                system_log.add_log(
-                    "position_update",
-                    {
-                        "count": len(positions),
-                        "closed": result.get("closed", 0)
-                    },
-                    symbol=symbol,
-                    message=f"更新 {len(positions)} 个持仓"
-                )
+            # 持仓快照是高频同步数据，不写入交易日志，避免每次 EA 心跳
+            # 都产生一条无业务意义的记录。持仓当前状态仍由 position_store
+            # 持久化，真实的成交、平仓、止损修改等事件继续写入审计日志。
 
             return result
 

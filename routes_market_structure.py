@@ -49,8 +49,12 @@ def create_market_structure_routes(engine_manager, account_repo, plan_defaults: 
             if str(profile.get("symbol") or "").upper() == symbol.upper() and str(profile.get("period") or "").upper() == period:
                 cfg.update({k: v for k, v in profile.items() if k in cfg})
                 zone_override = "zone_lookback_bars" in profile
+                density_override = "zone_min_consecutive_bars" in profile
                 break
+        else:
+            density_override = False
         cfg["_zone_lookback_override"] = zone_override
+        cfg["_zone_min_consecutive_override"] = density_override
         result = analyze_incremental(symbol, period, rows, cfg)
         try:
             save_checkpoint(result, user.user_id, account_id)

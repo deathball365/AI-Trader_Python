@@ -74,7 +74,7 @@
     </v-card>
     <v-card v-if="bars.length" class="chart-card mb-4"><v-card-title>K线与结构段</v-card-title><v-card-text><div ref="chartRef" class="chart" style="height:480px;width:100%"></div><div class="structure-strip-title">结构时间轴（按 K 线数量）</div><div class="structure-strip"><div v-for="(item,index) in segments" :key="`strip-${item.id}`" class="structure-strip-segment" :style="stripStyle(item,index)" :title="`${labels[item.type]||item.type} · ${item.start} → ${item.end} · 强度 ${item.strength ?? item.confidence ?? 0}%`"><span>{{ labels[item.type]||item.type }}</span></div></div><div class="legend"><span v-for="type in ['up','sideways','triangle','down','transition']" :key="type"><i :style="{background:legendColors[type]}"></i>{{ labels[type] }}</span></div></v-card-text></v-card>
     <v-row v-if="structureResult">
-      <v-col cols="12" v-if="zonePressureRows.length"><v-card class="summary pressure-card"><v-card-title>价格密集区与攻防</v-card-title><v-card-subtitle>在 K 线图上叠加支撑、阻力区域；色带越深表示访问次数和收盘聚集密度越高。分析窗口：最近 {{ zoneLookbackBars }} 根 K 线。</v-card-subtitle><v-card-text>
+      <v-col cols="12"><v-card class="summary pressure-card"><v-card-title>价格密集区与攻防</v-card-title><v-card-subtitle>在 K 线图上叠加支撑、阻力区域；色带越深表示访问次数和收盘聚集密度越高。分析窗口：最近 {{ zoneLookbackBars }} 根 K 线。</v-card-subtitle><v-card-text>
         <div class="pressure-summary">
           <div class="pressure-stat"><small>当前价格</small><strong>{{ currentMarketPrice == null ? '--' : currentMarketPrice.toFixed(2) }}</strong></div>
           <div class="pressure-stat support"><small>支撑区</small><strong>{{ pressureSummary.supportCount }} 个</strong><span v-if="pressureSummary.nearestSupport">最近 {{ pressureSummary.nearestSupport.upper.toFixed(2) }} · {{ pressureSummary.supportDistance }}</span></div>
@@ -82,8 +82,9 @@
           <div class="pressure-conclusion"><small>当前解读</small><strong>{{ pressureSummary.conclusion }}</strong></div>
         </div>
         <div ref="zoneChartRef" class="zone-chart" aria-label="价格密集区支撑阻力图"></div>
+        <v-alert v-if="!zonePressureRows.length" type="info" variant="tonal" density="compact" class="mt-3">当前分析窗口内暂无满足条件的价格密集区，保留 K 线用于观察；系统不会强行生成密集区。</v-alert>
         <div class="pressure-legend"><span><i class="legend-dot support-dot"></i>支撑</span><span><i class="legend-dot resistance-dot"></i>阻力</span><span><i class="legend-dot inside-dot"></i>当前所在区域</span><span>色带越深 = 聚集越密</span><span>加粗边框 = 最近区域</span></div>
-        <v-expansion-panels variant="accordion" class="pressure-details">
+        <v-expansion-panels v-if="zonePressureRows.length" variant="accordion" class="pressure-details">
           <v-expansion-panel><v-expansion-panel-title>查看全部区域详情（{{ zonePressureRows.length }} 个）</v-expansion-panel-title><v-expansion-panel-text><div class="zone-detail-list"><article v-for="row in zonePressureRows" :key="`detail-${row.id}`"><div class="card-head"><strong>{{ row.label }} · {{ row.lower.toFixed(2) }}–{{ row.upper.toFixed(2) }}</strong><div class="zone-status"><v-chip size="x-small" :color="row.color" variant="tonal">{{ row.status }}</v-chip><v-chip size="x-small" color="info" variant="tonal">{{ row.meta }}</v-chip></div></div><p>{{ row.reason }}</p><small v-if="row.source === 'dense'">区域版本 {{ row.zoneRevision }} · Pivot 重叠 {{ row.pivotOverlaps }} 个</small><small v-else>来源：{{ row.layers || 'Pivot 结构确认' }}</small><div v-if="row.events" class="zone-events-inline">{{ row.events }}</div></article></div></v-expansion-panel-text></v-expansion-panel>
         </v-expansion-panels>
       </v-card-text></v-card></v-col>

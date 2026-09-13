@@ -125,13 +125,45 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
         trade_config_enabled = bool(
             trade_config_repository.get_config(user.user_id).get("enabled", True)
         )
+        account_ids = [int(account.account_id) for account in accounts]
+        account_types = {
+            int(account.account_id): account.account_type for account in accounts
+        }
+        # Load all bindings in one query.  The previous implementation called
+        # list_deployments() once per account, including a per-account expiry
+        # check and per-deployment strategy lookup.
+        deployments_by_account = (
+            engine_manager.paper_trading.list_deployment_summaries_for_accounts(
+                user.user_id, account_ids, account_types,
+            )
+        )
+        market_sources_by_account = {}
+        mt5_ids = [
+            int(account.account_id) for account in accounts
+            if account.account_type == "mt5"
+        ]
+        if mt5_ids:
+            placeholders = ",".join("?" for _ in mt5_ids)
+            policy_rows = repository.storage.fetchall(
+                f"""
+                SELECT p.*
+                FROM market_data_symbol_policies p
+                WHERE p.user_id = ? AND p.account_id IN ({placeholders})
+                ORDER BY p.account_id, p.updated_at DESC
+                """,
+                (int(user.user_id), *mt5_ids),
+            )
+            for row in policy_rows:
+                account_id = int(row["account_id"])
+                # account_status() returns the newest policy for a no-symbol
+                # request.  Keep only that row per account after one batch read.
+                if account_id not in market_sources_by_account:
+                    market_sources_by_account[account_id] = (
+                        MarketDataSourcePolicy._policy_payload(row)
+                    )
         payloads = []
         for account in accounts:
-            # list_deployments also expires timed-out paper deployments before
-            # we derive the account's runtime state from them.
-            deployments = engine_manager.paper_trading.list_deployments(
-                user.user_id, account.account_id
-            )
+            deployments = deployments_by_account.get(int(account.account_id), [])
             account_payload = _account_payload(account, deployments)
             for deployment in deployments:
                 deployment["runtime_active"] = bool(
@@ -150,9 +182,14 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 **account_payload,
                 "deployments": deployments,
                 "market_source": (
-                    market_source_policy.account_status(
-                        user.user_id, account.account_id,
-                    ) if account.account_type == "mt5" else None
+                    market_sources_by_account.get(int(account.account_id), {
+                        "mode": "pending",
+                        "message": "等待 EA 上报品种后确认行情来源",
+                        "primary_account_id": 0,
+                        "conflict_symbols": [],
+                        "is_market_primary": False,
+                        "can_open_trade": True,
+                    }) if account.account_type == "mt5" else None
                 ),
             })
         # 账户页以运行中的策略为首要排序依据；无运行策略的账户放在后面。

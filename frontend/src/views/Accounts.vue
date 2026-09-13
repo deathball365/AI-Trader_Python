@@ -1235,8 +1235,19 @@ async function removeAccountDeployment(deployment) {
 
 async function refreshSelectedAccount() {
   const accountId = selectedAccount.value.account_id
-  await loadAccounts()
-  selectedAccount.value = accounts.value.find(item => item.account_id === accountId) || null
+  // Binding/解绑只改变当前账户的部署列表。避免每次操作都重新加载
+  // 全部账户、全部部署和行情状态，账户数量增加后会明显拖慢页面。
+  const data = await accountAPI.getAccountDeployments(accountId, 1, 100)
+  const deployments = data.deployments || []
+  const index = accounts.value.findIndex(item => item.account_id === accountId)
+  if (index >= 0) {
+    accounts.value[index] = {
+      ...accounts.value[index],
+      deployments,
+      active_deployment_count: deployments.filter(item => item.status === 'active').length,
+    }
+    selectedAccount.value = accounts.value[index]
+  }
 }
 
 async function openPaperRuntime(account) {

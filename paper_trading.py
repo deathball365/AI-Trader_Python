@@ -698,6 +698,63 @@ class PaperTradingService:
             deployments.append(item)
         return deployments
 
+    def list_deployment_summaries_for_accounts(
+        self, user_id: int, account_ids: List[int], account_types: Optional[Dict[int, str]] = None,
+    ) -> Dict[int, List[Dict]]:
+        """Batch-load the lightweight deployment data used by the accounts page.
+
+        The accounts list is a summary view.  It must not execute one deployment
+        query (and one expiry check) per account, nor materialize every strategy
+        object just to render a strategy name.  Full deployment details continue
+        to use :meth:`list_deployments` when a user opens an account dialog.
+        """
+        ids = [int(account_id) for account_id in account_ids]
+        result: Dict[int, List[Dict]] = {account_id: [] for account_id in ids}
+        if not ids:
+            return result
+        self._expire_deployments(user_id)
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.storage.fetchall(
+            f"""
+            SELECT d.*, s.config_json AS config_json,
+                   COALESCE(
+                     JSON_UNQUOTE(JSON_EXTRACT(s.config_json, '$.strategy_name')),
+                     d.strategy_id
+                   ) AS strategy_name,
+                   COALESCE(
+                     JSON_UNQUOTE(JSON_EXTRACT(s.config_json, '$.lifecycle_status')),
+                     'draft'
+                   ) AS configured_lifecycle_status,
+                   1 AS strategy_enabled
+            FROM strategy_deployments d
+            INNER JOIN user_strategy_configs s
+              ON s.user_id = d.user_id AND s.strategy_id = d.strategy_id
+            WHERE d.user_id = ? AND d.account_id IN ({placeholders})
+            ORDER BY d.account_id, d.created_at DESC
+            """,
+            (int(user_id), *ids),
+        )
+        for row in rows:
+            item = dict(row)
+            account_id = int(item["account_id"])
+            account_type = (account_types or {}).get(account_id, "paper")
+            configured = item.get("configured_lifecycle_status") or "draft"
+            runtime = configured
+            if item.get("status") in {"active", "paused"}:
+                if account_type == "paper":
+                    runtime = StrategyLifecycle.PAPER_TRADING
+                elif account_type in {"mt5", "ibkr"}:
+                    runtime = StrategyLifecycle.PRODUCTION
+            item["configured_lifecycle_status"] = configured
+            item["runtime_lifecycle_status"] = runtime
+            item["lifecycle_status"] = runtime
+            item["strategy_offline"] = False
+            # The summary does not need the full strategy JSON.  Removing it
+            # materially reduces response size for accounts with many bindings.
+            item.pop("config_json", None)
+            result.setdefault(account_id, []).append(item)
+        return result
+
     def _expire_deployments(self, user_id: int, account_id: Optional[int] = None) -> None:
         now = int(time.time())
         where = "user_id = ? AND status = 'active' AND scheduled_end_at IS NOT NULL AND scheduled_end_at <= ?"

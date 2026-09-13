@@ -47,7 +47,7 @@ DEFAULT_CONFIG = {
     "pressure_min_efficiency": 0.6,
     "pivot_zone_enabled": True,
     "pivot_zone_merge_atr": 0.35,
-    "pivot_zone_min_points": 4,
+    "pivot_zone_min_points": 3,
     "pivot_zone_target_count": 6,
 }
 
@@ -55,6 +55,12 @@ DEFAULT_CONFIG = {
 # keeps one stable default value, while each timeframe gets a practical
 # analysis window unless a symbol/period override is explicitly supplied.
 PERIOD_LOOKBACK_DEFAULTS = {"M1": 240, "M5": 160, "M15": 120, "H1": 80, "H4": 60}
+
+# A continuous close cluster is measured in bars of the selected timeframe.
+# Shorter periods need a little more persistence to avoid tick noise, while
+# higher periods can qualify with fewer bars because each bar represents more
+# elapsed market time.  An explicit symbol/period/setup override wins.
+PERIOD_DENSITY_DEFAULTS = {"M1": 45, "M5": 30, "M15": 20, "H1": 12, "H4": 8}
 
 
 def _number(value) -> float:
@@ -161,7 +167,7 @@ def _dense_zones(symbol: str, period: str, rows: List[Dict], atr: float, cfg: Di
                 current_run = 1
             longest_run = max(longest_run, current_run)
             previous_index = current_index
-        consecutive_threshold = max(2, int(_number(cfg.get("zone_min_consecutive_bars") or 30)))
+        consecutive_threshold = max(2, int(_number(cfg.get("_zone_min_consecutive_bars_resolved") or cfg.get("zone_min_consecutive_bars") or 30)))
         continuous = longest_run >= consecutive_threshold
         if len(members) < min_count and not continuous:
             continue
@@ -511,6 +517,11 @@ def advance(symbol: str, period: str, rows: List[Dict], config: Optional[Dict] =
     # Expose the resolved scalar in the snapshot so the UI and diagnostics
     # show the exact window used for this symbol/period.
     cfg["zone_lookback_bars"] = lookback
+    if not cfg.get("_zone_min_consecutive_override"):
+        cfg["zone_min_consecutive_bars"] = PERIOD_DENSITY_DEFAULTS.get(
+            period_key, int(cfg.get("zone_min_consecutive_bars") or 30)
+        )
+    cfg["_zone_min_consecutive_bars_resolved"] = cfg["zone_min_consecutive_bars"]
     window = closed[-lookback:]
     atr = _atr(window)
     zones = _dense_zones(symbol, period, window, atr, cfg)

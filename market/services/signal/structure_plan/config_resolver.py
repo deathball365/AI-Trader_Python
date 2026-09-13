@@ -93,6 +93,9 @@ def resolve(
             config["_zone_lookback_override"] = (
                 "zone_lookback_bars" in symbol_default or "zone_lookback_bars" in profile or "zone_lookback_bars" in setup_symbol_profile or "zone_lookback_bars" in setup_profile
             )
+            config["_zone_min_consecutive_override"] = (
+                "zone_min_consecutive_bars" in symbol_default or "zone_min_consecutive_bars" in profile or "zone_min_consecutive_bars" in setup_symbol_profile or "zone_min_consecutive_bars" in setup_profile
+            )
             if setup_type == "__builder__":
                 try:
                     rows = get_storage().fetchall(
@@ -132,6 +135,7 @@ def resolve(
                     and str(profile.get("period") or "").upper() == wanted_period):
                 merge_layer(config, profile, inherit_empty_lists=True)
                 config["_zone_lookback_override"] = "zone_lookback_bars" in profile
+                config["_zone_min_consecutive_override"] = "zone_min_consecutive_bars" in profile
                 break
         matching = [
             profile for profile in (stored.get("setup_profiles") or [])

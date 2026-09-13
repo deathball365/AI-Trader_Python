@@ -109,7 +109,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             "pressure_min_rejections": 4,
             "pressure_min_displacement_atr": 1.0,
             "pressure_min_efficiency": 0.6, "pivot_zone_merge_atr": 0.35,
-            "pivot_zone_min_points": 4, "pivot_zone_target_count": 6,
+            "pivot_zone_min_points": 3, "pivot_zone_target_count": 6,
         }
         legacy_tuples = (
             {"zone_bin_atr": 0.5, "zone_min_close_ratio": 0.20, "zone_min_visits": 3,
@@ -125,6 +125,17 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             try: return abs(float(a) - float(b)) < 1e-9
             except (TypeError, ValueError): return a == b
         if not any(all(key in decoded and same(decoded[key], value) for key, value in old.items()) for old in legacy_tuples):
+            # The previous public default used four Pivot points.  This is a
+            # deliberate global default change (not a symbol-specific tuning),
+            # so migrate that untouched value to the new minimum of three.
+            if same(decoded.get("pivot_zone_min_points"), 4):
+                updated = {**decoded, "pivot_zone_min_points": 3}
+                storage.execute(
+                    "UPDATE structure_default_configs SET config_json=?,version=version+1,updated_at=? "
+                    "WHERE user_id=0 AND status='active' AND version=?",
+                    (json.dumps(updated, ensure_ascii=False), int(time.time()), int(row.get("version") or 0)),
+                )
+                return updated
             return decoded
         updated = {**decoded, **tightened}
         storage.execute(

@@ -3175,6 +3175,25 @@ def create_market_routes(
             "message": f"已清理 {deleted} 条过期运行日志，审计日志未删除",
         }
 
+    @protected_router.post("/admin/system/logs/purge-position-snapshots")
+    async def purge_position_snapshot_logs(
+        user: AuthUser = Depends(require_admin),
+    ) -> Dict:
+        """Remove legacy high-frequency position snapshot logs only."""
+        deleted = event_logs.purge_position_snapshot_logs()
+        event_logs.add({
+            "level": "warning", "category": "audit",
+            "event_type": "system_log_purged", "event_name": "清理持仓快照日志",
+            "user_id": user.user_id, "actor_type": "user",
+            "actor_id": str(user.user_id), "status": "completed",
+            "message": f"管理员清理了 {deleted} 条历史持仓快照日志",
+            "detail": {"event_type": "position_update", "deleted": deleted},
+        })
+        return {
+            "status": "ok", "deleted": deleted,
+            "message": f"已清理 {deleted} 条历史持仓快照日志，交易审计日志未删除",
+        }
+
     # ==================== WebSocket接口 ====================
 
     # ==================== 大模型分析接口 ====================

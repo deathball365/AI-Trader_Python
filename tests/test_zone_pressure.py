@@ -18,7 +18,7 @@ class ZonePressureTests(unittest.TestCase):
         self.assertEqual(DEFAULT_CONFIG["zone_min_consecutive_bars"], 30)
         self.assertEqual(DEFAULT_CONFIG["zone_max_width_atr"], 1.2)
         self.assertEqual(DEFAULT_CONFIG["pressure_min_rejections"], 4)
-        self.assertEqual(DEFAULT_CONFIG["pivot_zone_min_points"], 4)
+        self.assertEqual(DEFAULT_CONFIG["pivot_zone_min_points"], 3)
         self.assertEqual(DEFAULT_CONFIG["pivot_zone_target_count"], 6)
 
     def test_pivot_zones_are_capped_to_strongest_recent_clusters(self):
@@ -35,6 +35,21 @@ class ZonePressureTests(unittest.TestCase):
         )
         self.assertEqual(len(result["pivot_zones"]), 3)
         self.assertEqual(result["pivot_zones"][0]["latest_index"], 9)
+
+    def test_period_defaults_use_different_continuous_density_requirements(self):
+        from market.services.zone_pressure import PERIOD_DENSITY_DEFAULTS
+
+        self.assertEqual(PERIOD_DENSITY_DEFAULTS["M1"], 45)
+        self.assertEqual(PERIOD_DENSITY_DEFAULTS["M5"], 30)
+        self.assertEqual(PERIOD_DENSITY_DEFAULTS["M15"], 20)
+        self.assertEqual(PERIOD_DENSITY_DEFAULTS["H1"], 12)
+        self.assertEqual(PERIOD_DENSITY_DEFAULTS["H4"], 8)
+
+    def test_period_density_default_is_overridable(self):
+        rows = [bar(60 * i, 100.0) for i in range(20)]
+        result = advance("X", "M15", rows, config={"zone_min_consecutive_bars": 25,
+                                                       "_zone_min_consecutive_override": True})
+        self.assertEqual(result["config"]["zone_min_consecutive_bars"], 25)
 
     def test_continuous_density_can_qualify_below_window_ratio(self):
         # 30 contiguous closes in one bucket, followed by dispersed prices;
