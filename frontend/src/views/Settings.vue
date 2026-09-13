@@ -1571,7 +1571,7 @@
         <v-card-text>
           <p class="text-body-2 mb-4">将当前公共默认参数复制为指定品种和周期的专属覆盖。复制后仍可继续单独修改，不会改变公共默认参数。</p>
           <v-select v-model="saveAsStructureProfileDraft.symbol" :items="symbols" label="品种" density="compact" variant="outlined" :disabled="structureEngineSaving" />
-          <v-select v-model="saveAsStructureProfileDraft.period" :items="['M1','M5','M15','H1','H4']" label="周期" density="compact" variant="outlined" :disabled="structureEngineSaving" />
+          <v-select v-model="saveAsStructureProfileDraft.period" :items="[{title:'所有周期',value:'*'},{title:'M1',value:'M1'},{title:'M5',value:'M5'},{title:'M15',value:'M15'},{title:'H1',value:'H1'},{title:'H4',value:'H4'}]" item-title="title" item-value="value" label="周期" density="compact" variant="outlined" :disabled="structureEngineSaving" />
           <v-alert type="info" variant="tonal" density="compact">如果该品种/周期已有配置，将用当前公共默认参数覆盖其字段；保存后自动切换到该专属配置。</v-alert>
         </v-card-text>
         <v-card-actions><v-spacer/><v-btn variant="text" @click="saveAsStructureProfileOpen=false">取消</v-btn><v-btn color="primary" :loading="structureEngineSaving" :disabled="!saveAsStructureProfileDraft.symbol" @click="saveAsStructureProfile">保存专属配置</v-btn></v-card-actions>
@@ -1584,7 +1584,7 @@
         <v-card-text>
           <p class="text-body-2 mb-4">从当前公共默认或已有专项复制参数。保存后只记录相对公共默认的显式覆盖，未修改字段继续继承公共默认。</p>
           <v-select v-model="saveAsStructureSetupDraft.symbol" :items="symbols" label="品种" density="compact" variant="outlined" :disabled="structureEngineSaving" />
-          <v-select v-model="saveAsStructureSetupDraft.period" :items="['M1','M5','M15','H1','H4']" label="周期" density="compact" variant="outlined" :disabled="structureEngineSaving" />
+          <v-select v-model="saveAsStructureSetupDraft.period" :items="[{title:'所有周期',value:'*'},{title:'M1',value:'M1'},{title:'M5',value:'M5'},{title:'M15',value:'M15'},{title:'H1',value:'H1'},{title:'H4',value:'H4'}]" item-title="title" item-value="value" label="周期" density="compact" variant="outlined" :disabled="structureEngineSaving" />
           <v-select v-model="saveAsStructureSetupDraft.setup_type" :items="structureSetupTypes" item-title="label" item-value="value" label="SETUP" density="compact" variant="outlined" :disabled="structureEngineSaving" />
         </v-card-text>
         <v-card-actions><v-spacer/><v-btn variant="text" @click="saveAsStructureSetupOpen=false">取消</v-btn><v-btn color="primary" :loading="structureEngineSaving" :disabled="!saveAsStructureSetupDraft.symbol || !saveAsStructureSetupDraft.setup_type" @click="saveAsStructureSetup">保存专项</v-btn></v-card-actions>
@@ -1634,7 +1634,7 @@ export default {
     const structureConfigScope = ref('default')
     const structureConfigScopes = computed(() => [
       { label: '公共默认配置', value: 'default' },
-      ...structureProfiles.value.map(item => ({ label: `${item.symbol} · ${item.period}`, value: `${item.symbol}::${item.period}` })),
+      ...structureProfiles.value.map(item => ({ label: item.period === '*' ? `${item.symbol} · 所有周期` : `${item.symbol} · ${item.period}`, value: `${item.symbol}::${item.period}` })),
     ])
     const structureConfigSourceLabel = computed(() => {
       if (structureConfigScope.value === 'default') return '当前显示：所有品种和周期使用的公共默认值'
@@ -1821,7 +1821,7 @@ export default {
         }))
         .filter(item => item.symbol && item.period && item.setup_type)
         .filter((item, index, all) => all.findIndex(other => other.symbol === item.symbol && other.period === item.period && other.setup_type === item.setup_type) === index)
-        .map(item => ({ label: `${item.symbol} · ${item.period} · ${setupTypeLabel(item.setup_type)} 专项`, value: `${item.symbol}::${item.period}::${item.setup_type}` }))
+          .map(item => ({ label: `${item.symbol} · ${item.period === '*' ? '所有周期' : item.period} · ${setupTypeLabel(item.setup_type)} 专项`, value: `${item.symbol}::${item.period}::${item.setup_type}` }))
     ])
     const setupProfileForScope = scope => {
       if (!scope || scope.startsWith('default::')) return null

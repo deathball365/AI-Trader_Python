@@ -35,11 +35,20 @@ def resolve(
                 "SELECT config_json FROM structure_symbol_period_configs WHERE user_id=0 AND symbol=? AND period=? AND status='active'",
                 (wanted_symbol, wanted_period),
             )
+            symbol_default_row = storage.fetchone(
+                "SELECT config_json FROM structure_symbol_period_configs WHERE user_id=0 AND symbol=? AND period='*' AND status='active'",
+                (wanted_symbol,),
+            )
             setup_row = None
+            setup_symbol_row = None
             if wanted_setup and wanted_setup != "__builder__":
                 setup_row = storage.fetchone(
                     "SELECT config_json FROM structure_setup_configs WHERE user_id=0 AND symbol=? AND period=? AND setup_type=? AND status='active'",
                     (wanted_symbol, wanted_period, wanted_setup),
+                )
+                setup_symbol_row = storage.fetchone(
+                    "SELECT config_json FROM structure_setup_configs WHERE user_id=0 AND symbol=? AND period='*' AND setup_type=? AND status='active'",
+                    (wanted_symbol, wanted_setup),
                 )
             def decode(row):
                 if not row:
@@ -51,12 +60,12 @@ def resolve(
                     except (TypeError, ValueError):
                         return {}
                 return value if isinstance(value, dict) else {}
-            if default_row or symbol_row or setup_row:
-                normalized = (decode(default_row), decode(symbol_row), decode(setup_row))
+            if default_row or symbol_default_row or symbol_row or setup_symbol_row or setup_row:
+                normalized = (decode(default_row), decode(symbol_default_row), decode(symbol_row), decode(setup_symbol_row), decode(setup_row))
         except Exception as exc:
             print(f"[StructurePlan] 规范化配置读取失败，回退旧配置: {exc}")
         if normalized is not None:
-            base, profile, setup_profile = normalized
+            base, symbol_default, profile, setup_symbol_profile, setup_profile = normalized
             allowed = set(defaults)
             setup_defaults = base.get("setup_defaults") if isinstance(base.get("setup_defaults"), dict) else {}
             list_inherit = {"allowed_setups", "allowed_directions", "blocked_hours"}
@@ -72,6 +81,9 @@ def resolve(
             merge_layer(config, base)
             if wanted_setup and wanted_setup != "__builder__":
                 merge_layer(config, setup_defaults.get(wanted_setup, {}), inherit_empty_lists=True)
+            merge_layer(config, symbol_default, inherit_empty_lists=True)
+            if wanted_setup and wanted_setup != "__builder__":
+                merge_layer(config, setup_symbol_profile, inherit_empty_lists=True)
             merge_layer(config, profile, inherit_empty_lists=True)
             merge_layer(config, setup_profile, inherit_empty_lists=True)
             # A scalar supplied by a symbol/period (or its setup) is an
@@ -79,16 +91,16 @@ def resolve(
             # the zone engine uses its hidden per-period runtime default when
             # this marker is absent.
             config["_zone_lookback_override"] = (
-                "zone_lookback_bars" in profile or "zone_lookback_bars" in setup_profile
+                "zone_lookback_bars" in symbol_default or "zone_lookback_bars" in profile or "zone_lookback_bars" in setup_symbol_profile or "zone_lookback_bars" in setup_profile
             )
             if setup_type == "__builder__":
                 try:
                     rows = get_storage().fetchall(
-                        "SELECT setup_type, config_json FROM structure_setup_configs WHERE user_id=0 AND symbol=? AND period=? AND status='active'",
+                        "SELECT setup_type, period, config_json FROM structure_setup_configs WHERE user_id=0 AND symbol=? AND period IN ('*',?) AND status='active' ORDER BY period DESC",
                         (str(symbol or '').upper(), str(period or '').upper()),
                     )
                     config["_setup_profiles"] = [
-                        {"symbol": str(symbol or '').upper(), "period": str(period or '').upper(),
+                        {"symbol": str(symbol or '').upper(), "period": str(row.get("period") or period).upper(),
                          "setup_type": str(row.get("setup_type") or "").lower(), **(
                              json.loads(row.get("config_json")) if isinstance(row.get("config_json"), str) else (row.get("config_json") or {})
                          )} for row in rows
