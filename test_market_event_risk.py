@@ -55,7 +55,7 @@ class MarketEventRiskTests(unittest.TestCase):
         self.assertEqual(event["resume_confirmation_bars"], 1)
 
     @patch("market.services.market_event_risk_service._calendar_events", return_value=[])
-    def test_market_open_pauses_pressure_reversal_but_not_pressure_breakout(self, _events):
+    def test_market_open_pauses_pressure_reversal_and_pressure_breakout(self, _events):
         event_time = int(datetime(
             2026, 9, 7, 13, 30, tzinfo=ZoneInfo("Asia/Shanghai")
         ).timestamp())
@@ -65,9 +65,11 @@ class MarketEventRiskTests(unittest.TestCase):
         )
         self.assertIsNotNone(reversal)
         self.assertEqual(reversal["id"], "shanghai_futures_afternoon_open")
-        self.assertIsNone(active_event(
+        breakout = active_event(
             self.config, "GOLD#", "M5", "pressure_zone_breakout", event_time,
-        ))
+        )
+        self.assertIsNotNone(breakout)
+        self.assertEqual(breakout["id"], "shanghai_futures_afternoon_open")
 
     @patch("market.services.market_event_risk_service._calendar_events")
     def test_nfp_is_l4_even_when_calendar_marks_medium_impact(self, events):

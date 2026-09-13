@@ -17,6 +17,7 @@ REVERSAL_SETUPS = {
     "range_lower_reversal", "range_upper_reversal", "range_false_breakout",
     "structure_location_pullback", "liquidity_sweep_reclaim",
     "choch_reversal", "structure_reversal", "pressure_reversal",
+    "pressure_zone_breakout",
 }
 
 

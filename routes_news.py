@@ -83,6 +83,7 @@ _REVERSAL_SETUP_LABELS = {
     "choch_reversal": "CHOCH 反转",
     "structure_reversal": "结构反转",
     "pressure_reversal": "密集区反转",
+    "pressure_zone_breakout": "密集区突破",
 }
 
 
