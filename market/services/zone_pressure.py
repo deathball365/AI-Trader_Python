@@ -23,8 +23,16 @@ DEFAULT_CONFIG = {
     "zone_bin_atr_min": 0.20,
     "zone_bin_atr_max": 0.80,
     "zone_target_count": 3,
-    "zone_min_close_ratio": 0.30,
-    "zone_min_visits": 6,
+    # A dense area should be uncommon, but M5 should not require nearly half
+    # of the lookback to close in one bucket.  Keep the threshold selective
+    # while allowing genuine multi-bar consolidation to surface.
+    "zone_min_close_ratio": 0.15,
+    "zone_min_visits": 4,
+    # Continuous consolidation is a stronger signal than scattered closes.
+    # It may qualify on its own with a shorter absolute run than the ratio
+    # required for a non-contiguous cluster.
+    "zone_min_consecutive_bars": 30,
+    "zone_consecutive_gap_bars": 0,
     "zone_leave_atr": 0.7,
     "zone_max_width_atr": 1.2,
     # A density bucket is a presentation detail, not the identity of a
@@ -39,7 +47,8 @@ DEFAULT_CONFIG = {
     "pressure_min_efficiency": 0.6,
     "pivot_zone_enabled": True,
     "pivot_zone_merge_atr": 0.35,
-    "pivot_zone_min_points": 2,
+    "pivot_zone_min_points": 4,
+    "pivot_zone_target_count": 6,
 }
 
 # Runtime defaults are intentionally kept in code.  The public configuration
@@ -134,23 +143,40 @@ def _dense_zones(symbol: str, period: str, rows: List[Dict], atr: float, cfg: Di
     width = _resolve_zone_width(rows, atr, cfg)
     min_count = max(int(cfg.get("zone_min_visits") or 3), math.ceil(len(rows) * max(.01, _number(cfg.get("zone_min_close_ratio")))))
     buckets: Dict[int, List[Dict]] = {}
-    for row in rows:
+    for index, row in enumerate(rows):
         close = _value(row, "close")
         if close:
-            buckets.setdefault(math.floor(close / width), []).append(row)
+            buckets.setdefault(math.floor(close / width), []).append({"row": row, "index": index})
     zones = []
     for bucket, members in buckets.items():
-        if len(members) < min_count:
+        indices = [int(item["index"]) for item in members]
+        longest_run = 0
+        current_run = 0
+        allowed_gap = max(0, int(_number(cfg.get("zone_consecutive_gap_bars") or 0)))
+        previous_index = None
+        for current_index in indices:
+            if previous_index is None or current_index - previous_index <= allowed_gap + 1:
+                current_run += 1
+            else:
+                current_run = 1
+            longest_run = max(longest_run, current_run)
+            previous_index = current_index
+        consecutive_threshold = max(2, int(_number(cfg.get("zone_min_consecutive_bars") or 30)))
+        continuous = longest_run >= consecutive_threshold
+        if len(members) < min_count and not continuous:
             continue
         lower, upper = bucket * width, (bucket + 1) * width
         if upper - lower > atr * max(.1, _number(cfg.get("zone_max_width_atr"))):
             continue
+        member_rows = [item["row"] for item in members]
         zones.append({
             "zone_id": _id(symbol.upper(), period.upper(), "density", round(lower / width)),
             "kind": "density", "lower": round(lower, 8), "upper": round(upper, 8),
             "center": round((lower + upper) / 2, 8), "atr": round(atr, 8),
-            "formed_at": _time(members[0]), "last_density_at": _time(members[-1]),
+            "formed_at": _time(member_rows[0]), "last_density_at": _time(member_rows[-1]),
             "close_count": len(members), "close_ratio": round(len(members) / len(rows), 4),
+            "aggregation_mode": "continuous" if continuous else "scattered",
+            "consecutive_count": longest_run,
             "visits": [], "current_visit": None,
         })
         zones[-1]["zone_revision"] = _id(
@@ -302,7 +328,20 @@ def _pivot_zones(symbol: str, period: str, pivot_levels: Optional[Dict], atr: fl
                 "atr": round(atr, 8), "status": "active",
             }
             result.append(zone)
-    return sorted(result, key=lambda item: (-item["point_count"], item["center"]))
+    # Pivot areas are supporting context, not an unbounded list of every
+    # historical turning point.  Keep the strongest and most recently
+    # confirmed clusters so a chart cannot be flooded by stale pivots.
+    limit = max(1, int(_number(cfg.get("pivot_zone_target_count") or 6)))
+    ranked = sorted(
+        result,
+        key=lambda item: (
+            -int(item.get("point_count") or 0),
+            -len(item.get("layers") or []),
+            -int(item.get("latest_index") or 0),
+            item["center"],
+        ),
+    )
+    return ranked[:limit]
 
 
 def _annotate_overlaps(density_zones: List[Dict], pivot_zones: List[Dict], atr: float) -> None:

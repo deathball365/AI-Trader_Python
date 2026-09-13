@@ -28,8 +28,8 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         "trend_max_event_age_bars_other", "trend_min_retest_bars",
         "trend_continuation_hold_bars",
         "pressure_plan_valid_bars", "pressure_min_event_confidence",
-        "zone_lookback_bars", "zone_min_visits", "zone_identity_max_gap_bars", "zone_target_count",
-        "pressure_min_rejections", "pivot_zone_min_points",
+        "zone_lookback_bars", "zone_min_visits", "zone_min_consecutive_bars", "zone_consecutive_gap_bars", "zone_identity_max_gap_bars", "zone_target_count",
+        "pressure_min_rejections", "pivot_zone_min_points", "pivot_zone_target_count",
         "confirmation_bars", "max_plan_lifetime_bars",
         "max_entries_per_opportunity", "cooldown_minutes",
         "event_risk_min_importance", "event_risk_calendar_before_minutes",
@@ -102,13 +102,14 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         if not row or not isinstance(decoded, dict):
             return decoded
         tightened = {
-            "zone_bin_atr": 0.35, "zone_min_close_ratio": 0.30,
-            "zone_min_visits": 6, "zone_leave_atr": 0.7,
+            "zone_bin_atr": 0.35, "zone_min_close_ratio": 0.15,
+            "zone_min_visits": 4, "zone_min_consecutive_bars": 30,
+            "zone_consecutive_gap_bars": 0, "zone_leave_atr": 0.7,
             "zone_max_width_atr": 1.2, "pressure_touch_atr": 0.3,
             "pressure_min_rejections": 4,
             "pressure_min_displacement_atr": 1.0,
             "pressure_min_efficiency": 0.6, "pivot_zone_merge_atr": 0.35,
-            "pivot_zone_min_points": 2,
+            "pivot_zone_min_points": 4, "pivot_zone_target_count": 6,
         }
         legacy_tuples = (
             {"zone_bin_atr": 0.5, "zone_min_close_ratio": 0.20, "zone_min_visits": 3,

@@ -176,15 +176,10 @@ const zonePressureRows=computed(()=>{
     const visits=Number(zone.visit_count ?? zone.close_count ?? 0)
     rows.push({id:`dense-${zone.zone_id}`,source:'dense',lower,upper,kind,label:'密集区',status:zoneStatusLabel(zone.status),color:zoneStatusColor(zone.status),visitCount:visits,densityRatio:Number(zone.close_ratio||0),meta:`${visits} 次访问 · 密度 ${Math.round((zone.close_ratio||0)*100)}%`,reason:zone.status_reason||'等待区域事件',zoneRevision:zone.zone_revision||'--',pivotOverlaps:zone.pivot_overlaps?.length||0,events:(zonePressure.value.events||[]).filter(item=>item.zone_id===zone.zone_id).slice(-2).map(item=>item.reason||item.type).join('；')})
   }
-  for(const zone of (Array.isArray(zonePressure.value.pivot_zones)?zonePressure.value.pivot_zones:[])){
-    const lower=Number(zone.lower);const upper=Number(zone.upper)
-    if(!(upper>lower&&lower>0))continue
-    const boundary=zone.boundary_type==='support'?'support':'resistance'
-    const kind=price==null?boundary:(lower<=price&&price<=upper?'inside':upper<price?'support':'resistance')
-    const pointCount=Number(zone.point_count ?? zone.pivot_overlaps?.length ?? 0)
-    const layerCount=Array.isArray(zone.layers)?zone.layers.length:0
-    rows.push({id:`pivot-${zone.zone_id}`,source:'pivot',lower,upper,kind,label:boundary==='support'?'Pivot 支撑':'Pivot 阻力',status:'已确认',color:boundary==='support'?'success':'error',visitCount:pointCount,densityRatio:Math.min(1,pointCount/3),meta:`${pointCount} 个转折点 · 覆盖 ${layerCount} 层`,reason:'三层结构确认的支撑/阻力区域',layers:zone.layers?.join(' / ')||'Pivot'})
-  }
+  // This view is specifically for price-density/pressure areas.  Pivot
+  // support and resistance remain available in the structure analysis data
+  // and are used as supporting evidence for density zones, but are not
+  // rendered as standalone "density" rows here.
   const supports=rows.filter(row=>row.kind==='support').sort((a,b)=>b.upper-a.upper)
   const resistances=rows.filter(row=>row.kind==='resistance').sort((a,b)=>a.lower-b.lower)
   if(supports[0])supports[0].nearest=true

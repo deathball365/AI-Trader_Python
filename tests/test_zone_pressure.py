@@ -13,11 +13,38 @@ def bar(t, c, h=None, l=None):
 class ZonePressureTests(unittest.TestCase):
     def test_public_defaults_require_tighter_density(self):
         self.assertEqual(DEFAULT_CONFIG["zone_bin_atr"], 0.35)
-        self.assertEqual(DEFAULT_CONFIG["zone_min_close_ratio"], 0.30)
-        self.assertEqual(DEFAULT_CONFIG["zone_min_visits"], 6)
+        self.assertEqual(DEFAULT_CONFIG["zone_min_close_ratio"], 0.15)
+        self.assertEqual(DEFAULT_CONFIG["zone_min_visits"], 4)
+        self.assertEqual(DEFAULT_CONFIG["zone_min_consecutive_bars"], 30)
         self.assertEqual(DEFAULT_CONFIG["zone_max_width_atr"], 1.2)
         self.assertEqual(DEFAULT_CONFIG["pressure_min_rejections"], 4)
-        self.assertEqual(DEFAULT_CONFIG["pivot_zone_min_points"], 2)
+        self.assertEqual(DEFAULT_CONFIG["pivot_zone_min_points"], 4)
+        self.assertEqual(DEFAULT_CONFIG["pivot_zone_target_count"], 6)
+
+    def test_pivot_zones_are_capped_to_strongest_recent_clusters(self):
+        pivots = {
+            "small": [
+                {"kind": "high", "price": 100 + i * 2, "index": i}
+                for i in range(10)
+            ]
+        }
+        result = advance(
+            "X", "M5", [bar(300 * i, 100 + (i % 4) * .1) for i in range(80)],
+            pivot_levels=pivots,
+            config={"pivot_zone_min_points": 1, "pivot_zone_target_count": 3},
+        )
+        self.assertEqual(len(result["pivot_zones"]), 3)
+        self.assertEqual(result["pivot_zones"][0]["latest_index"], 9)
+
+    def test_continuous_density_can_qualify_below_window_ratio(self):
+        # 30 contiguous closes in one bucket, followed by dispersed prices;
+        # the run qualifies even though it is below the 15% window ratio.
+        rows = [bar(60 * i, 100.0) for i in range(30)]
+        rows.extend(bar(60 * i, 110.0 + i) for i in range(30, 160))
+        result = advance("X", "M5", rows, config={"zone_min_close_ratio": 0.30})
+        dense = [z for z in result["zones"] if z.get("aggregation_mode") == "continuous"]
+        self.assertTrue(dense)
+        self.assertGreaterEqual(dense[0]["consecutive_count"], 30)
 
     def test_structure_engine_snapshot_exposes_zone_pressure(self):
         from market.services.market_structure_engine_v2 import analyze
@@ -168,9 +195,13 @@ class ZonePressureTests(unittest.TestCase):
                 "small": [
                     {"kind": "high", "price": 101.0, "index": 20},
                     {"kind": "high", "price": 101.2, "index": 25},
+                    {"kind": "high", "price": 101.1, "index": 27},
                     {"kind": "low", "price": 99.0, "index": 21},
                 ],
-                "medium": [{"kind": "high", "price": 101.1, "index": 28}],
+                "medium": [
+                    {"kind": "high", "price": 101.1, "index": 28},
+                    {"kind": "low", "price": 99.1, "index": 29},
+                ],
             },
         )
         self.assertTrue(result["pivot_zones"])
