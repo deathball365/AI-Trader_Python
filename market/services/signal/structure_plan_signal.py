@@ -1111,6 +1111,17 @@ class StructurePlanBuilder:
                 else "breakout_waiting_initial"
             )
             plan["opportunity_status_updated_at"] = int(bar_time)
+            if setup_type == "pressure_zone_breakout":
+                # A confirmed close creates a *watch*, not an immediate fill.
+                # Keep the small state machine in the durable plan payload so
+                # a process restart cannot turn the first tick near the break
+                # price into an early entry.
+                plan["breakout_seen"] = False
+                plan["retest_touched"] = False
+                plan["breakout_min_distance"] = round(
+                    atr * max(0.05, _number(self._param("retest_tolerance_atr", 0.35))), 8
+                )
+                plan["require_retest"] = bool(self._param("require_retest", True))
         return [plan] if plan else []
 
     def _location_plans(
@@ -1911,6 +1922,9 @@ class StructurePlanSignalGenerator:
         return self._cache.get(key, [])
 
     def _triggered(self, plan: Dict, price: float) -> bool:
+        setup_type = str(plan.get("setup_type") or "")
+        if setup_type == "pressure_zone_breakout":
+            return self._triggered_pressure_breakout(plan, price)
         zone = plan.get("entry_zone") or {}
         lower, upper = _number(zone.get("lower")), _number(zone.get("upper"))
         if lower <= 0 or upper <= 0 or not lower <= price <= upper:
@@ -1950,6 +1964,100 @@ class StructurePlanSignalGenerator:
         if result and str(plan.get("setup_type") or "").startswith("range_"):
             self.repository.update_payload(plan.get("plan_id"), {"boundary_state": "triggered"})
         return result
+
+    def _triggered_pressure_breakout(self, plan: Dict, price: float) -> bool:
+        """Require departure from the zone, then a real retest, before fill."""
+        evidence = plan.get("validation_evidence") or {}
+        entry = _number(plan.get("entry_price"))
+        direction = str(plan.get("direction") or "")
+        zone_lower = _number(evidence.get("zone_lower"))
+        zone_upper = _number(evidence.get("zone_upper"))
+        if entry <= 0 or direction not in {"buy", "sell"}:
+            return False
+        # New plans persist an absolute price distance.  Older plans only
+        # persisted the ATR multiple, so convert that legacy value using the
+        # ATR captured with the plan instead of treating e.g. ``0.35`` as a
+        # 0.35-dollar distance on every instrument.
+        stored_distance = _number(plan.get("breakout_min_distance"))
+        if stored_distance > 0:
+            tolerance = stored_distance
+        else:
+            config = evidence.get("config") or {}
+            tolerance_atr = _number(
+                config.get("retest_tolerance_atr"),
+            )
+            atr = _number((plan.get("structure_snapshot") or {}).get("atr"))
+            tolerance = atr * tolerance_atr if atr > 0 and tolerance_atr > 0 else 0.0
+        if tolerance <= 0:
+            tolerance = abs(zone_upper - zone_lower) * 0.1
+        state = {
+            "breakout_seen": bool(plan.get("breakout_seen")),
+            "retest_touched": bool(plan.get("retest_touched")),
+        }
+        # A historical/corrupt plan without its immutable zone boundaries is
+        # not safe to execute.  It will naturally be replaced on the next
+        # closed-bar refresh; until then it remains a non-tradable watch.
+        if zone_lower <= 0 or zone_upper <= 0 or zone_lower >= zone_upper:
+            return False
+        require_retest = bool(plan.get("require_retest", (evidence.get("config") or {}).get("require_retest", True)))
+        if direction == "buy":
+            if not state["breakout_seen"]:
+                if price >= zone_upper + tolerance:
+                    state["breakout_seen"] = True
+                    plan.update(state)
+                    self.repository.update_payload(plan.get("plan_id"), state)
+                    if not require_retest:
+                        self.repository.update_payload(plan.get("plan_id"), {**state, "retest_confirmed": False})
+                        return True
+                    # The breakout tick is evidence of departure only.  Do not
+                    # let the same tick also count as the retest/reclaim leg;
+                    # a retest must be observed on a subsequent tick.
+                    return False
+                else:
+                    return False
+            if not require_retest:
+                return bool(state["breakout_seen"])
+            # A return through the whole zone invalidates a stale breakout.
+            if not state["retest_touched"] and zone_lower > 0 and price < zone_lower:
+                self.repository.invalidate_plan(plan.get("plan_id"), "突破后重新回到密集区内部")
+                plan["status"] = "invalidated"
+                return False
+            if not state["retest_touched"] and price <= entry + tolerance:
+                state["retest_touched"] = True
+                plan.update(state)
+                self.repository.update_payload(plan.get("plan_id"), state)
+                return False
+            triggered = state["retest_touched"] and price >= entry
+        else:
+            if not state["breakout_seen"]:
+                if price <= zone_lower - tolerance:
+                    state["breakout_seen"] = True
+                    plan.update(state)
+                    self.repository.update_payload(plan.get("plan_id"), state)
+                    if not require_retest:
+                        self.repository.update_payload(plan.get("plan_id"), {**state, "retest_confirmed": False})
+                        return True
+                    # See the buy branch: breakout and retest are separate
+                    # market observations, even when the tolerance bands touch.
+                    return False
+                else:
+                    return False
+            if not require_retest:
+                return bool(state["breakout_seen"])
+            if not state["retest_touched"] and zone_upper > 0 and price > zone_upper:
+                self.repository.invalidate_plan(plan.get("plan_id"), "突破后重新回到密集区内部")
+                plan["status"] = "invalidated"
+                return False
+            if not state["retest_touched"] and price >= entry - tolerance:
+                state["retest_touched"] = True
+                plan.update(state)
+                self.repository.update_payload(plan.get("plan_id"), state)
+                return False
+            triggered = state["retest_touched"] and price <= entry
+        if triggered:
+            plan.update({**state, "retest_confirmed": True})
+            self.repository.update_payload(plan.get("plan_id"), {**state, "retest_confirmed": True})
+        return bool(triggered)
 
     @staticmethod
     def _resolve_plan_conflicts(plans: List[Dict]) -> List[Dict]:

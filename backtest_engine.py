@@ -44,6 +44,7 @@ from market.services.signal.pivot_repository import calculate_pivot_score
 from market.services.signal.structure_plan_signal import (
     STRUCTURE_PLAN_DEFAULT_CONFIG,
     StructurePlanBuilder,
+    resolve_structure_plan_config,
 )
 from market.services.market_structure_engine_v2 import analyze_incremental
 from market.services.strategy.strategy_service import StrategyService
@@ -1028,17 +1029,22 @@ class ReplaySignalEngine:
         )
         if len(rows) < 3:
             return []
+        symbol = self.strategy.get("symbol", "")
+        resolved = resolve_structure_plan_config(symbol, period, "__builder__")
+        setup_profiles = resolved.pop("_setup_profiles", []) if isinstance(resolved, dict) else []
         structure = analyze_incremental(
-            self.strategy.get("symbol", ""), period, rows,
-            dict(STRUCTURE_PLAN_DEFAULT_CONFIG),
+            symbol, period, rows,
+            resolved,
             cache_namespace=f"backtest:{self.replay_id}",
         )
         params = dict(config.get("params") or {})
-        resolved = dict(STRUCTURE_PLAN_DEFAULT_CONFIG)
+        # Replay uses the same market-layer configuration as live generation.
+        # Deployment filters remain execution concerns; only explicit replay
+        # overrides that are part of the structure builder are applied here.
         for key, value in params.items():
-            if key in resolved:
+            if key in resolved and key not in {"allowed_directions", "allowed_setups"}:
                 resolved[key] = value
-        builder = StructurePlanBuilder(resolved)
+        builder = StructurePlanBuilder(resolved, setup_profiles=setup_profiles)
         plans = builder.build(
             str(config.get("signal_source_id") or "structure-plan-replay"),
             self.strategy.get("symbol", ""), period, rows, structure,

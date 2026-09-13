@@ -44,7 +44,7 @@ class KlineStore:
         # 标记每个symbol每个周期是否已收到全量数据
         self._initialized = defaultdict(lambda: defaultdict(bool))
 
-        # 记录每个symbol的M1数据最后更新时间（本地时间）
+        # 兼容已有“上报更新时间”查询；清仓新鲜度校验不依赖此状态。
         self._m1_update_time = {}
 
         print("[KlineStore] K线存储已初始化")
@@ -263,6 +263,30 @@ class KlineStore:
                 "market_status": market_status
             }
 
+    def check_m1_exists_within(self, symbol: str, seconds: int = 180) -> Dict:
+        """按最新 M1 K 线自身时间戳检查是否有近期行情，不依赖心跳状态。"""
+        with self._lock:
+            if not self._klines[symbol]['M1']:
+                return {
+                    "has_data": False, "latest_time": None, "seconds_ago": None,
+                    "is_stale": True, "market_status": "closed",
+                }
+            latest_time = self.get_latest_kline_time(symbol, 'M1')
+            if latest_time is None:
+                return {
+                    "has_data": True, "latest_time": None, "seconds_ago": None,
+                    "is_stale": True, "market_status": "closed",
+                }
+            now = datetime.now(tz=latest_time.tzinfo) if latest_time.tzinfo else datetime.now()
+            seconds_ago = max(0, int((now - latest_time).total_seconds()))
+            return {
+                "has_data": True,
+                "latest_time": latest_time,
+                "seconds_ago": seconds_ago,
+                "is_stale": seconds_ago > seconds,
+                "market_status": "stale" if seconds_ago > seconds else "active",
+            }
+
     def get_period_interval(self, period: str) -> int:
         """获取周期时间间隔（秒）"""
         return self.PERIOD_INTERVALS.get(period.upper(), 60)
@@ -285,18 +309,29 @@ class KlineStore:
             return ts
         if isinstance(ts, (int, float)):
             try:
-                return datetime.fromtimestamp(float(ts))
+                return datetime.fromtimestamp(float(ts), tz=timezone.utc)
             except (ValueError, OSError, OverflowError):
                 return None
         ts_str = str(ts)
         try:
             if ts_str.replace('.', '', 1).isdigit():
-                return datetime.fromtimestamp(float(ts_str))
+                return datetime.fromtimestamp(float(ts_str), tz=timezone.utc)
         except (ValueError, OSError, OverflowError):
             return None
+        # Connector/EA payloads may use ISO 8601, including ``Z`` or an
+        # explicit offset.  Preserve the offset so freshness checks compare
+        # aware datetimes without relying on the host's local timezone.
+        try:
+            iso_value = ts_str[:-1] + "+00:00" if ts_str.endswith("Z") else ts_str
+            parsed = datetime.fromisoformat(iso_value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed
+        except (TypeError, ValueError):
+            pass
         for fmt in ["%Y-%m-%d %H:%M:%S", "%Y.%m.%d %H:%M", "%Y.%m.%d %H:%M:%S", "%Y-%m-%d %H:%M"]:
             try:
-                return datetime.strptime(ts_str, fmt)
+                return datetime.strptime(ts_str, fmt).replace(tzinfo=timezone.utc)
             except:
                 continue
         return None

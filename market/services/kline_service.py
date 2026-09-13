@@ -217,6 +217,10 @@ class KlineService:
         """检查M1数据更新情况"""
         return self.store.check_m1_updated_within(symbol, seconds)
 
+    def check_m1_exists_within(self, symbol: str, seconds: int = 180) -> Dict:
+        """按最新 M1 K 线时间检查近期是否有行情，不依赖心跳状态。"""
+        return self.store.check_m1_exists_within(symbol, seconds)
+
     def get_period_interval(self, period: str) -> int:
         """获取周期时间间隔"""
         return self.store.get_period_interval(period)

@@ -208,6 +208,64 @@ class ZonePressureTests(unittest.TestCase):
         self.assertTrue(plans)
         self.assertTrue(all(item.get("setup_type") == "no_trade" for item in plans))
 
+    def test_pressure_breakout_requires_departure_retest_and_reclaim(self):
+        from market.services.signal.structure_plan_signal import StructurePlanSignalGenerator
+
+        plan = {
+            "plan_id": "p1", "setup_type": "pressure_zone_breakout", "direction": "buy",
+            "entry_price": 101.0, "breakout_min_distance": 1.0,
+            "require_retest": True, "breakout_seen": False, "retest_touched": False,
+            "validation_evidence": {"zone_lower": 99.0, "zone_upper": 101.0},
+            "structure_snapshot": {"atr": 1.0},
+        }
+        gen = StructurePlanSignalGenerator.__new__(StructurePlanSignalGenerator)
+        gen.repository = type("Repo", (), {
+            "update_payload": lambda self, *_args: None,
+            "invalidate_plan": lambda self, *_args: None,
+        })()
+        self.assertFalse(gen._triggered_pressure_breakout(plan, 102.0))
+        self.assertTrue(plan["breakout_seen"])
+        self.assertFalse(gen._triggered_pressure_breakout(plan, 101.5))
+        self.assertTrue(plan["retest_touched"])
+        self.assertTrue(gen._triggered_pressure_breakout(plan, 101.1))
+
+    def test_pressure_breakout_without_retest_triggers_on_departure(self):
+        from market.services.signal.structure_plan_signal import StructurePlanSignalGenerator
+
+        plan = {
+            "plan_id": "p2", "setup_type": "pressure_zone_breakout", "direction": "sell",
+            "entry_price": 99.0, "breakout_min_distance": 1.0,
+            "require_retest": False, "breakout_seen": False, "retest_touched": False,
+            "validation_evidence": {"zone_lower": 99.0, "zone_upper": 101.0},
+            "structure_snapshot": {"atr": 1.0},
+        }
+        gen = StructurePlanSignalGenerator.__new__(StructurePlanSignalGenerator)
+        gen.repository = type("Repo", (), {
+            "update_payload": lambda self, *_args: None,
+            "invalidate_plan": lambda self, *_args: None,
+        })()
+        self.assertTrue(gen._triggered_pressure_breakout(plan, 97.9))
+
+    def test_legacy_breakout_converts_atr_tolerance(self):
+        from market.services.signal.structure_plan_signal import StructurePlanSignalGenerator
+
+        plan = {
+            "plan_id": "p3", "setup_type": "pressure_zone_breakout", "direction": "buy",
+            "entry_price": 101.0, "require_retest": True,
+            "validation_evidence": {
+                "zone_lower": 99.0, "zone_upper": 101.0,
+                "config": {"retest_tolerance_atr": 0.5},
+            },
+            "structure_snapshot": {"atr": 2.0},
+        }
+        gen = StructurePlanSignalGenerator.__new__(StructurePlanSignalGenerator)
+        gen.repository = type("Repo", (), {
+            "update_payload": lambda self, *_args: None,
+            "invalidate_plan": lambda self, *_args: None,
+        })()
+        self.assertFalse(gen._triggered_pressure_breakout(plan, 102.0))
+        self.assertTrue(plan["breakout_seen"])
+
 
 if __name__ == '__main__':
     unittest.main()

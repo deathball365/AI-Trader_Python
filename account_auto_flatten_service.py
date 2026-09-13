@@ -45,7 +45,8 @@ class AccountAutoFlattenService:
             "WHERE status = 'active' AND enabled = 1 AND auto_flatten_enabled = 1 "
             "AND auto_flatten_time IS NOT NULL AND auto_flatten_time <> ''"
         )
-        summary = {"checked": len(rows), "started": 0, "completed": 0, "failed": 0, "skipped": 0}
+        summary = {"checked": len(rows), "started": 0, "completed": 0, "failed": 0,
+                   "skipped": 0, "skipped_no_recent_kline": 0}
         for row in rows:
             window = scheduled_window(row["auto_flatten_time"], now)
             if window is None:
@@ -55,12 +56,68 @@ class AccountAutoFlattenService:
                 summary["skipped"] += 1
                 continue
             summary["started"] += 1
+            freshness = self._check_recent_kline(row)
+            if not freshness["ok"]:
+                result = {
+                    "position_count": freshness.get("position_count", 0),
+                    "closed_count": 0,
+                    "failed_count": 0,
+                    "errors": [freshness["reason"]],
+                    "asynchronous": False,
+                    "status": "skipped_no_recent_kline",
+                }
+                self._finish(run["run_id"], result)
+                summary["skipped_no_recent_kline"] += 1
+                continue
             result = self._flatten_account(row, run["run_id"])
             self._finish(run["run_id"], result)
             summary["completed" if not result["failed_count"] else "failed"] += 1
         self._fail_expired(now)
         self._record_missed_windows(now)
         return summary
+
+    def _check_recent_kline(self, row, max_age_seconds: int = 180) -> Dict:
+        """Safety gate: require a recent M1 K line for every held symbol.
+
+        This deliberately reads the latest K line already held by the engine; it does
+        not create or persist a separate account heartbeat.
+        """
+        try:
+            user_id, account_id = int(row["user_id"]), int(row["id"])
+            account_type = str(row.get("account_type") or "").lower()
+            if account_type == "paper":
+                positions = self.storage.fetchall(
+                    "SELECT position_id AS ticket, symbol FROM paper_positions "
+                    "WHERE account_id = ? AND status = 'open'",
+                    (account_id,),
+                )
+                # Paper positions are stored centrally; their market data is
+                # driven by the user's account-independent market engine.
+                kline_engine = self.engine_manager.get_market_engine(user_id)
+            else:
+                kline_engine = self.engine_manager.get_engine(user_id, account_id)
+                positions = list(kline_engine.position_service.get_positions() or [])
+            symbols = sorted({str(p.get("symbol") or "").strip() for p in positions if p.get("symbol")})
+            if not symbols:
+                return {"ok": True, "position_count": 0}
+            stale = []
+            for symbol in symbols:
+                status = kline_engine.kline_service.check_m1_exists_within(symbol, max_age_seconds)
+                if status.get("is_stale") or status.get("latest_time") is None:
+                    stale.append(symbol)
+            if stale:
+                return {
+                    "ok": False,
+                    "position_count": len(positions),
+                    "reason": f"最近3分钟无K线上报，跳过定时清仓（品种：{', '.join(stale)}）",
+                }
+            return {"ok": True, "position_count": len(positions)}
+        except Exception as exc:
+            return {
+                "ok": False,
+                "position_count": 0,
+                "reason": f"无法确认最近3分钟K线上报，跳过定时清仓：{exc}",
+            }
 
     def _claim(self, row, window):
         scheduled, window_end = window
@@ -130,10 +187,10 @@ class AccountAutoFlattenService:
         now = int(datetime.now(timezone.utc).timestamp())
         # MT5 requests are asynchronous: a queued command is not a completed
         # close.  Completion is finalized by the EA execution receipt.
-        status = "failed" if result.get("failed_count") else (
+        status = result.get("status") or ("failed" if result.get("failed_count") else (
             "waiting_execution" if result.get("asynchronous") and int(result.get("closed_count", 0))
             else "skipped_no_positions" if not int(result.get("position_count", 0)) else "completed"
-        )
+        ))
         errors = "; ".join(result.get("errors") or [])[:2000]
         self.storage.execute(
             "UPDATE account_flatten_runs SET status=?, position_count=?, closed_count=?, "
@@ -148,7 +205,7 @@ class AccountAutoFlattenService:
                 "FROM account_flatten_runs r JOIN trading_accounts a ON a.id=r.account_id "
                 "WHERE r.run_id = ?", (run_id,)
             )
-            if run and status in {"completed", "failed", "skipped_no_positions"}:
+            if run and status in {"completed", "failed", "skipped_no_positions", "skipped_no_recent_kline"}:
                 self.notifications.notify_flatten(
                     int(run["user_id"]), int(run["account_id"]),
                     str(run["account_name"] or run["account_id"]), result,

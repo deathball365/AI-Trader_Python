@@ -198,7 +198,6 @@ def _persist_historical_klines(
     )
     # 上传时顺便执行轻量清理；即使没有行情上传，下一次上传也会清理。
 
-
 def _restore_kline_memory(identity, symbol, period, kline_service) -> int:
     """Restore recent persistent bars after a backend restart."""
     if kline_service.is_initialized(symbol, period):

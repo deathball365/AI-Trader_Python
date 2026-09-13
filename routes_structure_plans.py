@@ -111,8 +111,10 @@ def create_structure_plan_routes(engine_manager, strategy_repo, structure_defaul
             engine = engine_manager.get_market_engine(user.user_id)
             rows = engine.kline_store.get_all_klines(symbol, period)
             if rows:
-                structure = analyze_incremental(symbol, period, rows[-600:], structure_defaults)
-                items = StructurePlanBuilder(resolve_structure_plan_config(symbol, period)).build(
+                resolved_config = resolve_structure_plan_config(symbol, period, "__builder__")
+                setup_profiles = resolved_config.pop("_setup_profiles", []) if isinstance(resolved_config, dict) else []
+                structure = analyze_incremental(symbol, period, rows[-600:], resolved_config)
+                items = StructurePlanBuilder(resolved_config, setup_profiles=setup_profiles).build(
                     MARKET_STRUCTURE_PLAN_SOURCE_ID, symbol, period, rows[-600:], structure,
                 )
                 bar_time = int(float(rows[-1].get("timestamp") or rows[-1].get("time") or 0))
