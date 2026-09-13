@@ -294,6 +294,7 @@ AI_SIGNAL_SOURCE_RUNTIME_CONTRACT = {
 }
 AI_SIGNAL_KLINE_MIN_COUNT = 10
 AI_SIGNAL_KLINE_MAX_COUNT = 288
+SYMBOL_KLINE_FRESHNESS_SECONDS = 24 * 60 * 60
 
 
 def collect_ai_signal_symbols(
@@ -314,7 +315,13 @@ def collect_ai_signal_symbols(
 
     def add_engine_symbols(engine) -> None:
         try:
-            symbols.update(engine.kline_service.get_symbols())
+            candidates = engine.kline_service.get_symbols()
+            symbols.update(
+                symbol for symbol in candidates
+                if engine.kline_service.is_symbol_reporting_within(
+                    symbol, SYMBOL_KLINE_FRESHNESS_SECONDS
+                )
+            )
         except Exception:
             # Configuration remains usable while an account engine is starting
             # or has been evicted after its idle timeout.
@@ -325,16 +332,30 @@ def collect_ai_signal_symbols(
     except Exception:
         pass
 
+    # 配置、策略和信号源只代表“曾经使用过”的品种，不能覆盖行情新鲜度
+    # 门槛。只有当前行情引擎确认 24 小时内收到过 K 线的品种才进入选择器。
+    durable_symbols = set()
     config = trade_config_repo.get_config(user_id)
-    symbols.update(config.get("symbol_config", {}).keys())
-    symbols.update(
+    durable_symbols.update(config.get("symbol_config", {}).keys())
+    durable_symbols.update(
         strategy.symbol for strategy in strategy_repo.get_all_strategies(user_id)
         if strategy.symbol
     )
-    symbols.update(
+    durable_symbols.update(
         source["symbol"] for source in ai_signal_source_repo.list(user_id)
         if source.get("symbol")
     )
+    if durable_symbols:
+        try:
+            market_engine = engine_manager.get_market_engine(user_id)
+            symbols.update(
+                symbol for symbol in durable_symbols
+                if market_engine.kline_service.is_symbol_reporting_within(
+                    symbol, SYMBOL_KLINE_FRESHNESS_SECONDS
+                )
+            )
+        except Exception:
+            pass
     return sorted(symbols)
 
 

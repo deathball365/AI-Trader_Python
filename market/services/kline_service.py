@@ -209,6 +209,30 @@ class KlineService:
         """获取所有品种"""
         return self.store.get_symbols()
 
+    def get_latest_symbol_kline_time(self, symbol: str) -> Optional[datetime]:
+        """返回品种最近一次收到的 K 线时间（跨周期取最新）。
+
+        品种下拉列表需要判断的是“这个品种是否仍有行情上报”，而不是
+        某一个固定周期是否刚好有新柱。因此这里跨所有已支持周期取最大
+        K 线时间；没有任何 K 线时返回 ``None``。
+        """
+        latest = None
+        for period in getattr(self.store, "PERIODS", ("M1", "M5", "M15", "H1", "H4")):
+            timestamp = self.store.get_latest_kline_time(symbol, period)
+            if timestamp is None:
+                continue
+            if latest is None or timestamp.timestamp() > latest.timestamp():
+                latest = timestamp
+        return latest
+
+    def is_symbol_reporting_within(self, symbol: str, seconds: int = 86400) -> bool:
+        """判断品种最近是否有 K 线上报。"""
+        latest = self.get_latest_symbol_kline_time(symbol)
+        if latest is None:
+            return False
+        now = datetime.now(tz=latest.tzinfo) if latest.tzinfo else datetime.now()
+        return (now - latest).total_seconds() <= max(0, int(seconds))
+
     def get_status(self) -> Dict:
         """获取状态"""
         return self.store.get_status()
