@@ -74,6 +74,13 @@ def resolve(
                 merge_layer(config, setup_defaults.get(wanted_setup, {}), inherit_empty_lists=True)
             merge_layer(config, profile, inherit_empty_lists=True)
             merge_layer(config, setup_profile, inherit_empty_lists=True)
+            # A scalar supplied by a symbol/period (or its setup) is an
+            # explicit override.  The public default remains only a fallback;
+            # the zone engine uses its hidden per-period runtime default when
+            # this marker is absent.
+            config["_zone_lookback_override"] = (
+                "zone_lookback_bars" in profile or "zone_lookback_bars" in setup_profile
+            )
             if setup_type == "__builder__":
                 try:
                     rows = get_storage().fetchall(
@@ -112,6 +119,7 @@ def resolve(
             if (str(profile.get("symbol") or "").upper() == wanted_symbol
                     and str(profile.get("period") or "").upper() == wanted_period):
                 merge_layer(config, profile, inherit_empty_lists=True)
+                config["_zone_lookback_override"] = "zone_lookback_bars" in profile
                 break
         matching = [
             profile for profile in (stored.get("setup_profiles") or [])

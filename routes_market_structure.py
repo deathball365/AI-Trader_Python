@@ -44,10 +44,13 @@ def create_market_structure_routes(engine_manager, account_repo, plan_defaults: 
         stored_items = RuntimeStateRepository(0, 0).list_entities("market_structure_config")
         stored = stored_items[-1] if stored_items else {}
         cfg.update({k: v for k, v in (stored or {}).items() if k in cfg})
+        zone_override = False
         for profile in (stored or {}).get("profiles", []) if isinstance(stored, dict) else []:
             if str(profile.get("symbol") or "").upper() == symbol.upper() and str(profile.get("period") or "").upper() == period:
                 cfg.update({k: v for k, v in profile.items() if k in cfg})
+                zone_override = "zone_lookback_bars" in profile
                 break
+        cfg["_zone_lookback_override"] = zone_override
         result = analyze_incremental(symbol, period, rows, cfg)
         try:
             save_checkpoint(result, user.user_id, account_id)

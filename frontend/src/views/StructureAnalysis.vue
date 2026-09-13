@@ -74,7 +74,7 @@
     </v-card>
     <v-card v-if="bars.length" class="chart-card mb-4"><v-card-title>K线与结构段</v-card-title><v-card-text><div ref="chartRef" class="chart" style="height:480px;width:100%"></div><div class="structure-strip-title">结构时间轴（按 K 线数量）</div><div class="structure-strip"><div v-for="(item,index) in segments" :key="`strip-${item.id}`" class="structure-strip-segment" :style="stripStyle(item,index)" :title="`${labels[item.type]||item.type} · ${item.start} → ${item.end} · 强度 ${item.strength ?? item.confidence ?? 0}%`"><span>{{ labels[item.type]||item.type }}</span></div></div><div class="legend"><span v-for="type in ['up','sideways','triangle','down','transition']" :key="type"><i :style="{background:legendColors[type]}"></i>{{ labels[type] }}</span></div></v-card-text></v-card>
     <v-row v-if="structureResult">
-      <v-col cols="12" v-if="zonePressureRows.length"><v-card class="summary pressure-card"><v-card-title>价格密集区与攻防</v-card-title><v-card-subtitle>在 K 线图上叠加支撑、阻力区域；色带越深表示访问次数和收盘聚集密度越高。</v-card-subtitle><v-card-text>
+      <v-col cols="12" v-if="zonePressureRows.length"><v-card class="summary pressure-card"><v-card-title>价格密集区与攻防</v-card-title><v-card-subtitle>在 K 线图上叠加支撑、阻力区域；色带越深表示访问次数和收盘聚集密度越高。分析窗口：最近 {{ zoneLookbackBars }} 根 K 线。</v-card-subtitle><v-card-text>
         <div class="pressure-summary">
           <div class="pressure-stat"><small>当前价格</small><strong>{{ currentMarketPrice == null ? '--' : currentMarketPrice.toFixed(2) }}</strong></div>
           <div class="pressure-stat support"><small>支撑区</small><strong>{{ pressureSummary.supportCount }} 个</strong><span v-if="pressureSummary.nearestSupport">最近 {{ pressureSummary.nearestSupport.upper.toFixed(2) }} · {{ pressureSummary.supportDistance }}</span></div>
@@ -162,6 +162,7 @@ const barStamp=index=>bars.value[index]?stamp(bars.value[index]):''
 const recentEvents=computed(()=>Array.isArray(structureResult.value?.events)?structureResult.value.events.slice(-10).reverse():[])
 const currentMarketPrice=computed(()=>{const last=bars.value.at(-1);const value=last?closeOf(last):NaN;return Number.isFinite(value)&&value>0?value:null})
 const zonePressure=computed(()=>structureResult.value?.zone_pressure||{})
+const zoneLookbackBars=computed(()=>Math.max(20,Number(zonePressure.value?.config?.zone_lookback_bars||80)))
 const zonePressureRows=computed(()=>{
   const price=currentMarketPrice.value
   const rows=[]
@@ -232,8 +233,9 @@ function renderZoneChart(){
   if(!rows.length){zoneChart.clear();return}
   const range=pressureRange.value
   const colorsByKind={support:'#30976d',resistance:'#d45b52',inside:'#d4a24c',neutral:'#4f91c4'}
-  const data=bars.value.map(x=>[Number(x.open??x.open_price??closeOf(x)),Number(x.close??x.close_price??0),Number(x.low??x.low_price??closeOf(x)),Number(x.high??x.high_price??closeOf(x))])
-  const categories=bars.value.map(stamp)
+  const zoneBars=bars.value.slice(-zoneLookbackBars.value)
+  const data=zoneBars.map(x=>[Number(x.open??x.open_price??closeOf(x)),Number(x.close??x.close_price??0),Number(x.low??x.low_price??closeOf(x)),Number(x.high??x.high_price??closeOf(x))])
+  const categories=zoneBars.map(stamp)
   const fillByKind={support:'rgba(48,151,109,',resistance:'rgba(212,91,82,',inside:'rgba(212,162,76,',neutral:'rgba(79,145,196,'}
   const areaData=rows.map(row=>{
     const opacity=Math.min(.46,Math.max(.14,.14+Number(row.densityRatio||0)*.32+Math.min(Number(row.visitCount||0),10)*.012))
@@ -252,7 +254,7 @@ function renderZoneChart(){
     legend:{top:4,type:'scroll',data:['K线']},
     xAxis:{type:'category',data:categories,axisLabel:{hideOverlap:true}},
     yAxis:{type:'value',min:range.min,max:range.max,scale:true,name:'价格',nameLocation:'middle',nameGap:42,axisLabel:{hideOverlap:true}},
-    tooltip:{trigger:'axis',axisPointer:{type:'cross'},formatter:params=>{const item=Array.isArray(params)?params.find(entry=>entry.seriesName==='K线'):params;if(!item)return '';const v=item.value||[];const index=item.dataIndex??0;const candle=bars.value[index]||{};const matched=rows.filter(row=>Number(candle.low??candle.low_price??0)<=row.upper&&Number(candle.high??candle.high_price??0)>=row.lower);const zoneText=matched.map(row=>`${row.label} ${row.lower.toFixed(2)}–${row.upper.toFixed(2)} · ${row.visitCount||0}次 · 密度${Math.round(Number(row.densityRatio||0)*100)}%`).join('<br/>');return `<strong>${categories[index]||''}</strong><br/>开 ${Number(v[0]||0).toFixed(2)} · 高 ${Number(v[3]||0).toFixed(2)}<br/>低 ${Number(v[2]||0).toFixed(2)} · 收 ${Number(v[1]||0).toFixed(2)}${zoneText?`<br/><br/>${zoneText}`:''}`}},
+    tooltip:{trigger:'axis',axisPointer:{type:'cross'},formatter:params=>{const item=Array.isArray(params)?params.find(entry=>entry.seriesName==='K线'):params;if(!item)return '';const v=item.value||[];const index=item.dataIndex??0;const candle=zoneBars[index]||{};const matched=rows.filter(row=>Number(candle.low??candle.low_price??0)<=row.upper&&Number(candle.high??candle.high_price??0)>=row.lower);const zoneText=matched.map(row=>`${row.label} ${row.lower.toFixed(2)}–${row.upper.toFixed(2)} · ${row.visitCount||0}次 · 密度${Math.round(Number(row.densityRatio||0)*100)}%`).join('<br/>');return `<strong>${categories[index]||''}</strong><br/>开 ${Number(v[0]||0).toFixed(2)} · 高 ${Number(v[3]||0).toFixed(2)}<br/>低 ${Number(v[2]||0).toFixed(2)} · 收 ${Number(v[1]||0).toFixed(2)}${zoneText?`<br/><br/>${zoneText}`:''}`}},
     series:[
       {name:'K线',type:'candlestick',data,itemStyle:{color:'#1f9d72',color0:'#d95d55',borderColor:'#1f9d72',borderColor0:'#d95d55'},markArea:{silent:true,data:areaData},markLine:{silent:true,symbol:'none',data:[...boundaryLines,...currentLine]},z:3},
     ]

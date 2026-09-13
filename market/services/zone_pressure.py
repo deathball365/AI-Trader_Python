@@ -34,6 +34,11 @@ DEFAULT_CONFIG = {
     "pivot_zone_min_points": 1,
 }
 
+# Runtime defaults are intentionally kept in code.  The public configuration
+# keeps one stable default value, while each timeframe gets a practical
+# analysis window unless a symbol/period override is explicitly supplied.
+PERIOD_LOOKBACK_DEFAULTS = {"M1": 240, "M5": 160, "M15": 120, "H1": 80, "H4": 60}
+
 
 def _number(value) -> float:
     try:
@@ -422,7 +427,19 @@ def advance(symbol: str, period: str, rows: List[Dict], config: Optional[Dict] =
         return {"enabled": bool(cfg["zone_pressure_enabled"]), "zones": [],
                 "pivot_zones": [], "events": [],
                 "last_bar_time": _time(closed[-1]) if closed else 0}
-    window = closed[-max(20, int(cfg.get("zone_lookback_bars") or 80)):]
+    period_key = str(period or "M5").upper()
+    configured_window = cfg.get("zone_lookback_bars") if cfg.get("_zone_lookback_override") else None
+    if configured_window is None:
+        configured_window = PERIOD_LOOKBACK_DEFAULTS.get(period_key, cfg.get("zone_lookback_bars") or 80)
+    try:
+        lookback = int(configured_window or cfg.get("zone_lookback_bars") or 80)
+    except (TypeError, ValueError):
+        lookback = 80
+    lookback = max(20, min(600, lookback))
+    # Expose the resolved scalar in the snapshot so the UI and diagnostics
+    # show the exact window used for this symbol/period.
+    cfg["zone_lookback_bars"] = lookback
+    window = closed[-lookback:]
     atr = _atr(window)
     zones = _dense_zones(symbol, period, window, atr, cfg)
     _inherit_zone_identity(zones, previous, atr, cfg, period, _time(closed[-1]))
