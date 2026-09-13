@@ -798,3 +798,26 @@ class StructureTradePlanRepository:
             (int(user_id), *ids),
         )
         return [dict(row) for row in rows]
+
+    def list_filled_position_ids(
+        self, user_id: int, account_id: int, order_ids: List[str],
+    ) -> List[int]:
+        """Resolve live broker positions created by the given plan orders.
+
+        ``structure_plan_executions.order_id`` stores the pending-order id and
+        the MT5 execution receipt echoes that same id.  Joining through the
+        durable receipt prevents an unrelated same-direction position from
+        satisfying a staged opportunity's initial-fill prerequisite.
+        """
+        ids = [str(item) for item in order_ids if str(item)]
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.storage.fetchall(
+            "SELECT DISTINCT mt5_position_id FROM trade_execution_reports "
+            "WHERE user_id=? AND account_id=? AND success=1 "
+            "AND mt5_position_id>0 "
+            f"AND order_id IN ({placeholders})",
+            (int(user_id), int(account_id), *ids),
+        )
+        return [int(row["mt5_position_id"]) for row in rows]

@@ -169,15 +169,21 @@ const zonePressureRows=computed(()=>{
   for(const zone of (Array.isArray(zonePressure.value.zones)?zonePressure.value.zones:[])){
     const lower=Number(zone.lower);const upper=Number(zone.upper)
     if(!(upper>lower&&lower>0))continue
-    const kind=price==null?'neutral':upper<=price?'support':lower>=price?'resistance':'inside'
-    rows.push({id:`dense-${zone.zone_id}`,source:'dense',lower,upper,kind,label:'密集区',status:zoneStatusLabel(zone.status),color:zoneStatusColor(zone.status),visitCount:Number(zone.visit_count||0),densityRatio:Number(zone.close_ratio||0),meta:`${zone.visit_count||0} 次访问 · 密度 ${Math.round((zone.close_ratio||0)*100)}%`,reason:zone.status_reason||'等待区域事件',zoneRevision:zone.zone_revision||'--',pivotOverlaps:zone.pivot_overlaps?.length||0,events:(zonePressure.value.events||[]).filter(item=>item.zone_id===zone.zone_id).slice(-2).map(item=>item.reason||item.type).join('；')})
+    // Classify the zone containing the current price first.  A price exactly
+    // on a zone boundary is still "inside/current", not support/resistance;
+    // otherwise the active area was rendered green/red instead of yellow.
+    const kind=price==null?'neutral':(lower<=price&&price<=upper?'inside':upper<price?'support':'resistance')
+    const visits=Number(zone.visit_count ?? zone.close_count ?? 0)
+    rows.push({id:`dense-${zone.zone_id}`,source:'dense',lower,upper,kind,label:'密集区',status:zoneStatusLabel(zone.status),color:zoneStatusColor(zone.status),visitCount:visits,densityRatio:Number(zone.close_ratio||0),meta:`${visits} 次访问 · 密度 ${Math.round((zone.close_ratio||0)*100)}%`,reason:zone.status_reason||'等待区域事件',zoneRevision:zone.zone_revision||'--',pivotOverlaps:zone.pivot_overlaps?.length||0,events:(zonePressure.value.events||[]).filter(item=>item.zone_id===zone.zone_id).slice(-2).map(item=>item.reason||item.type).join('；')})
   }
   for(const zone of (Array.isArray(zonePressure.value.pivot_zones)?zonePressure.value.pivot_zones:[])){
     const lower=Number(zone.lower);const upper=Number(zone.upper)
     if(!(upper>lower&&lower>0))continue
     const boundary=zone.boundary_type==='support'?'support':'resistance'
-    const kind=price==null?boundary:(upper<=price?'support':lower>=price?'resistance':'inside')
-    rows.push({id:`pivot-${zone.zone_id}`,source:'pivot',lower,upper,kind,label:boundary==='support'?'Pivot 支撑':'Pivot 阻力',status:'已确认',color:boundary==='support'?'success':'error',visitCount:zone.pivot_overlaps?.length||0,densityRatio:0.35,meta:`${zone.layers?.join('/')||'结构层'} · ${zone.pivot_overlaps?.length||0} 层`,reason:'三层结构确认的支撑/阻力区域',layers:zone.layers?.join(' / ')||'Pivot'})
+    const kind=price==null?boundary:(lower<=price&&price<=upper?'inside':upper<price?'support':'resistance')
+    const pointCount=Number(zone.point_count ?? zone.pivot_overlaps?.length ?? 0)
+    const layerCount=Array.isArray(zone.layers)?zone.layers.length:0
+    rows.push({id:`pivot-${zone.zone_id}`,source:'pivot',lower,upper,kind,label:boundary==='support'?'Pivot 支撑':'Pivot 阻力',status:'已确认',color:boundary==='support'?'success':'error',visitCount:pointCount,densityRatio:Math.min(1,pointCount/3),meta:`${pointCount} 个转折点 · 覆盖 ${layerCount} 层`,reason:'三层结构确认的支撑/阻力区域',layers:zone.layers?.join(' / ')||'Pivot'})
   }
   const supports=rows.filter(row=>row.kind==='support').sort((a,b)=>b.upper-a.upper)
   const resistances=rows.filter(row=>row.kind==='resistance').sort((a,b)=>a.lower-b.lower)

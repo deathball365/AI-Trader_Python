@@ -775,8 +775,12 @@ class TradingServer:
             # 3. 自动执行决策
             if decision.action != "none" and decision.status != "rejected":
                 current_positions = self.position_service.get_positions(decision.symbol)
+                deployment_id = live_deployments.get(str(decision.strategy_id), "")
                 stage_check = self.structure_plan_execution_coordinator.validate_stage(
-                    decision, current_positions
+                    decision, current_positions,
+                    user_id=int(self.user_id or 0),
+                    account_id=int(self.account_id or 0),
+                    deployment_id=deployment_id,
                 )
                 if stage_check.get("allowed", True):
                     spec = InstrumentSpecRepository().get(
@@ -850,7 +854,7 @@ class TradingServer:
                     }
                     plan_context = self.structure_plan_execution_coordinator.claim_for_decision(
                         int(self.user_id or 0), int(self.account_id or 0), decision,
-                        deployment_id=live_deployments.get(str(decision.strategy_id), ""),
+                        deployment_id=deployment_id,
                         execution_mode="live",
                         tick_id=str(execution_context.tick_id),
                         gate_trace=[{

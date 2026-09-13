@@ -8,35 +8,105 @@ class StructurePlanExecutionCoordinator:
         self.repository = repository
         self.execution_service = execution_service
 
-    @staticmethod
-    def validate_stage(decision, positions) -> dict:
+    def validate_stage(
+        self, decision, positions, *, user_id: int = 0, account_id: int = 0,
+        deployment_id: str = "",
+    ) -> dict:
         """Validate account-side prerequisites for a staged opportunity.
 
-        The market layer may publish a breakout-stage plan before the first
-        trial position is visible to the account.  Treat that plan as an
-        add-on candidate, never as an independent entry.  A broker position
-        with a non-zero protective stop is the portable confirmation shared by
-        Paper, MT5 and IBKR; without it the stage remains unexecutable.
+        A breakout is an add-on only when this exact structural opportunity has
+        an initial-stage plan.  Opportunities that start directly with a
+        breakout must remain independently executable.
         """
         summary = decision.signal_summary or {}
         stage = str(summary.get("selected_trade_opportunity_stage") or "")
         if stage != "breakout":
             return {"allowed": True, "stage": stage, "reason": "非突破加仓阶段"}
+        opportunity_id = str(summary.get("selected_trade_opportunity_id") or "")
+        initial_plans = []
+        if self.repository is not None and opportunity_id and user_id:
+            initial_plans = [
+                plan for plan in self.repository.list_opportunity(
+                    int(user_id), opportunity_id,
+                    symbol=str(getattr(decision, "symbol", "") or ""),
+                    period=str(summary.get("selected_signal_period") or ""),
+                )
+                if str(plan.get("opportunity_stage") or plan.get("event_stage") or "") == "initial"
+            ]
+        elif summary.get("requires_initial_fill") is True:
+            initial_plans = [{"plan_id": str(summary.get("initial_plan_id") or "")}]
+
+        if not initial_plans:
+            return {
+                "allowed": True, "stage": stage,
+                "reason": "该机会没有首仓阶段，突破作为首次入场",
+                "opportunity_id": opportunity_id,
+                "entry_role": "direct_breakout",
+            }
+
+        initial_plan_ids = {
+            str(plan.get("plan_id") or "") for plan in initial_plans
+            if str(plan.get("plan_id") or "")
+        }
+        executions = []
+        if self.repository is not None and initial_plan_ids and user_id:
+            executions = [
+                row for row in self.repository.list_executions(
+                    int(user_id), list(initial_plan_ids),
+                )
+                if int(row.get("account_id") or 0) == int(account_id or 0)
+                and str(row.get("deployment_id") or "") == str(deployment_id or "")
+                and str(row.get("plan_id") or "") in initial_plan_ids
+                and str(row.get("plan_stage") or "") == "initial"
+                and str(row.get("direction") or "").lower() == str(decision.action or "").lower()
+            ]
+        filled = [
+            row for row in executions
+            if str(row.get("status") or "").lower() in {"filled", "partially_filled"}
+        ]
+        if self.repository is not None and initial_plan_ids and not filled:
+            return {
+                "allowed": False, "stage": stage,
+                "reason": "突破阶段需要同一机会的首仓已成交",
+                "opportunity_id": opportunity_id,
+                "entry_role": "add_on",
+            }
         direction = str(decision.action or "")
+        filled_order_ids = {
+            str(row.get("order_id") or "") for row in filled
+            if str(row.get("order_id") or "")
+        }
+        filled_position_ids = set()
+        if (
+            self.repository is not None and filled_order_ids
+            and hasattr(self.repository, "list_filled_position_ids")
+        ):
+            filled_position_ids = set(self.repository.list_filled_position_ids(
+                int(user_id), int(account_id), list(filled_order_ids),
+            ))
         matching = []
         for position in positions or []:
             item = position if isinstance(position, dict) else position.to_dict()
             item_direction = str(item.get("direction") or "").lower()
             if not item_direction:
                 item_direction = "buy" if str(item.get("type") or "").upper() == "BUY" else "sell"
-            if item_direction == direction:
+            position_id = int(item.get("ticket") or item.get("position_id") or 0)
+            if (
+                item_direction == direction
+                and (not filled_position_ids or position_id in filled_position_ids)
+            ):
                 matching.append(item)
         if not matching:
-            return {"allowed": False, "stage": stage, "reason": "突破阶段需要首仓已成交"}
+            return {"allowed": False, "stage": stage, "reason": "同一机会首仓成交后尚未同步到当前持仓"}
         unprotected = [item for item in matching if float(item.get("sl") or 0) <= 0]
         if unprotected:
             return {"allowed": False, "stage": stage, "reason": "首仓保护止损尚未确认，禁止突破阶段加仓"}
-        return {"allowed": True, "stage": stage, "reason": "首仓已成交且保护止损已确认", "position_count": len(matching)}
+        return {
+            "allowed": True, "stage": stage,
+            "reason": "同一机会首仓已成交且保护止损已确认",
+            "position_count": len(matching), "opportunity_id": opportunity_id,
+            "entry_role": "add_on",
+        }
 
     def claim_for_decision(
         self, user_id: int, account_id: int, decision, *,

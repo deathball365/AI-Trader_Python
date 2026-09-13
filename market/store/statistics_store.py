@@ -153,6 +153,7 @@ class StatisticsStore:
         if self._repository:
             self._repository.migrate_scope(account_id)
             self._repository.set_scope(user_id, account_id)
+            self._restore_persisted_account_info()
             return
         self._repository = RuntimeStateRepository(user_id, account_id)
         latest = self.get_latest()
@@ -171,3 +172,19 @@ class StatisticsStore:
                 self._persisted_account_info,
                 status="active",
             )
+        else:
+            self._restore_persisted_account_info()
+
+    def _restore_persisted_account_info(self) -> None:
+        """Restore the latest durable account snapshot after assigning scope.
+
+        TradingServer constructs its stores before the authenticated account is
+        known.  A later ``set_scope`` must therefore hydrate the persisted
+        snapshot; otherwise every restart temporarily presents a zero-balance
+        account to risk management until the next EA statistics upload.
+        """
+        if self._all_data or not self._repository:
+            return
+        snapshot = self._repository.get_entity("account_snapshot", "latest")
+        if snapshot:
+            self._persisted_account_info = snapshot

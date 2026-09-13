@@ -185,6 +185,15 @@ class ZonePressureTests(unittest.TestCase):
         self.assertEqual(plans[0]["lifecycle_stage"], "confirmed")
         self.assertEqual(plans[0]["event_stage"], "breakout")
         self.assertEqual(plans[0]["structure_segment_id"], "seg-1")
+        first_opportunity = plans[0]["opportunity_id"]
+        structure["zone_pressure"]["events"][0].update({
+            "event_id": "e2", "confirmed_at": 180,
+            "opportunity_id": "unstable-event-id",
+        })
+        later = StructurePlanBuilder({"min_real_risk_reward": 1.0}).build(
+            "market-structure", "X", "M1", rows + [bar(180, 101.3)], structure,
+        )
+        self.assertEqual(first_opportunity, later[0]["opportunity_id"])
         self.assertEqual(
             invalidate_reason(plans[0], 100.0), "pressure_zone_returned_inside"
         )
