@@ -121,8 +121,18 @@
               <div><div class="text-subtitle-1 font-weight-bold">结构配置总览矩阵</div><div class="text-caption text-medium-emphasis">公共默认 → 品种/周期 → SETUP，点击查看最终生效值与来源。</div></div>
               <div class="d-flex ga-2"><v-btn size="small" variant="text" :loading="structureOverviewLoading" @click="loadStructureOverview">刷新</v-btn></div>
             </div>
+            <v-card variant="outlined" color="deep-purple" class="mb-5 structure-optimizer-card">
+              <v-card-text class="d-flex align-center justify-space-between flex-wrap ga-3">
+                <div>
+                  <div class="text-subtitle-1 font-weight-bold"><v-icon size="small" class="mr-1">mdi-chart-box-outline</v-icon>历史优化建议</div>
+                  <div class="text-caption text-medium-emphasis mt-1">独立于当前选中的公共/品种周期/SETUP 配置。系统会按最近 30 天已平仓的结构计划订单，分别分析品种、周期和 SETUP，并生成可预览的配置建议。</div>
+                  <div class="text-caption text-medium-emphasis mt-1">触发方式：管理员手动点击；保存配置、切换 SETUP 或刷新页面都不会自动触发。每个品种/周期/SETUP 至少需要 3 笔已平仓订单，之后还会进行大模型复核。</div>
+                </div>
+                <v-btn color="deep-purple" variant="flat" :loading="structureOptimizerRunning" prepend-icon="mdi-lightbulb-on-outline" @click="optimizeStructureSetups">生成历史优化建议</v-btn>
+              </v-card-text>
+            </v-card>
             <v-alert v-if="structureOverview && !structureOverview.items?.length" type="info" variant="tonal" density="compact" class="mb-3">当前还没有品种/周期专属覆盖，所有配置均继承公共默认。</v-alert>
-            <v-table v-if="structureOverview?.items?.length" density="compact" class="mb-5"><thead><tr><th>品种</th><th>周期</th><th>专属覆盖</th><th>SETUP</th><th class="text-right">操作</th></tr></thead><tbody><tr v-for="row in structureOverview.items" :key="`${row.symbol}-${row.period}`"><td><strong>{{ row.symbol }}</strong></td><td>{{ row.period }}</td><td><v-chip size="x-small" :color="row.has_profile ? 'primary' : 'grey'" variant="tonal">{{ row.has_profile ? '品种/周期' : '仅 SETUP' }}</v-chip></td><td><v-chip v-for="setup in row.setups" :key="setup.setup_type" size="x-small" class="mr-1" variant="outlined">{{ setupTypeLabel(setup.setup_type) }}</v-chip><span v-if="!row.setups?.length">--</span></td><td class="text-right"><v-btn size="small" variant="text" @click="openEffectiveConfig(row.symbol,row.period)">查看最终配置</v-btn></td></tr></tbody></v-table>
+            <v-table v-if="structureOverview?.items?.length" density="compact" class="mb-5"><thead><tr><th>品种</th><th>周期</th><th>专属覆盖</th><th>SETUP</th><th class="text-right">操作</th></tr></thead><tbody><tr v-for="row in structureOverview.items" :key="`${row.symbol}-${row.period}`"><td><strong>{{ row.symbol }}</strong></td><td>{{ row.period }}</td><td><v-chip size="x-small" :color="row.has_profile ? 'primary' : 'grey'" variant="tonal">{{ row.has_profile ? '品种/周期' : '仅 SETUP' }}</v-chip></td><td><v-chip v-for="setup in row.setups" :key="setup.setup_type" size="x-small" class="mr-1" variant="outlined">{{ setupTypeLabel(setup.setup_type) }}</v-chip><span v-if="!row.setups?.length">--</span></td><td class="text-right"><v-btn size="small" variant="text" @click="openEffectiveConfig(row.symbol,row.period)">查看最终配置</v-btn><v-btn size="small" variant="text" color="error" prepend-icon="mdi-delete-outline" :loading="structureOverviewDeleting === `${row.symbol}::${row.period}`" @click="deleteStructureOverviewRow(row)">删除专项</v-btn></td></tr></tbody></v-table>
             <div class="d-flex align-center justify-space-between mb-2"><div class="text-subtitle-2">配置变更记录</div><v-btn size="small" variant="text" :loading="structureHistoryLoading" @click="loadStructureHistory">刷新记录</v-btn></div>
             <v-table v-if="structureHistory.length" density="compact" class="mb-5"><thead><tr><th>版本</th><th>时间</th><th>范围</th><th>来源</th><th>原因</th></tr></thead><tbody><tr v-for="item in structureHistory" :key="item.id"><td>#{{ item.id }}</td><td>{{ formatTimestamp(item.created_at) }}</td><td>{{ structureSourceLabel(item.scope) }}</td><td>{{ item.source || '--' }}</td><td class="text-caption">{{ item.reason || '--' }}</td></tr></tbody></v-table>
             <div class="d-flex flex-wrap ga-2 align-center mb-3">
@@ -149,97 +159,97 @@
               <v-chip v-for="field in structureOverrideFields" :key="field" size="x-small" color="warning" class="mx-1 mt-1">{{ field }}</v-chip>
               <span v-if="!structureOverrideFields.length">暂无专属字段，当前全部继承公共默认值。</span>
             </v-alert>
-            <v-card variant="tonal" class="mb-4 mt-3"><v-card-text><div class="text-subtitle-2 mb-1">允许交易 SETUP</div><div class="text-caption text-medium-emphasis mb-2">默认全部选中。品种/周期配置可以单独调整；未保存专项覆盖时继承公共默认。</div><v-select v-model="structureEngineConfig.allowed_setups" :items="structureSetupTypes" item-title="label" item-value="value" multiple chips closable-chips label="选择允许自动生成交易计划的 SETUP" hint="这里只控制结构计划是否允许交易，不影响结构识别和第三层 SETUP 专属参数。" persistent-hint density="compact" variant="outlined" /></v-card-text></v-card>
+            <v-card variant="tonal" class="mb-4 mt-3"><v-card-text><div class="text-subtitle-2 mb-1">允许交易 SETUP</div><div class="text-caption text-medium-emphasis mb-2">默认全部选中。品种/周期配置可以单独调整；未保存专项覆盖时继承公共默认。</div><v-select :class="structureFieldClass('allowed_setups')" v-model="structureEngineConfig.allowed_setups" :items="structureSetupTypes" item-title="label" item-value="value" multiple chips closable-chips label="选择允许自动生成交易计划的 SETUP" hint="这里只控制结构计划是否允许交易，不影响结构识别和第三层 SETUP 专属参数。" persistent-hint density="compact" variant="outlined" /></v-card-text></v-card>
             <v-row class="mt-2">
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pivot_legs" type="number" min="2" max="12" label="小级别 Pivot 腿数" hint="左右各观察几根K线" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.medium_pivot_legs" type="number" min="3" max="30" label="中级别 Pivot 腿数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.large_pivot_legs" type="number" min="5" max="60" label="大级别 Pivot 腿数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.min_reversal_atr" type="number" min="0.1" max="5" step="0.1" label="最小反转幅度（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.break_buffer_atr" type="number" min="0" max="2" step="0.05" label="突破缓冲（ATR）" hint="收盘越过结构位的最小距离" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.break_confirm_bars" type="number" min="1" max="10" label="突破收盘确认根数" hint="连续收盘站上/跌破才确认" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.retest_bars" type="number" min="0" max="10" label="反转保持根数" hint="反向突破后继续保持，才切换主结构" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.displacement_atr" type="number" min="0.1" max="5" step="0.1" label="强位移阈值（ATR）" hint="达到后可跳过额外保持确认" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.range_touch_tolerance" type="number" min="0.0001" max="0.05" step="0.0001" label="箱体触碰容差" hint="比例，例如 0.003 = 0.3%" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.range_touch_atr" type="number" min="0.1" max="3" step="0.05" label="边界触碰容差（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.range_min_touches" type="number" min="1" max="10" label="箱体最少触碰次数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.range_min_inside_ratio" type="number" min="0.5" max="1" step="0.05" label="区间内部收盘比例" hint="例如 0.65 = 65%" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.range_min_bars" type="number" min="12" max="200" label="区间最少K线数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.range_max_atr" type="number" min="1" max="30" step="0.5" label="箱体最大宽度（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.min_segment_bars" type="number" min="5" max="100" label="结构段最少K线数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trendline_touch_atr" type="number" min="0.1" max="3" step="0.1" label="趋势线触碰容差（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trendline_min_touches" type="number" min="2" max="10" label="趋势线最少触碰次数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trendline_min_bars" type="number" min="10" max="200" label="趋势线最少跨度（K线）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_min_direction_ratio" type="number" min="0.5" max="0.95" step="0.01" label="趋势方向一致率" hint="正反结构中主导方向的最低比例，例如 0.62 = 62%" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_relaxed_direction_ratio" type="number" min="0.5" max="0.9" step="0.01" label="明显位移时一致率" hint="净位移达到阈值时使用的宽松比例，避免轻中度趋势被判成箱体" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_min_efficiency" type="number" min="0.1" max="1" step="0.05" label="趋势方向效率" hint="净位移/结构路径的最低比例" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_min_net_change_atr" type="number" min="0.5" max="10" step="0.5" label="趋势最小净位移（ATR）" hint="主导方向还需达到的整体位移" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_push_decay_ratio" type="number" min="0.5" max="0.95" step="0.05" label="推进衰减比例" hint="连续推进低于上一段的该比例时计为衰减，默认 0.75" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_mature_pullback_ratio" type="number" min="0.2" max="1.5" step="0.05" label="成熟阶段回撤比例" hint="回撤相对最近推进达到该比例后进入成熟阶段" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_weakening_pullback_ratio" type="number" min="0.3" max="2" step="0.05" label="衰竭阶段回撤比例" hint="回撤相对最近推进达到该比例后暂停趋势延续" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.trend_require_healthy_phase" color="primary" inset hide-details label="趋势延续要求健康阶段" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.trend_mature_retest_only" color="primary" inset hide-details label="成熟趋势仅允许回踩" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_normal_stop_atr" type="number" min="0.5" max="10" step="0.1" label="趋势正常止损上限（ATR）" hint="低于此值可直接触发，默认 2.5" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_retest_stop_atr" type="number" min="1" max="15" step="0.1" label="趋势回踩止损上限（ATR）" hint="超过正常上限后必须回踩，默认 4.0" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_max_stop_atr" type="number" min="1" max="20" step="0.1" label="趋势最大止损上限（ATR）" hint="超过后取消计划，默认 6.0" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.choch_max_stop_atr" type="number" min="0.5" max="10" step="0.1" label="CHOCH 最大止损（ATR）" hint="超过后等待新的结构回踩，默认 3.0" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pivot_legs')" v-model.number="structureEngineConfig.pivot_legs" type="number" min="2" max="12" label="小级别 Pivot 腿数" hint="左右各观察几根K线" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('medium_pivot_legs')" v-model.number="structureEngineConfig.medium_pivot_legs" type="number" min="3" max="30" label="中级别 Pivot 腿数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('large_pivot_legs')" v-model.number="structureEngineConfig.large_pivot_legs" type="number" min="5" max="60" label="大级别 Pivot 腿数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('min_reversal_atr')" v-model.number="structureEngineConfig.min_reversal_atr" type="number" min="0.1" max="5" step="0.1" label="最小反转幅度（ATR）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('break_buffer_atr')" v-model.number="structureEngineConfig.break_buffer_atr" type="number" min="0" max="2" step="0.05" label="突破缓冲（ATR）" hint="收盘越过结构位的最小距离" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('break_confirm_bars')" v-model.number="structureEngineConfig.break_confirm_bars" type="number" min="1" max="10" label="突破收盘确认根数" hint="连续收盘站上/跌破才确认" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('retest_bars')" v-model.number="structureEngineConfig.retest_bars" type="number" min="0" max="10" label="反转保持根数" hint="反向突破后继续保持，才切换主结构" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('displacement_atr')" v-model.number="structureEngineConfig.displacement_atr" type="number" min="0.1" max="5" step="0.1" label="强位移阈值（ATR）" hint="达到后可跳过额外保持确认" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('range_touch_tolerance')" v-model.number="structureEngineConfig.range_touch_tolerance" type="number" min="0.0001" max="0.05" step="0.0001" label="箱体触碰容差" hint="比例，例如 0.003 = 0.3%" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('range_touch_atr')" v-model.number="structureEngineConfig.range_touch_atr" type="number" min="0.1" max="3" step="0.05" label="边界触碰容差（ATR）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('range_min_touches')" v-model.number="structureEngineConfig.range_min_touches" type="number" min="1" max="10" label="箱体最少触碰次数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('range_min_inside_ratio')" v-model.number="structureEngineConfig.range_min_inside_ratio" type="number" min="0.5" max="1" step="0.05" label="区间内部收盘比例" hint="例如 0.65 = 65%" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('range_min_bars')" v-model.number="structureEngineConfig.range_min_bars" type="number" min="12" max="200" label="区间最少K线数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('range_max_atr')" v-model.number="structureEngineConfig.range_max_atr" type="number" min="1" max="30" step="0.5" label="箱体最大宽度（ATR）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('min_segment_bars')" v-model.number="structureEngineConfig.min_segment_bars" type="number" min="5" max="100" label="结构段最少K线数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trendline_touch_atr')" v-model.number="structureEngineConfig.trendline_touch_atr" type="number" min="0.1" max="3" step="0.1" label="趋势线触碰容差（ATR）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trendline_min_touches')" v-model.number="structureEngineConfig.trendline_min_touches" type="number" min="2" max="10" label="趋势线最少触碰次数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trendline_min_bars')" v-model.number="structureEngineConfig.trendline_min_bars" type="number" min="10" max="200" label="趋势线最少跨度（K线）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_min_direction_ratio')" v-model.number="structureEngineConfig.trend_min_direction_ratio" type="number" min="0.5" max="0.95" step="0.01" label="趋势方向一致率" hint="正反结构中主导方向的最低比例，例如 0.62 = 62%" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_relaxed_direction_ratio')" v-model.number="structureEngineConfig.trend_relaxed_direction_ratio" type="number" min="0.5" max="0.9" step="0.01" label="明显位移时一致率" hint="净位移达到阈值时使用的宽松比例，避免轻中度趋势被判成箱体" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_min_efficiency')" v-model.number="structureEngineConfig.trend_min_efficiency" type="number" min="0.1" max="1" step="0.05" label="趋势方向效率" hint="净位移/结构路径的最低比例" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_min_net_change_atr')" v-model.number="structureEngineConfig.trend_min_net_change_atr" type="number" min="0.5" max="10" step="0.5" label="趋势最小净位移（ATR）" hint="主导方向还需达到的整体位移" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_push_decay_ratio')" v-model.number="structureEngineConfig.trend_push_decay_ratio" type="number" min="0.5" max="0.95" step="0.05" label="推进衰减比例" hint="连续推进低于上一段的该比例时计为衰减，默认 0.75" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_mature_pullback_ratio')" v-model.number="structureEngineConfig.trend_mature_pullback_ratio" type="number" min="0.2" max="1.5" step="0.05" label="成熟阶段回撤比例" hint="回撤相对最近推进达到该比例后进入成熟阶段" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_weakening_pullback_ratio')" v-model.number="structureEngineConfig.trend_weakening_pullback_ratio" type="number" min="0.3" max="2" step="0.05" label="衰竭阶段回撤比例" hint="回撤相对最近推进达到该比例后暂停趋势延续" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('trend_require_healthy_phase')" v-model="structureEngineConfig.trend_require_healthy_phase" color="primary" inset hide-details label="趋势延续要求健康阶段" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('trend_mature_retest_only')" v-model="structureEngineConfig.trend_mature_retest_only" color="primary" inset hide-details label="成熟趋势仅允许回踩" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_normal_stop_atr')" v-model.number="structureEngineConfig.trend_normal_stop_atr" type="number" min="0.5" max="10" step="0.1" label="趋势正常止损上限（ATR）" hint="低于此值可直接触发，默认 2.5" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_retest_stop_atr')" v-model.number="structureEngineConfig.trend_retest_stop_atr" type="number" min="1" max="15" step="0.1" label="趋势回踩止损上限（ATR）" hint="超过正常上限后必须回踩，默认 4.0" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_max_stop_atr')" v-model.number="structureEngineConfig.trend_max_stop_atr" type="number" min="1" max="20" step="0.1" label="趋势最大止损上限（ATR）" hint="超过后取消计划，默认 6.0" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('choch_max_stop_atr')" v-model.number="structureEngineConfig.choch_max_stop_atr" type="number" min="0.5" max="10" step="0.1" label="CHOCH 最大止损（ATR）" hint="超过后等待新的结构回踩，默认 3.0" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12"><div class="structure-zone-heading mt-2"><div class="text-subtitle-2">成交密集区</div><div class="text-caption text-medium-emphasis">独立控制密集区识别、Pivot 融合，以及密集区反转/突破计划生成。未设置品种周期覆盖时继承公共默认。</div></div></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.zone_pressure_enabled" color="primary" inset hide-details label="启用成交密集区识别" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.zone_lookback_bars" type="number" min="1" label="密集区回看K线数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.zone_bin_atr" type="number" min="0" step="0.05" label="价格桶宽度（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.zone_min_close_ratio" type="number" min="0" max="1" step="0.05" label="最低收盘占比" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.zone_min_visits" type="number" min="1" label="最少访问次数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.zone_leave_atr" type="number" min="0" step="0.05" label="离开距离（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.zone_max_width_atr" type="number" min="0" step="0.1" label="最大宽度（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.zone_identity_match_atr" type="number" min="0" step="0.05" label="身份匹配距离（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.zone_identity_max_gap_bars" type="number" min="1" label="身份最大间隔K线" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pressure_touch_atr" type="number" min="0" step="0.05" label="密集区触碰容差（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pressure_min_rejections" type="number" min="1" label="最少拒绝次数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pressure_reclaim_ratio" type="number" min="0" max="1" step="0.05" label="回收确认比例" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pressure_min_displacement_atr" type="number" min="0" step="0.1" label="最小位移（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pressure_min_efficiency" type="number" min="0" max="1" step="0.05" label="最小方向效率" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.pivot_zone_enabled" color="primary" inset hide-details label="启用 Pivot 支撑阻力融合" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pivot_zone_merge_atr" type="number" min="0" step="0.05" label="Pivot 合并距离（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pivot_zone_min_points" type="number" min="1" label="Pivot 区域最少点数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.enable_zone_pressure" color="primary" inset hide-details label="生成密集区交易计划" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pressure_plan_valid_bars" type="number" min="1" label="计划有效K线数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pressure_breakout_target_multiple" type="number" min="1" step="0.1" label="突破目标倍数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pressure_min_event_confidence" type="number" min="0" max="100" label="最低事件置信度" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('zone_pressure_enabled')" v-model="structureEngineConfig.zone_pressure_enabled" color="primary" inset hide-details label="启用成交密集区识别" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_lookback_bars')" v-model.number="structureEngineConfig.zone_lookback_bars" type="number" min="1" label="密集区回看K线数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_bin_atr')" v-model.number="structureEngineConfig.zone_bin_atr" type="number" min="0" step="0.05" label="价格桶宽度（ATR）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_min_close_ratio')" v-model.number="structureEngineConfig.zone_min_close_ratio" type="number" min="0" max="1" step="0.05" label="最低收盘占比" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_min_visits')" v-model.number="structureEngineConfig.zone_min_visits" type="number" min="1" label="最少访问次数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_leave_atr')" v-model.number="structureEngineConfig.zone_leave_atr" type="number" min="0" step="0.05" label="离开距离（ATR）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_max_width_atr')" v-model.number="structureEngineConfig.zone_max_width_atr" type="number" min="0" step="0.1" label="最大宽度（ATR）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_identity_match_atr')" v-model.number="structureEngineConfig.zone_identity_match_atr" type="number" min="0" step="0.05" label="身份匹配距离（ATR）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_identity_max_gap_bars')" v-model.number="structureEngineConfig.zone_identity_max_gap_bars" type="number" min="1" label="身份最大间隔K线" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_touch_atr')" v-model.number="structureEngineConfig.pressure_touch_atr" type="number" min="0" step="0.05" label="密集区触碰容差（ATR）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_min_rejections')" v-model.number="structureEngineConfig.pressure_min_rejections" type="number" min="1" label="最少拒绝次数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_reclaim_ratio')" v-model.number="structureEngineConfig.pressure_reclaim_ratio" type="number" min="0" max="1" step="0.05" label="回收确认比例" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_min_displacement_atr')" v-model.number="structureEngineConfig.pressure_min_displacement_atr" type="number" min="0" step="0.1" label="最小位移（ATR）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_min_efficiency')" v-model.number="structureEngineConfig.pressure_min_efficiency" type="number" min="0" max="1" step="0.05" label="最小方向效率" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('pivot_zone_enabled')" v-model="structureEngineConfig.pivot_zone_enabled" color="primary" inset hide-details label="启用 Pivot 支撑阻力融合" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pivot_zone_merge_atr')" v-model.number="structureEngineConfig.pivot_zone_merge_atr" type="number" min="0" step="0.05" label="Pivot 合并距离（ATR）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pivot_zone_min_points')" v-model.number="structureEngineConfig.pivot_zone_min_points" type="number" min="1" label="Pivot 区域最少点数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('enable_zone_pressure')" v-model="structureEngineConfig.enable_zone_pressure" color="primary" inset hide-details label="生成密集区交易计划" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_plan_valid_bars')" v-model.number="structureEngineConfig.pressure_plan_valid_bars" type="number" min="1" label="计划有效K线数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_breakout_target_multiple')" v-model.number="structureEngineConfig.pressure_breakout_target_multiple" type="number" min="1" step="0.1" label="突破目标倍数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_min_event_confidence')" v-model.number="structureEngineConfig.pressure_min_event_confidence" type="number" min="0" max="100" label="最低事件置信度" density="compact" variant="outlined" /></v-col>
             </v-row>
             <div class="llm-section-head compact mt-4"><div><h3>结构交易计划参数</h3><p>行情层统一生成计划；按品种/周期专属配置覆盖默认值，策略仅负责引用和执行筛选。</p></div></div>
             <v-row class="mt-2">
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.entry_zone_atr" type="number" min="0" max="3" step="0.05" label="入场区域（ATR）" hint="计划入场价允许的接近范围" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.stop_buffer_atr" type="number" min="0" max="5" step="0.05" label="止损缓冲（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.min_real_risk_reward" type="number" min="1" max="10" step="0.1" label="最低真实盈亏比" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_min_real_risk_reward" type="number" min="0.1" max="10" step="0.1" label="趋势回踩最低盈亏比" hint="用于上涨回踩买入和下跌反弹卖出，默认 0.5" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.location_reclaim_min_body_atr" type="number" min="0.1" max="3" step="0.1" label="回撤回收最小实体（ATR）" hint="默认 0.3；过滤十字星和弱反弹/反压" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.location_reclaim_min_close_extension_atr" type="number" min="0" max="2" step="0.05" label="回撤收盘越界（ATR）" hint="默认 0.1；收盘必须明显重新站回 HL 或跌回 LH" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.location_require_swing_external_alignment" color="primary" inset hide-details label="回撤要求 Swing/External 同向" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.location_require_internal_confirmation" color="primary" inset hide-details label="回撤要求 Internal 转回主方向" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.min_breakout_displacement_atr" type="number" min="0.1" max="5" step="0.1" label="趋势突破最小位移（ATR）" hint="默认 0.6；用于 BOS 趋势延续确认" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_max_event_age_bars_m1" type="number" min="1" max="30" label="M1 趋势事件窗口" hint="默认 5 根K线，超出后不再追踪该 BOS" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_max_event_age_bars_other" type="number" min="1" max="30" label="其他周期趋势事件窗口" hint="M5及以上默认 3 根K线" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_continuation_hold_bars" type="number" min="2" max="10" label="突破后连续站稳根数" hint="默认 2 根；无回踩时连续收盘在突破位外也可确认" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.max_plan_lifetime_bars" type="number" min="10" max="1000" label="计划安全兜底（K线）" hint="结构事件未发生时的最长保留上限，默认 100 根" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.breakout_target_atr" type="number" min="1" max="10" step="0.5" label="突破目标（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.breakout_retest_valid_bars" type="number" min="1" max="50" label="突破回踩有效K线数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.triangle_breakout_min_body_atr" type="number" min="0.1" max="5" step="0.1" label="三角形突破最小实体（ATR）" hint="默认 0.5；实体过小视为无效突破" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.triangle_breakout_min_close_extension_atr" type="number" min="0" max="2" step="0.05" label="三角形收盘越界（ATR）" hint="默认 0.1；收盘需明确位于边界外" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.triangle_breakout_require_swing_external_alignment" color="primary" inset hide-details label="三角形突破要求 Swing/External 同向" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.enable_triangle_prebreakout" color="primary" inset hide-details label="启用三角形提前入场" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.require_location_reclaim" color="primary" inset hide-details label="结构位置要求回收确认" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.event_risk_enabled" color="primary" inset hide-details label="重大事件风险保护" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.event_risk_min_importance" type="number" min="1" max="3" label="日历最低影响级别" hint="3=高影响；非农和FOMC始终按最高级别处理" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.event_risk_calendar_before_minutes" type="number" min="0" max="240" label="普通事件前暂停（分钟）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.event_risk_calendar_after_minutes" type="number" min="0" max="360" label="普通事件后暂停（分钟）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.event_risk_major_before_minutes" type="number" min="0" max="240" label="非农/FOMC 前暂停（分钟）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.event_risk_major_after_minutes" type="number" min="0" max="480" label="非农/FOMC 后暂停（分钟）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.event_risk_resume_confirmation_bars" type="number" min="0" max="10" label="事件后确认K线数" hint="风险窗口结束后，等待对应周期收盘再重新评估" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('entry_zone_atr')" v-model.number="structureEngineConfig.entry_zone_atr" type="number" min="0" max="3" step="0.05" label="入场区域（ATR）" hint="计划入场价允许的接近范围" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('stop_buffer_atr')" v-model.number="structureEngineConfig.stop_buffer_atr" type="number" min="0" max="5" step="0.05" label="止损缓冲（ATR）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('min_real_risk_reward')" v-model.number="structureEngineConfig.min_real_risk_reward" type="number" min="1" max="10" step="0.1" label="最低真实盈亏比" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_min_real_risk_reward')" v-model.number="structureEngineConfig.trend_min_real_risk_reward" type="number" min="0.1" max="10" step="0.1" label="趋势回踩最低盈亏比" hint="用于上涨回踩买入和下跌反弹卖出，默认 0.5" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('location_reclaim_min_body_atr')" v-model.number="structureEngineConfig.location_reclaim_min_body_atr" type="number" min="0.1" max="3" step="0.1" label="回撤回收最小实体（ATR）" hint="默认 0.3；过滤十字星和弱反弹/反压" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('location_reclaim_min_close_extension_atr')" v-model.number="structureEngineConfig.location_reclaim_min_close_extension_atr" type="number" min="0" max="2" step="0.05" label="回撤收盘越界（ATR）" hint="默认 0.1；收盘必须明显重新站回 HL 或跌回 LH" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('location_require_swing_external_alignment')" v-model="structureEngineConfig.location_require_swing_external_alignment" color="primary" inset hide-details label="回撤要求 Swing/External 同向" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('location_require_internal_confirmation')" v-model="structureEngineConfig.location_require_internal_confirmation" color="primary" inset hide-details label="回撤要求 Internal 转回主方向" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('min_breakout_displacement_atr')" v-model.number="structureEngineConfig.min_breakout_displacement_atr" type="number" min="0.1" max="5" step="0.1" label="趋势突破最小位移（ATR）" hint="默认 0.6；用于 BOS 趋势延续确认" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_max_event_age_bars_m1')" v-model.number="structureEngineConfig.trend_max_event_age_bars_m1" type="number" min="1" max="30" label="M1 趋势事件窗口" hint="默认 5 根K线，超出后不再追踪该 BOS" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_max_event_age_bars_other')" v-model.number="structureEngineConfig.trend_max_event_age_bars_other" type="number" min="1" max="30" label="其他周期趋势事件窗口" hint="M5及以上默认 3 根K线" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_continuation_hold_bars')" v-model.number="structureEngineConfig.trend_continuation_hold_bars" type="number" min="2" max="10" label="突破后连续站稳根数" hint="默认 2 根；无回踩时连续收盘在突破位外也可确认" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('max_plan_lifetime_bars')" v-model.number="structureEngineConfig.max_plan_lifetime_bars" type="number" min="10" max="1000" label="计划安全兜底（K线）" hint="结构事件未发生时的最长保留上限，默认 100 根" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('breakout_target_atr')" v-model.number="structureEngineConfig.breakout_target_atr" type="number" min="1" max="10" step="0.5" label="突破目标（ATR）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('breakout_retest_valid_bars')" v-model.number="structureEngineConfig.breakout_retest_valid_bars" type="number" min="1" max="50" label="突破回踩有效K线数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('triangle_breakout_min_body_atr')" v-model.number="structureEngineConfig.triangle_breakout_min_body_atr" type="number" min="0.1" max="5" step="0.1" label="三角形突破最小实体（ATR）" hint="默认 0.5；实体过小视为无效突破" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('triangle_breakout_min_close_extension_atr')" v-model.number="structureEngineConfig.triangle_breakout_min_close_extension_atr" type="number" min="0" max="2" step="0.05" label="三角形收盘越界（ATR）" hint="默认 0.1；收盘需明确位于边界外" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('triangle_breakout_require_swing_external_alignment')" v-model="structureEngineConfig.triangle_breakout_require_swing_external_alignment" color="primary" inset hide-details label="三角形突破要求 Swing/External 同向" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('enable_triangle_prebreakout')" v-model="structureEngineConfig.enable_triangle_prebreakout" color="primary" inset hide-details label="启用三角形提前入场" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('require_location_reclaim')" v-model="structureEngineConfig.require_location_reclaim" color="primary" inset hide-details label="结构位置要求回收确认" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('event_risk_enabled')" v-model="structureEngineConfig.event_risk_enabled" color="primary" inset hide-details label="重大事件风险保护" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('event_risk_min_importance')" v-model.number="structureEngineConfig.event_risk_min_importance" type="number" min="1" max="3" label="日历最低影响级别" hint="3=高影响；非农和FOMC始终按最高级别处理" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('event_risk_calendar_before_minutes')" v-model.number="structureEngineConfig.event_risk_calendar_before_minutes" type="number" min="0" max="240" label="普通事件前暂停（分钟）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('event_risk_calendar_after_minutes')" v-model.number="structureEngineConfig.event_risk_calendar_after_minutes" type="number" min="0" max="360" label="普通事件后暂停（分钟）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('event_risk_major_before_minutes')" v-model.number="structureEngineConfig.event_risk_major_before_minutes" type="number" min="0" max="240" label="非农/FOMC 前暂停（分钟）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('event_risk_major_after_minutes')" v-model.number="structureEngineConfig.event_risk_major_after_minutes" type="number" min="0" max="480" label="非农/FOMC 后暂停（分钟）" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('event_risk_resume_confirmation_bars')" v-model.number="structureEngineConfig.event_risk_resume_confirmation_bars" type="number" min="0" max="10" label="事件后确认K线数" hint="风险窗口结束后，等待对应周期收盘再重新评估" persistent-hint density="compact" variant="outlined" /></v-col>
             </v-row>
             <v-alert type="info" variant="tonal" density="compact" class="mt-2">东京、上海、伦敦和纽约开盘会按当地时区自动处理夏令时/冬令时。财经日历中的美国非农（NFP）和美联储议息（FOMC）自动按 L4 重大事件处理，默认仅暂停反转类结构计划。</v-alert>
             <v-alert type="info" variant="tonal" density="compact" class="mt-4 mb-3">
               配置按三层生效：<strong>公共默认参数 → 品种+周期参数 → 品种+周期+SETUP 参数</strong>。越靠后的配置优先级越高；没有填写的项目会自动沿用上一层。比如只给 GOLD_ M5 设置参数，不会影响 BTCUSD 或其他周期。
             </v-alert>
-            <div class="llm-section-head compact mt-4"><div><h3>第三层：SETUP 参数</h3><p>公共 SETUP 默认和品种 · 周期 · SETUP 专项配置在同一编辑区完成。专项只保存相对公共默认的覆盖字段。</p></div><div class="d-flex ga-2"><v-btn size="small" color="primary" variant="tonal" :loading="structureOptimizerRunning" @click="optimizeStructureSetups">生成历史优化建议</v-btn><v-btn size="small" variant="tonal" color="secondary" :disabled="structureEngineSaving || !structureSetupScope" @click="openSaveAsStructureSetup">另存为品种/周期/SETUP</v-btn></div></div>
+            <div class="llm-section-head compact mt-4"><div><h3>第三层：SETUP 参数</h3><p>公共 SETUP 默认和品种 · 周期 · SETUP 专项配置在同一编辑区完成。专项只保存相对公共默认的覆盖字段。</p></div><div class="d-flex ga-2"><v-btn size="small" variant="tonal" color="secondary" :disabled="structureEngineSaving || !structureSetupScope" @click="openSaveAsStructureSetup">另存为品种/周期/SETUP</v-btn></div></div>
             <div class="d-flex flex-wrap ga-2 align-center mb-2">
               <v-select v-model="structureSetupScope" :items="structureSetupScopeOptions" item-title="label" item-value="value" label="当前查看的 SETUP 配置" density="compact" variant="outlined" hide-details style="min-width:340px;max-width:520px" @update:model-value="selectStructureSetupScope" />
               <v-chip v-if="structureSetupScope?.startsWith('default::')" color="primary" variant="tonal">公共默认</v-chip>
@@ -293,10 +303,22 @@
             </div>
             <v-dialog v-model="structureOptimizerPreviewOpen" max-width="1100">
               <v-card>
-                <v-card-title>结构 SETUP 优化建议预览</v-card-title>
+                <v-card-title>结构配置历史优化建议预览</v-card-title>
                 <v-card-text>
-                  <p class="text-body-2 mb-3">仅展示样本不少于 3 笔的品种/周期/SETUP。应用前请核对原配置、建议配置和历史依据。</p>
-                  <v-alert v-if="structureOptimizerLLMReview" type="secondary" variant="tonal" density="compact" class="mb-3"><strong>大模型二次审核：</strong>{{ structureOptimizerLLMReview.summary || '已完成审核，请结合下方建议确认。' }}<div v-for="item in (structureOptimizerLLMReview.recommendations || [])" :key="`${item.symbol}-${item.period}-${item.setup_type}`" class="text-caption mt-1">{{ item.symbol }} · {{ item.period }} · {{ item.setup_type }}：{{ item.decision }} · {{ item.reason }}</div></v-alert>
+                  <p class="text-body-2 mb-3">品种+周期与 SETUP 专项建议分开生成、分开应用。不同 SETUP 的参数冲突只保留在 SETUP 专项层，不会自动合并。</p>
+                  <v-alert v-if="structureOptimizerLLMReview" type="secondary" variant="tonal" density="compact" class="mb-3"><strong>大模型二次审核：</strong>{{ structureOptimizerLLMReview.summary || '已完成审核，请结合下方建议确认。' }}<div v-for="item in (structureOptimizerLLMReview.recommendations || [])" :key="`${item.symbol}-${item.period}-${item.setup_type || 'symbol_period'}`" class="text-caption mt-1">{{ item.symbol }} · {{ item.period }} · {{ item.setup_type || '品种周期整体' }}：{{ item.decision }} · {{ item.reason }}</div><div v-for="note in (structureOptimizerLLMReview.global_notes || [])" :key="note" class="text-caption mt-1">{{ note }}</div></v-alert>
+                  <v-alert v-if="structureOptimizerConflicts.length" type="warning" variant="tonal" density="compact" class="mb-3">检测到不同 SETUP 对同一品种/周期的参数建议冲突。系统不会自动把 SETUP 参数合并到品种+周期层，请在下表中分别确认。</v-alert>
+                  <v-table v-if="structureOptimizerConflicts.length" density="compact" class="mb-4">
+                    <thead><tr><th>品种/周期</th><th>冲突字段</th><th>各 SETUP 建议值</th><th>处理方式</th></tr></thead>
+                    <tbody><tr v-for="item in structureOptimizerConflicts" :key="`${item.symbol}-${item.period}-${item.field}`"><td>{{ item.symbol }} · {{ item.period }}</td><td>{{ item.field_label || item.field }}</td><td><span v-for="(entry, index) in (item.values || [])" :key="`${entry.setup_type}-${index}`" class="mr-3">{{ entry.setup_type }}={{ formatOptimizationValue(entry.value) }}</span></td><td class="text-caption">仅应用到各 SETUP 专项层</td></tr></tbody>
+                  </v-table>
+                  <h4 class="text-subtitle-1 mb-2">一、品种 + 周期整体建议</h4>
+                  <v-table v-if="structureOptimizerProfilePreview.length" density="compact" class="mb-4">
+                    <thead><tr><th style="width:48px"><v-checkbox-btn :model-value="structureOptimizerProfileAllSelected" @update:model-value="toggleAllStructureProfileOptimization" /></th><th>品种/周期</th><th>历史表现</th><th>建议变更</th><th>原因</th></tr></thead>
+                    <tbody><tr v-for="item in structureOptimizerProfilePreview" :key="`${item.symbol}-${item.period}`"><td><v-checkbox-btn v-model="structureOptimizerProfileSelected" :value="`${item.symbol}::${item.period}`" /></td><td>{{ item.symbol }} · {{ item.period }}</td><td>{{ item.orders }} 笔 · 胜率 {{ item.win_rate }}% · 净盈亏 {{ item.net_pnl }}</td><td>{{ item.changes || '保持' }}</td><td>{{ (item.reasons || []).join('；') }}</td></tr></tbody>
+                  </v-table>
+                  <v-alert v-else type="info" variant="tonal" density="compact" class="mb-4">暂无满足样本条件的品种+周期整体建议。</v-alert>
+                  <h4 class="text-subtitle-1 mb-2">二、品种 + 周期 + SETUP 专项建议</h4>
                   <v-table density="compact">
                     <thead><tr><th style="width:48px"><v-checkbox-btn :model-value="structureOptimizerAllSelected" @update:model-value="toggleAllStructureOptimization" /></th><th>品种/周期</th><th>SETUP</th><th>历史表现</th><th>建议变更</th><th>原因</th></tr></thead>
                     <tbody>
@@ -310,7 +332,7 @@
                     </tbody>
                   </v-table>
                 </v-card-text>
-                <v-card-actions><span class="text-caption">已选择 {{ structureOptimizerSelected.length }} / {{ structureOptimizerPreview.length }} 条</span><v-spacer /><v-btn variant="text" @click="structureOptimizerPreviewOpen=false">取消</v-btn><v-btn color="primary" :disabled="!structureOptimizerSelected.length" :loading="structureOptimizerApplying" @click="applyStructureOptimization">确认应用选中建议</v-btn></v-card-actions>
+                <v-card-actions><span class="text-caption">品种周期 {{ structureOptimizerProfileSelected.length }} / {{ structureOptimizerProfilePreview.length }}；SETUP {{ structureOptimizerSelected.length }} / {{ structureOptimizerPreview.length }}</span><v-spacer /><v-btn variant="text" @click="structureOptimizerPreviewOpen=false">取消</v-btn><v-btn color="primary" :disabled="!structureOptimizerSelected.length && !structureOptimizerProfileSelected.length" :loading="structureOptimizerApplying" @click="applyStructureOptimization">确认应用选中建议</v-btn></v-card-actions>
               </v-card>
             </v-dialog>
           </v-card-text>
@@ -1628,6 +1650,24 @@ export default {
         return structureGlobalConfig.value[key] !== profile[key]
       }).map(key => labels[key] || key)
     })
+    const structureProfileForScope = () => {
+      if (structureConfigScope.value === 'default') return null
+      const [symbol, period] = String(structureConfigScope.value || '').split('::')
+      return structureProfiles.value.find(item => item.symbol === symbol && item.period === period) || null
+    }
+    const isStructureFieldOverridden = key => {
+      const profile = structureProfileForScope()
+      if (!profile || !Object.prototype.hasOwnProperty.call(profile, key)) return false
+      // Empty allow/block lists are the persisted representation of "inherit"
+      // for older profiles and must not be highlighted as an override.
+      if (['allowed_setups', 'allowed_directions', 'blocked_hours'].includes(key)
+          && (!Array.isArray(profile[key]) || profile[key].length === 0)) return false
+      return JSON.stringify(profile[key]) !== JSON.stringify(structureGlobalConfig.value[key])
+    }
+    const structureFieldClass = key => ({
+      'structure-config-field--override': isStructureFieldOverridden(key),
+      'structure-config-field--inherited': Boolean(structureConfigScope.value !== 'default' && !isStructureFieldOverridden(key)),
+    })
     const structureSetupProfiles = ref([])
     const structureSetupScope = ref('')
     const structureSetupDefaults = ref({})
@@ -1637,12 +1677,17 @@ export default {
     const structureOptimizerApplying = ref(false)
     const structureOptimizerPreviewOpen = ref(false)
     const structureOptimizerPreview = ref([])
+    const structureOptimizerProfilePreview = ref([])
     const structureOptimizerPayload = ref(null)
     const structureOptimizerLLMReview = ref(null)
     const structureOptimizerSelected = ref([])
+    const structureOptimizerProfileSelected = ref([])
     const structureOptimizerAllSelected = computed(() => structureOptimizerPreview.value.length > 0 && structureOptimizerSelected.value.length === structureOptimizerPreview.value.length)
+    const structureOptimizerProfileAllSelected = computed(() => structureOptimizerProfilePreview.value.length > 0 && structureOptimizerProfileSelected.value.length === structureOptimizerProfilePreview.value.length)
+    const structureOptimizerConflicts = ref([])
     const structureOverview = ref(null)
     const structureOverviewLoading = ref(false)
+    const structureOverviewDeleting = ref('')
     const structureEffective = ref(null)
     const structureEffectiveLoading = ref(false)
     const structureEffectiveDialog = ref(false)
@@ -1723,6 +1768,9 @@ export default {
       if (typeof value === 'object') return JSON.stringify(value)
       return String(value)
     }
+    // Optimization previews can contain booleans, arrays, or null values;
+    // keep the conflict table readable instead of exposing raw JSON values.
+    const formatOptimizationValue = value => formatStructureValue(value)
     const structureSetupProfileDraft = ref({ symbol: '', period: 'M5', setup_type: 'structure_location_pullback', enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '', confirmation_bars: null, min_displacement_atr: null, min_body_atr: null, require_reclaim: null, min_real_risk_reward: null, entry_zone_atr: null, stop_buffer_atr: null, target_buffer_atr: null, pressure_min_rejections: null, pressure_min_displacement_atr: null, pressure_min_efficiency: null, target_multiple: null, max_entries_per_opportunity: null, cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null, invalidate_on_zone_return: null })
     const setupTypeNames = { pressure_reversal: '密集区反转', pressure_zone_breakout: '密集区突破', structure_location_pullback: '结构位置回撤', range_lower_reversal: '箱体下沿反转', range_upper_reversal: '箱体上沿反转', range_breakout: '箱体突破', range_false_breakout: '箱体假突破', triangle_breakout: '三角形突破', triangle_breakout_watch: '三角形突破观察', triangle_prebreakout_pullback: '三角形提前回撤', choch_reversal: 'CHOCH反转', liquidity_sweep_reclaim: '流动性扫单回收', trend_continuation: '趋势延续', structure_reversal: '结构反转' }
     const setupTypeLabel = type => setupTypeNames[type] || type
@@ -2180,6 +2228,49 @@ export default {
     const loadStructureOverview = async () => { structureOverviewLoading.value = true; try { structureOverview.value = await marketAPI.getMarketStructureConfigOverview() } finally { structureOverviewLoading.value = false } }
     const loadStructureHistory = async () => { structureHistoryLoading.value = true; try { const data = await marketAPI.getMarketStructureConfigHistory(100); structureHistory.value = data.items || [] } finally { structureHistoryLoading.value = false } }
     const openEffectiveConfig = async (symbol, period, setupType = '') => { structureEffectiveTarget.value = { symbol, period, setupType }; structureEffectiveDialog.value = true; structureEffectiveLoading.value = true; try { structureEffective.value = await marketAPI.getEffectiveMarketStructureConfig(symbol, period, setupType) } finally { structureEffectiveLoading.value = false } }
+    const deleteStructureOverviewRow = async row => {
+      const symbol = String(row?.symbol || '').trim().toUpperCase()
+      const period = String(row?.period || '').trim().toUpperCase()
+      if (!symbol || !period) return
+      const confirmed = window.confirm(`确认删除 ${symbol} · ${period} 的品种/周期专项配置及该周期下全部 SETUP 专项配置吗？\n删除后将恢复公共默认。`)
+      if (!confirmed) return
+      const key = `${symbol}::${period}`
+      structureOverviewDeleting.value = key
+      try {
+        await marketAPI.deleteMarketStructureProfile(symbol, period)
+        // If the deleted row is currently being edited, switch back to the
+        // public layer before reloading the normalized configuration.
+        if (structureConfigScope.value === key) {
+          structureConfigScope.value = 'default'
+          structureEngineConfig.value = { ...structureGlobalConfig.value }
+        }
+        const setupPrefix = `${symbol}::${period}::`
+        if (String(structureSetupScope.value || '').startsWith(setupPrefix)) {
+          const setupType = String(structureSetupScope.value).split('::')[2] || structureSetupTypes[0]?.value
+          structureSetupScope.value = `default::${setupType || ''}`
+          if (setupType) selectStructureSetupScope(structureSetupScope.value)
+        }
+        const data = await marketAPI.getMarketStructureConfig()
+        const rawConfig = data.config || {}
+        const { setup_defaults: rawSetupDefaults, ...structureConfig } = rawConfig
+        structureSetupDefaults.value = { ...(rawSetupDefaults || {}) }
+        for (const item of structureSetupTypes) {
+          if (!structureSetupDefaults.value[item.value]) structureSetupDefaults.value[item.value] = { enabled: true, allowed_directions: ['buy', 'sell'] }
+        }
+        structureGlobalConfig.value = { ...structureGlobalConfig.value, ...structureConfig }
+        structureEngineConfig.value = { ...structureGlobalConfig.value }
+        structureProfiles.value = (Array.isArray(data.profiles) ? data.profiles : []).map(profile => ({ ...profile, allowed_setups: normalizeSetupValues(profile.allowed_setups) }))
+        structureSetupProfiles.value = (Array.isArray(data.setup_profiles) ? data.setup_profiles : []).map(item => ({ ...item, allowed_directions: normalizeSetupValues(item.allowed_directions) }))
+        await Promise.all([loadStructureOverview(), loadStructureHistory()])
+        successMessage.value = `${symbol} · ${period} 专项配置已删除，已恢复公共默认`
+        showSuccess.value = true
+      } catch (err) {
+        errorMessage.value = err.response?.data?.detail || '删除专项配置失败'
+        showError.value = true
+      } finally {
+        structureOverviewDeleting.value = ''
+      }
+    }
 
     const loadAdminWorkspace = async () => {
       quotaSaving.value = 'loading'
@@ -2220,12 +2311,12 @@ export default {
       }
     }
 
-    const saveStructureEngineConfig = async (manageLoading = true) => {
+    const saveStructureEngineConfig = async (manageLoading = true, forceGlobalPayload = false) => {
       if (manageLoading) structureEngineSaving.value = true
       try {
         const sanitizedProfiles = structureProfiles.value.map(profile => ({ ...profile, allowed_setups: persistAllowedSetups(profile.allowed_setups) }))
         let payload = { ...structureEngineConfig.value, profiles: sanitizedProfiles, setup_profiles: structureSetupProfiles.value, setup_defaults: structureSetupDefaults.value }
-        if (structureConfigScope.value !== 'default') {
+        if (!forceGlobalPayload && structureConfigScope.value !== 'default') {
           const [symbol, period] = structureConfigScope.value.split('::')
           const item = { symbol, period, ...structureEngineConfig.value, allowed_setups: persistAllowedSetups(structureEngineConfig.value.allowed_setups) }
           const index = structureProfiles.value.findIndex(x => x.symbol === symbol && x.period === period)
@@ -2470,11 +2561,22 @@ export default {
         const data = await marketAPI.optimizeStructureSetups(false, 30)
         const proposals = Array.isArray(data.proposals) ? data.proposals : []
         structureOptimizerPreview.value = Array.isArray(data.diagnostics) ? data.diagnostics : []
+        structureOptimizerProfilePreview.value = Array.isArray(data.profile_diagnostics) ? data.profile_diagnostics : []
+        structureOptimizerConflicts.value = Array.isArray(data.conflicts) ? data.conflicts : []
         structureOptimizerSelected.value = structureOptimizerPreview.value.map(item => `${item.symbol}-${item.period}-${item.setup_type}`)
+        structureOptimizerProfileSelected.value = structureOptimizerProfilePreview.value
+          .filter(item => item.proposed)
+          .map(item => `${item.symbol}::${item.period}`)
         structureOptimizerPayload.value = data
         structureOptimizerLLMReview.value = null
         try {
-          const review = await marketAPI.reviewStructureSetups({ proposals: data.proposals || [], diagnostics: data.diagnostics || [] })
+          const review = await marketAPI.reviewStructureSetups({
+            proposals: data.proposals || [],
+            diagnostics: data.diagnostics || [],
+            symbol_profiles: data.symbol_profiles || [],
+            profile_diagnostics: data.profile_diagnostics || [],
+            conflicts: data.conflicts || [],
+          })
           if (review.status === 'ok') structureOptimizerLLMReview.value = review.review || {}
         } catch (err) { console.warn('优化建议大模型审核失败', err) }
         structureOptimizerPreviewOpen.value = true
@@ -2488,16 +2590,16 @@ export default {
     const applyStructureOptimization = async () => {
       const data = structureOptimizerPayload.value
       if (!data) return
-      const selected = new Set(structureOptimizerSelected.value)
-      const proposals = (data.proposals || []).filter(item => selected.has(`${item.symbol}-${item.period}-${item.setup_type}`))
-      const selectedSymbols = new Set(proposals.map(item => `${item.symbol}::${item.period}`))
-      const symbolProfiles = (data.symbol_profiles || []).filter(item => selectedSymbols.has(`${item.symbol}::${item.period}`))
+      const selectedSetups = new Set(structureOptimizerSelected.value)
+      const selectedProfiles = new Set(structureOptimizerProfileSelected.value)
+      const proposals = (data.proposals || []).filter(item => selectedSetups.has(`${item.symbol}-${item.period}-${item.setup_type}`))
+      const symbolProfiles = (data.symbol_profiles || []).filter(item => selectedProfiles.has(`${item.symbol}::${item.period}`))
       structureOptimizerApplying.value = true
       try {
         const applied = await marketAPI.applyStructureSetups(proposals, symbolProfiles, data.days || 30)
-        const proposals = Array.isArray(applied.proposals) ? applied.proposals : (data.proposals || [])
+        const appliedProposals = Array.isArray(applied.proposals) ? applied.proposals : proposals
         const current = [...structureSetupProfiles.value]
-        for (const item of proposals) {
+        for (const item of appliedProposals) {
           const index = current.findIndex(x => x.symbol === item.symbol && x.period === item.period && x.setup_type === item.setup_type)
           if (index >= 0) current.splice(index, 1, item); else current.push(item)
         }
@@ -2511,10 +2613,12 @@ export default {
           }
           structureProfiles.value = profiles
         }
-        await saveStructureEngineConfig()
-        // Persist the merged symbol whitelist returned by the optimizer.
+        // Persist the two independently selected layers as one normalized
+        // configuration payload.  Do not let whichever editor scope happens
+        // to be open overwrite a profile that was not selected in the dialog.
+        await saveStructureEngineConfig(true, true)
         structureOptimizerPreviewOpen.value = false
-        successMessage.value = proposals.length ? `已应用 ${proposals.length} 条 Setup 优化配置` : '没有可应用的优化建议'
+        successMessage.value = `已应用 ${symbolProfiles.length} 条品种周期建议、${appliedProposals.length} 条 SETUP 优化配置`
         showSuccess.value = true
       } catch (err) {
         errorMessage.value = err.response?.data?.detail || '生成优化配置失败'
@@ -2524,6 +2628,11 @@ export default {
     const toggleAllStructureOptimization = checked => {
       structureOptimizerSelected.value = checked
         ? structureOptimizerPreview.value.map(item => `${item.symbol}-${item.period}-${item.setup_type}`)
+        : []
+    }
+    const toggleAllStructureProfileOptimization = checked => {
+      structureOptimizerProfileSelected.value = checked
+        ? structureOptimizerProfilePreview.value.map(item => `${item.symbol}::${item.period}`)
         : []
     }
     const removeStructureSetupProfile = async item => {
@@ -4418,6 +4527,8 @@ export default {
       structureConfigScopes,
       structureConfigSourceLabel,
       structureOverrideFields,
+      isStructureFieldOverridden,
+      structureFieldClass,
       saveAsStructureProfileOpen,
       saveAsStructureProfileDraft,
       openSaveAsStructureProfile,
@@ -4445,9 +4556,13 @@ export default {
       structureOptimizerApplying,
       structureOptimizerPreviewOpen,
       structureOptimizerPreview,
+      structureOptimizerProfilePreview,
       structureOptimizerLLMReview,
       structureOptimizerSelected,
+      structureOptimizerProfileSelected,
       structureOptimizerAllSelected,
+      structureOptimizerProfileAllSelected,
+      structureOptimizerConflicts,
       structureSetupProfileDraft,
       structureSetupTypes,
       setupTypeLabel,
@@ -4458,11 +4573,12 @@ export default {
       optimizeStructureSetups,
       applyStructureOptimization,
       toggleAllStructureOptimization,
+      toggleAllStructureProfileOptimization,
       removeStructureSetupProfile,
-      structureOverview, structureOverviewLoading, loadStructureOverview,
+      structureOverview, structureOverviewLoading, structureOverviewDeleting, loadStructureOverview, deleteStructureOverviewRow,
       structureEffective, structureEffectiveLoading, structureEffectiveDialog, structureEffectiveTarget, openEffectiveConfig,
       structureHistory, structureHistoryLoading, loadStructureHistory,
-      structureFieldLabels, structureSourceLabel, formatStructureValue,
+      structureFieldLabels, structureSourceLabel, formatStructureValue, formatOptimizationValue,
       tradeConfig,
       newSymbol,
       newVolume,
@@ -4770,6 +4886,33 @@ export default {
 .structure-setup-field--override :deep(.v-label),
 .structure-setup-field--override :deep(.v-switch__label) { color: #8a5a12; font-weight: 650; }
 .structure-setup-field--inherited { opacity: .9; }
+.structure-config-field--override {
+  position: relative;
+  padding: 4px 5px 3px;
+  border: 1px solid #e6a23c;
+  border-radius: 9px;
+  background: #fff8e6;
+  box-shadow: 0 0 0 1px rgba(230,162,60,.08);
+}
+.structure-config-field--override::after {
+  position: absolute;
+  top: -7px;
+  right: 6px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  color: #8a5a12;
+  background: #ffe7b0;
+  content: '专项值';
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.35;
+  pointer-events: none;
+}
+.structure-config-field--override :deep(.v-field) { background: #fff8e6; }
+.structure-config-field--override :deep(.v-field__outline) { --v-field-border-opacity: 1; color: #e6a23c; }
+.structure-config-field--override :deep(.v-label),
+.structure-config-field--override :deep(.v-switch__label) { color: #8a5a12; font-weight: 650; }
+.structure-config-field--inherited { opacity: .88; }
 .strategy-workspace { --strategy-ink: #18342b; --strategy-muted: #6c7f77; --strategy-line: #dfe9e4; --strategy-green: #176b4d; margin-top: 0; }
 .strategy-hero { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 28px; min-height: 180px; padding: 34px 38px; overflow: hidden; border-radius: 24px; color: #f7fff9; background: linear-gradient(120deg, #123b31 0%, #176b4d 58%, #d9a441 160%); box-shadow: 0 18px 45px rgba(26, 76, 59, .18); }
 .strategy-hero::after { position: absolute; right: -55px; bottom: -110px; width: 300px; height: 300px; border: 55px solid rgba(255,255,255,.08); border-radius: 50%; content: ''; }

@@ -294,6 +294,10 @@ export const marketAPI = {
     const response = await api.get('/admin/market-structure/config/overview')
     return response.data
   },
+  async deleteMarketStructureProfile(symbol, period) {
+    const response = await api.delete(`/admin/market-structure/config/profile/${encodeURIComponent(symbol)}/${encodeURIComponent(period)}`)
+    return response.data
+  },
   async getEffectiveMarketStructureConfig(symbol, period, setupType = '') {
     const response = await api.get('/admin/market-structure/config/effective', { params: { symbol, period, setup_type: setupType } })
     return response.data

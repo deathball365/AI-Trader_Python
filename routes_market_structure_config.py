@@ -233,6 +233,64 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             rows.append({"symbol": symbol, "period": period, "has_profile": any(str(x.get("symbol")).upper() == symbol and str(x.get("period")).upper() == period for x in profiles), "setups": [{"setup_type": x.get("setup_type"), "enabled": x.get("enabled", True)} for x in local]})
         return {"status": "ok", "default_configured": bool(default_row), "default": {"version": default_row.get("version", 0), "updated_at": default_row.get("updated_at", 0)}, "items": rows, "profiles": profiles, "setup_profiles": setups}
 
+    @router.delete("/admin/market-structure/config/profile/{symbol}/{period}", dependencies=[Depends(require_admin)])
+    async def delete_config_profile(symbol: str, period: str, user: AuthUser = Depends(require_admin)):
+        """Remove all symbol/period overrides and restore the public defaults.
+
+        A matrix row represents both the symbol-period engine override and all
+        SETUP overrides beneath it.  Keep the rows as inactive records instead
+        of hard-deleting them so configuration history/audit remains intact.
+        """
+        symbol = str(symbol or "").strip().upper()
+        period = str(period or "").strip().upper()
+        if not symbol or not period:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="symbol 和 period 不能为空")
+
+        storage = get_storage()
+        default_row, profile_rows, setup_rows, decode = read_normalized(storage)
+        matching_profile = next(
+            (row for row in profile_rows
+             if str(row.get("symbol") or "").upper() == symbol
+             and str(row.get("period") or "").upper() == period),
+            None,
+        )
+        matching_setups = [
+            row for row in setup_rows
+            if str(row.get("symbol") or "").upper() == symbol
+            and str(row.get("period") or "").upper() == period
+        ]
+        if matching_profile is None and not matching_setups:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail=f"未找到 {symbol} · {period} 的专项配置")
+
+        cfg = decode(default_row)
+        profiles = [
+            {"symbol": row.get("symbol"), "period": row.get("period"), **decode(row)}
+            for row in profile_rows
+            if not (str(row.get("symbol") or "").upper() == symbol
+                    and str(row.get("period") or "").upper() == period)
+        ]
+        setup_profiles = [
+            {"symbol": row.get("symbol"), "period": row.get("period"),
+             "setup_type": row.get("setup_type"), **decode(row)}
+            for row in setup_rows
+            if not (str(row.get("symbol") or "").upper() == symbol
+                    and str(row.get("period") or "").upper() == period)
+        ]
+        reason = f"删除 {symbol} · {period} 品种/周期及全部 SETUP 专项配置，恢复公共默认"
+        persist_normalized(storage, cfg, profiles, setup_profiles, reason)
+
+        # Keep the legacy runtime snapshot aligned for older readers during the
+        # migration period; normalized MySQL tables remain the source of truth.
+        runtime = RuntimeStateRepository(0, 0)
+        runtime_cfg = {k: v for k, v in cfg.items() if k in allowed or k == setup_default_key}
+        runtime_cfg["profiles"] = profiles
+        runtime_cfg["setup_profiles"] = setup_profiles
+        runtime.upsert_entity("market_structure_config", "default", runtime_cfg, status="active")
+        return {"status": "ok", "symbol": symbol, "period": period, "deleted": True,
+                "message": f"{symbol} · {period} 专项配置已删除，已恢复公共默认"}
+
     @router.get("/admin/market-structure/config/history", dependencies=[Depends(require_admin)])
     async def get_config_history(limit: int = 50, user: AuthUser = Depends(require_admin)):
         limit = max(1, min(int(limit), 200))
@@ -423,6 +481,9 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             if item["symbol"]:
                 grouped[(item["symbol"].upper(), item["period"], item["setup_type"])].append(item)
         proposals, diagnostics = [], []
+        existing_profiles = {(str(item.get("symbol") or "").upper(), str(item.get("period") or "").upper()): item
+                             for item in (stored_config.get("profiles") or []) if isinstance(item, dict)}
+        profile_diagnostics, conflicts = [], []
         for (symbol, period, setup), pnls in sorted(grouped.items()):
             if len(pnls) < 3:
                 continue
@@ -473,6 +534,68 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             diagnostics[-1]["proposed_enabled"] = profile.get("enabled", True)
             diagnostics[-1]["changes"] = "；".join(changes) if changes else "保持现有配置"
             proposals.append(profile)
+        # Generate independent symbol+period diagnostics. These profiles only
+        # carry aggregate fields (currently the allowed SETUP whitelist).
+        symbol_groups = defaultdict(list)
+        setup_by_symbol_period = defaultdict(list)
+        for (symbol, period, setup), pnls in grouped.items():
+            symbol_groups[(symbol, period)].extend(pnls)
+            setup_by_symbol_period[(symbol, period)].append(setup)
+        symbol_profiles = []
+        for (symbol, period), pnls in sorted(symbol_groups.items()):
+            if len(pnls) < 3:
+                continue
+            values = [float(item["pnl"]) for item in pnls]
+            net = sum(values)
+            observed = sorted(set(setup_by_symbol_period[(symbol, period)]))
+            profile = {"symbol": symbol, "period": period}
+            reasons = []
+            setup_diags = [item for item in diagnostics if item["symbol"] == symbol and item["period"] == period]
+            profitable = sorted({item["setup_type"] for item in setup_diags
+                                 if item.get("net_pnl", 0) >= 0 and item.get("proposed_enabled", True)})
+            if net > 0 and profitable:
+                profile["allowed_setups"] = profitable
+                reasons.append("按品种周期汇总，仅保留历史净盈亏不为负且满足样本条件的 SETUP")
+            else:
+                reasons.append("品种周期整体净亏损，不自动收紧允许 SETUP，避免把机会全部关闭")
+            previous = existing_profiles.get((symbol, period), {})
+            changes = [f"{field}: {previous.get(field, '未配置')} → {value}"
+                       for field, value in profile.items() if field not in {"symbol", "period"}
+                       and previous.get(field) != value]
+            profile_diagnostics.append({
+                "symbol": symbol, "period": period, "orders": len(pnls),
+                "winning_orders": sum(1 for value in values if value > 0),
+                "win_rate": round(sum(1 for value in values if value > 0) / len(values) * 100, 2),
+                "net_pnl": round(net, 2), "observed_setups": observed,
+                "changes": "；".join(changes) if changes else "保持现有配置",
+                "reasons": reasons, "proposed": bool(changes),
+            })
+            if len(profile) > 2:
+                symbol_profiles.append(profile)
+        # Surface setup-level conflicts without merging them into the profile.
+        conflict_fields = ("entry_mode", "confirmation_bars", "min_displacement_atr",
+                           "require_reclaim", "min_real_risk_reward", "min_body_atr",
+                           "entry_zone_atr", "stop_buffer_atr", "target_buffer_atr",
+                           "max_plan_lifetime_bars", "require_retest", "retest_tolerance_atr")
+        conflict_labels = {
+            "entry_mode": "入场方式", "confirmation_bars": "确认K线数",
+            "min_displacement_atr": "最小位移 ATR", "require_reclaim": "要求回收",
+            "min_real_risk_reward": "最低真实盈亏比", "min_body_atr": "突破实体 ATR",
+            "entry_zone_atr": "入场区域 ATR", "stop_buffer_atr": "止损缓冲 ATR",
+            "target_buffer_atr": "止盈缓冲 ATR", "max_plan_lifetime_bars": "计划安全兜底K线",
+            "require_retest": "要求回踩", "retest_tolerance_atr": "回踩容差 ATR",
+        }
+        for (symbol, period), _setups in sorted(setup_by_symbol_period.items()):
+            setup_rows = [item for item in proposals if item["symbol"] == symbol and item["period"] == period]
+            for field in conflict_fields:
+                values = [{"setup_type": item["setup_type"], "value": item.get(field)}
+                          for item in setup_rows if field in item]
+                if len({json.dumps(item["value"], sort_keys=True, ensure_ascii=False) for item in values}) > 1:
+                    conflicts.append({"symbol": symbol, "period": period, "field": field,
+                                      "field_label": conflict_labels.get(field, field),
+                                      "values": values,
+                                      "reason": "不同 SETUP 的建议不同，只保留在 SETUP 专项层；请分别确认各 SETUP，不要合并到品种+周期层"})
+
         # Applying a reviewed preview must use exactly the rows the admin saw,
         # rather than silently recomputing them between preview and apply.
         if payload.get("apply") and isinstance(payload.get("proposals"), list):
@@ -481,16 +604,9 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
                 symbol_profiles = [item for item in payload["symbol_profiles"] if isinstance(item, dict)]
             else:
                 symbol_profiles = []
-        # Build a whitelist from the generated profiles.  A symbol/period is
-        # restricted only when enough historical samples existed; unobserved
-        # setups are left to the global default rather than guessed.
-        whitelist = defaultdict(list)
-        for item in proposals:
-            if item.get("enabled", True):
-                whitelist[(item["symbol"], item["period"])].append(item["setup_type"])
-        symbol_profiles = [{"symbol": symbol, "period": period,
-                           "allowed_setups": sorted(set(setups))}
-                          for (symbol, period), setups in sorted(whitelist.items())]
+        # Keep symbol/period recommendations independent from setup selections.
+        # In particular, do not rebuild this list from ``proposals`` here:
+        # otherwise selecting one setup would implicitly apply its whitelist.
         applied = False
         if bool(payload.get("apply")):
             current = RuntimeStateRepository(0, 0).list_entities("market_structure_config")
@@ -509,10 +625,18 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             cfg["profiles"] = list(profile_index.values())
             cfg["setup_profiles"] = merged
             RuntimeStateRepository(0, 0).upsert_entity("market_structure_config", "default", cfg, status="active")
+            # Keep the direct API apply path consistent with the normal save
+            # path.  Without this write, a caller that applies the preview
+            # outside the UI would only update the legacy runtime snapshot and
+            # the normalized MySQL tables could immediately win on the next
+            # reload.
+            persist_normalized(storage, cfg, list(profile_index.values()), merged,
+                               reason="应用结构配置历史优化建议")
             applied = True
         return {"status": "ok", "days": days, "applied": applied,
                 "proposals": proposals, "symbol_profiles": symbol_profiles,
-                "diagnostics": diagnostics}
+                "diagnostics": diagnostics, "profile_diagnostics": profile_diagnostics,
+                "conflicts": conflicts}
 
     @router.post("/admin/market-structure/optimize-setups/review", dependencies=[Depends(require_admin)])
     async def review_setup_proposals(payload: Dict, user: AuthUser = Depends(require_admin)):
@@ -521,14 +645,20 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             return {"status": "unavailable", "reason": "未配置大模型引擎"}
         proposals = payload.get("proposals") or []
         diagnostics = payload.get("diagnostics") or []
-        if not proposals:
+        symbol_profiles = payload.get("symbol_profiles") or []
+        profile_diagnostics = payload.get("profile_diagnostics") or []
+        conflicts = payload.get("conflicts") or []
+        if not proposals and not symbol_profiles:
             return {"status": "skipped", "reason": "没有可供复核的优化建议"}
         prompt = (
             "请审核以下由确定性规则生成的结构交易 SETUP 配置建议。只依据提供的历史统计，"
             "分别判断建议是否合理，指出应保留、调整或拒绝的建议。不得直接修改配置。"
             "严格返回 JSON：{\"summary\":\"\",\"recommendations\":[{\"symbol\":\"\",\"period\":\"\",\"setup_type\":\"\",\"decision\":\"apply|reject|review\",\"reason\":\"\",\"risk\":\"\"}],\"global_notes\":[\"\"]}。"
             "样本少于10笔只能 review，不得建议停用。\n\n"
-            + json.dumps({"proposals": proposals, "diagnostics": diagnostics}, ensure_ascii=False, default=str)
+            + json.dumps({"proposals": proposals, "diagnostics": diagnostics,
+                          "symbol_profiles": symbol_profiles,
+                          "profile_diagnostics": profile_diagnostics,
+                          "conflicts": conflicts}, ensure_ascii=False, default=str)
         )
         try:
             engine = engine_manager.get_engine_for_user(user.user_id)
