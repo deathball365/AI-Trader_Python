@@ -82,6 +82,7 @@ _REVERSAL_SETUP_LABELS = {
     "liquidity_sweep_reclaim": "流动性扫单回收",
     "choch_reversal": "CHOCH 反转",
     "structure_reversal": "结构反转",
+    "pressure_reversal": "密集区反转",
 }
 
 
