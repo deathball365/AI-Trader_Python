@@ -28,7 +28,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         "trend_max_event_age_bars_other", "trend_min_retest_bars",
         "trend_continuation_hold_bars",
         "pressure_plan_valid_bars", "pressure_min_event_confidence",
-        "zone_lookback_bars", "zone_min_visits", "zone_identity_max_gap_bars",
+        "zone_lookback_bars", "zone_min_visits", "zone_identity_max_gap_bars", "zone_target_count",
         "pressure_min_rejections", "pivot_zone_min_points",
         "confirmation_bars", "max_plan_lifetime_bars",
         "max_entries_per_opportunity", "cooldown_minutes",
@@ -91,6 +91,47 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
                 except (TypeError, ValueError): value = {}
             return value if isinstance(value, dict) else {}
         return default, profiles, setups, decode
+
+    def migrate_zone_public_defaults(storage, row, decoded):
+        """Tighten untouched legacy public zone defaults once.
+
+        Existing administrators may have deliberately tuned these values, so
+        only the original built-in tuple is migrated.  Symbol/period/setup
+        rows are never changed; they continue to override the public layer.
+        """
+        if not row or not isinstance(decoded, dict):
+            return decoded
+        tightened = {
+            "zone_bin_atr": 0.35, "zone_min_close_ratio": 0.30,
+            "zone_min_visits": 6, "zone_leave_atr": 0.7,
+            "zone_max_width_atr": 1.2, "pressure_touch_atr": 0.3,
+            "pressure_min_rejections": 4,
+            "pressure_min_displacement_atr": 1.0,
+            "pressure_min_efficiency": 0.6, "pivot_zone_merge_atr": 0.35,
+            "pivot_zone_min_points": 2,
+        }
+        legacy_tuples = (
+            {"zone_bin_atr": 0.5, "zone_min_close_ratio": 0.20, "zone_min_visits": 3,
+             "zone_leave_atr": 0.5, "zone_max_width_atr": 2.0, "pressure_touch_atr": 0.35,
+             "pressure_min_rejections": 3, "pressure_min_displacement_atr": 0.8,
+             "pressure_min_efficiency": 0.55, "pivot_zone_merge_atr": 0.45},
+            {"zone_bin_atr": 0.4, "zone_min_close_ratio": 0.25, "zone_min_visits": 4,
+             "zone_leave_atr": 0.7, "zone_max_width_atr": 1.5, "pressure_touch_atr": 0.3,
+             "pressure_min_rejections": 4, "pressure_min_displacement_atr": 1.0,
+             "pressure_min_efficiency": 0.6, "pivot_zone_merge_atr": 0.35},
+        )
+        def same(a, b):
+            try: return abs(float(a) - float(b)) < 1e-9
+            except (TypeError, ValueError): return a == b
+        if not any(all(key in decoded and same(decoded[key], value) for key, value in old.items()) for old in legacy_tuples):
+            return decoded
+        updated = {**decoded, **tightened}
+        storage.execute(
+            "UPDATE structure_default_configs SET config_json=?,version=version+1,updated_at=? "
+            "WHERE user_id=0 AND status='active' AND version=?",
+            (json.dumps(updated, ensure_ascii=False), int(time.time()), int(row.get("version") or 0)),
+        )
+        return updated
 
     def persist_normalized(storage, cfg, profiles, setup_profiles, reason="手工保存结构分析配置"):
         now = int(time.time())
@@ -161,6 +202,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         migrate_legacy_config(storage, legacy)
         default_row, profile_rows, setup_rows, decode = read_normalized(storage)
         normalized_default = decode(default_row)
+        normalized_default = migrate_zone_public_defaults(storage, default_row, normalized_default)
         config = {**allowed, **normalized_default}
         if not normalized_default:
             config = {**allowed, **{k: v for k, v in legacy.items() if k in allowed}}

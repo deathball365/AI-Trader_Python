@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from market.services.zone_pressure import advance, visit, momentum, _update_zone_states
+from market.services.zone_pressure import advance, visit, momentum, _update_zone_states, DEFAULT_CONFIG
 from market.services.signal.structure_plan_signal import StructurePlanBuilder
 from market.services.signal.structure_plan.lifecycle import invalidate_reason
 
@@ -11,6 +11,14 @@ def bar(t, c, h=None, l=None):
 
 
 class ZonePressureTests(unittest.TestCase):
+    def test_public_defaults_require_tighter_density(self):
+        self.assertEqual(DEFAULT_CONFIG["zone_bin_atr"], 0.35)
+        self.assertEqual(DEFAULT_CONFIG["zone_min_close_ratio"], 0.30)
+        self.assertEqual(DEFAULT_CONFIG["zone_min_visits"], 6)
+        self.assertEqual(DEFAULT_CONFIG["zone_max_width_atr"], 1.2)
+        self.assertEqual(DEFAULT_CONFIG["pressure_min_rejections"], 4)
+        self.assertEqual(DEFAULT_CONFIG["pivot_zone_min_points"], 2)
+
     def test_structure_engine_snapshot_exposes_zone_pressure(self):
         from market.services.market_structure_engine_v2 import analyze
 
@@ -71,13 +79,16 @@ class ZonePressureTests(unittest.TestCase):
 
     def test_stream_restart_equals_prefix_replay_and_no_mutation(self):
         rows = [bar(60*i+60, 100 + (i%6)*.2) for i in range(80)]
-        full = advance('X', 'M1', rows)
-        prefix = advance('X', 'M1', rows[:65])
+        # Use an explicit permissive profile here; this test verifies stream
+        # determinism, not the production density threshold.
+        profile = {"zone_min_close_ratio": 0.05, "zone_min_visits": 2}
+        full = advance('X', 'M1', rows, config=profile)
+        prefix = advance('X', 'M1', rows[:65], config=profile)
         saved = copy.deepcopy(prefix)
-        resumed = advance('X', 'M1', rows, previous=prefix)
+        resumed = advance('X', 'M1', rows, previous=prefix, config=profile)
         self.assertEqual(full, resumed)
         self.assertEqual(prefix, saved)
-        self.assertEqual(full, advance('X', 'M1', rows, previous=full))
+        self.assertEqual(full, advance('X', 'M1', rows, previous=full, config=profile))
         self.assertTrue(full['zones'])
 
     def test_unclosed_bars_excluded(self):

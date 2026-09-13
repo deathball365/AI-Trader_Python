@@ -14,24 +14,32 @@ from typing import Dict, Iterable, List, Optional
 DEFAULT_CONFIG = {
     "zone_pressure_enabled": True,
     "zone_lookback_bars": 80,
-    "zone_bin_atr": 0.5,
-    "zone_min_close_ratio": 0.20,
-    "zone_min_visits": 3,
-    "zone_leave_atr": 0.5,
-    "zone_max_width_atr": 2.0,
+    # Conservative public defaults: a zone must contain a meaningful share
+    # of closes and be revisited several times before it is actionable.  The
+    # narrower bucket/width also prevents broad, noisy areas being promoted
+    # to support/resistance.  Symbol/period/setup overrides still win.
+    "zone_bin_atr": 0.35,
+    "zone_width_mode": "auto",
+    "zone_bin_atr_min": 0.20,
+    "zone_bin_atr_max": 0.80,
+    "zone_target_count": 3,
+    "zone_min_close_ratio": 0.30,
+    "zone_min_visits": 6,
+    "zone_leave_atr": 0.7,
+    "zone_max_width_atr": 1.2,
     # A density bucket is a presentation detail, not the identity of a
     # market area.  When ATR or the bin origin moves slightly, match the new
     # band to the previous snapshot and keep its zone_id.
     "zone_identity_match_atr": 0.75,
     "zone_identity_max_gap_bars": 2,
-    "pressure_touch_atr": 0.35,
-    "pressure_min_rejections": 3,
+    "pressure_touch_atr": 0.3,
+    "pressure_min_rejections": 4,
     "pressure_reclaim_ratio": 0.50,
-    "pressure_min_displacement_atr": 0.8,
-    "pressure_min_efficiency": 0.55,
+    "pressure_min_displacement_atr": 1.0,
+    "pressure_min_efficiency": 0.6,
     "pivot_zone_enabled": True,
-    "pivot_zone_merge_atr": 0.45,
-    "pivot_zone_min_points": 1,
+    "pivot_zone_merge_atr": 0.35,
+    "pivot_zone_min_points": 2,
 }
 
 # Runtime defaults are intentionally kept in code.  The public configuration
@@ -123,7 +131,7 @@ def momentum(rows: List[Dict], atr: float) -> Dict:
 def _dense_zones(symbol: str, period: str, rows: List[Dict], atr: float, cfg: Dict) -> List[Dict]:
     if not rows or atr <= 0:
         return []
-    width = max(atr * max(.05, _number(cfg.get("zone_bin_atr"))), 1e-9)
+    width = _resolve_zone_width(rows, atr, cfg)
     min_count = max(int(cfg.get("zone_min_visits") or 3), math.ceil(len(rows) * max(.01, _number(cfg.get("zone_min_close_ratio")))))
     buckets: Dict[int, List[Dict]] = {}
     for row in rows:
@@ -148,7 +156,32 @@ def _dense_zones(symbol: str, period: str, rows: List[Dict], atr: float, cfg: Di
         zones[-1]["zone_revision"] = _id(
             zones[-1]["zone_id"], zones[-1]["lower"], zones[-1]["upper"]
         )
-    return sorted(zones, key=lambda item: (-item["close_count"], item["center"]))[:3]
+    limit = max(1, int(_number(cfg.get("zone_target_count") or 3)))
+    return sorted(zones, key=lambda item: (-item["close_count"], item["center"]))[:limit]
+
+
+def _resolve_zone_width(rows: List[Dict], atr: float, cfg: Dict) -> float:
+    """Choose an ATR-bounded width without manufacturing zones.
+
+    Auto mode only selects a width; eligibility is still decided by the
+    normal density thresholds below.  A target count is therefore a cap for
+    presentation, never a reason to relax the thresholds.
+    """
+    reference = max(.05, _number(cfg.get("zone_bin_atr") or .35))
+    if str(cfg.get("zone_width_mode") or "auto").lower() not in {"auto", "adaptive"}:
+        return max(atr * reference, 1e-9)
+    minimum = max(.05, _number(cfg.get("zone_bin_atr_min") or .20))
+    maximum = max(minimum, _number(cfg.get("zone_bin_atr_max") or .80))
+    # Keep the reference as a stable tie-breaker while adapting to the price
+    # distribution's typical spacing.
+    closes = sorted(_value(row, "close") for row in rows if _value(row, "close") > 0)
+    typical_gap = 0.0
+    if len(closes) > 1:
+        gaps = [right - left for left, right in zip(closes, closes[1:]) if right > left]
+        if gaps:
+            typical_gap = gaps[len(gaps) // 2] * 4.0 / max(atr, 1e-9)
+    ratio = max(minimum, min(maximum, typical_gap or reference))
+    return max(atr * ratio, 1e-9)
 
 
 def _zone_overlap(left: Dict, right: Dict) -> float:
