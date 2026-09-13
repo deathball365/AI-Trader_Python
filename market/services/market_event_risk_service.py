@@ -58,6 +58,36 @@ def is_reversal_setup(setup_type: str) -> bool:
     return str(setup_type or "").strip().lower() in REVERSAL_SETUPS
 
 
+def effective_event_risk_rules(config: Dict) -> list[Dict]:
+    """Merge configured rules onto built-in market-open protection.
+
+    A custom rollover rule supplements the standard Tokyo, Shanghai, London,
+    and New York opening windows.  Matching IDs override their built-in rule,
+    which also lets administrators disable or tune an individual market open.
+    """
+    configured = config.get("event_risk_rules")
+    if not isinstance(configured, list) or not configured:
+        return [dict(rule) for rule in DEFAULT_EVENT_RISK_RULES]
+    merged = [dict(rule) for rule in DEFAULT_EVENT_RISK_RULES]
+    indexes = {
+        str(rule.get("id") or ""): index
+        for index, rule in enumerate(merged)
+        if str(rule.get("id") or "")
+    }
+    for raw in configured:
+        if not isinstance(raw, dict):
+            continue
+        rule_id = str(raw.get("id") or "")
+        if rule_id and rule_id in indexes:
+            index = indexes[rule_id]
+            merged[index] = {**merged[index], **raw}
+            continue
+        if rule_id:
+            indexes[rule_id] = len(merged)
+        merged.append(dict(raw))
+    return merged
+
+
 def _matches_scope(values: Iterable[str] | None, wanted: str) -> bool:
     choices = {str(item).strip().upper() for item in (values or []) if str(item).strip()}
     return not choices or "*" in choices or str(wanted or "").upper() in choices
@@ -210,10 +240,7 @@ def active_event(config: Dict, symbol: str, period: str, setup_type: str, now: O
             "M1": 60, "M5": 300, "M15": 900, "H1": 3600, "H4": 14400,
         }.get(str(period).upper(), 300)
         return calendar
-    rules = config.get("event_risk_rules")
-    if not isinstance(rules, list) or not rules:
-        rules = DEFAULT_EVENT_RISK_RULES
-    for raw in rules:
+    for raw in effective_event_risk_rules(config):
         if not isinstance(raw, dict) or raw.get("enabled", True) is False:
             continue
         if not _matches_scope(raw.get("symbol_scope"), symbol) or not _matches_scope(raw.get("period_scope"), period):

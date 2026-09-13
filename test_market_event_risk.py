@@ -71,6 +71,40 @@ class MarketEventRiskTests(unittest.TestCase):
         self.assertIsNotNone(breakout)
         self.assertEqual(breakout["id"], "shanghai_futures_afternoon_open")
 
+    @patch("market.services.market_event_risk_service._calendar_events", return_value=[])
+    def test_custom_rollover_supplements_market_open_rules(self, _events):
+        config = {
+            **self.config,
+            "event_risk_rules": [{
+                "id": "beijing_daily_rollover",
+                "label": "北京时间日切换",
+                "event_type": "daily_rollover",
+                "timezone": "Asia/Shanghai",
+                "time": "06:00",
+                "weekdays": list(range(7)),
+                "before_minutes": 0,
+                "after_minutes": 85,
+                "affect_setups": ["pressure_reversal", "pressure_zone_breakout"],
+            }],
+        }
+        rollover_time = int(datetime(
+            2026, 9, 7, 6, 30, tzinfo=ZoneInfo("Asia/Shanghai")
+        ).timestamp())
+        rollover = active_event(
+            config, "BTCUSD#", "M5", "pressure_zone_breakout", rollover_time,
+        )
+        self.assertIsNotNone(rollover)
+        self.assertEqual(rollover["id"], "beijing_daily_rollover")
+
+        new_york_open = int(datetime(
+            2026, 9, 8, 9, 30, tzinfo=ZoneInfo("America/New_York")
+        ).timestamp())
+        opening = active_event(
+            config, "BTCUSD#", "M5", "pressure_zone_breakout", new_york_open,
+        )
+        self.assertIsNotNone(opening)
+        self.assertEqual(opening["id"], "new_york_open")
+
     @patch("market.services.market_event_risk_service._calendar_events")
     def test_nfp_is_l4_even_when_calendar_marks_medium_impact(self, events):
         at = int(datetime(2026, 9, 4, 12, 30, tzinfo=timezone.utc).timestamp())
