@@ -58,6 +58,7 @@ def resolve(
         if normalized is not None:
             base, profile, setup_profile = normalized
             allowed = set(defaults)
+            setup_defaults = base.get("setup_defaults") if isinstance(base.get("setup_defaults"), dict) else {}
             list_inherit = {"allowed_setups", "allowed_directions", "blocked_hours"}
             def merge_layer(target, layer, inherit_empty_lists=False):
                 for key, value in layer.items():
@@ -66,7 +67,11 @@ def resolve(
                     if inherit_empty_lists and key in list_inherit and isinstance(value, list) and not value:
                         continue
                     target[key] = value
+            # setup_defaults is a nested public layer, not an engine option.
+            # Apply it between public structure defaults and symbol/period.
             merge_layer(config, base)
+            if wanted_setup and wanted_setup != "__builder__":
+                merge_layer(config, setup_defaults.get(wanted_setup, {}), inherit_empty_lists=True)
             merge_layer(config, profile, inherit_empty_lists=True)
             merge_layer(config, setup_profile, inherit_empty_lists=True)
             if setup_type == "__builder__":
@@ -99,6 +104,7 @@ def resolve(
                     continue
                 target[key] = value
         merge_layer(config, stored)
+        setup_defaults = stored.get("setup_defaults") if isinstance(stored.get("setup_defaults"), dict) else {}
         wanted_symbol = str(symbol or "").upper()
         wanted_period = str(period or "").upper()
         profiles = stored.get("profiles") or []
@@ -113,6 +119,8 @@ def resolve(
                 and str(profile.get("period") or "").upper() == wanted_period)
         ]
         wanted_setup = str(setup_type or "").strip().lower()
+        if wanted_setup and wanted_setup != "__builder__":
+            merge_layer(config, setup_defaults.get(wanted_setup, {}), inherit_empty_lists=True)
         if wanted_setup:
             for profile in matching:
                 if str(profile.get("setup_type") or "").strip().lower() == wanted_setup:

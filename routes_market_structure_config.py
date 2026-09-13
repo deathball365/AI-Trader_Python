@@ -16,6 +16,10 @@ from llm_governance import AI_SIGNAL_ANALYSIS, STRUCTURE_ANALYSIS
 def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: Dict, engine_manager=None) -> APIRouter:
     router = APIRouter()
     allowed = {**market_defaults, **plan_defaults}
+    # SETUP defaults live inside the public structure configuration.  They are
+    # intentionally kept as a nested map so a setup can inherit the normal
+    # structure defaults while still exposing a single public place to edit it.
+    setup_default_key = "setup_defaults"
     integer_keys = {
         "pivot_legs", "medium_pivot_legs", "large_pivot_legs", "break_confirm_bars",
         "retest_bars", "range_min_touches", "range_min_bars", "min_segment_bars",
@@ -26,6 +30,8 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         "pressure_plan_valid_bars", "pressure_min_event_confidence",
         "zone_lookback_bars", "zone_min_visits", "zone_identity_max_gap_bars",
         "pressure_min_rejections", "pivot_zone_min_points",
+        "confirmation_bars", "max_plan_lifetime_bars",
+        "max_entries_per_opportunity", "cooldown_minutes",
         "event_risk_min_importance", "event_risk_calendar_before_minutes",
         "event_risk_calendar_after_minutes", "event_risk_major_before_minutes",
         "event_risk_major_after_minutes", "event_risk_resume_confirmation_bars",
@@ -40,13 +46,16 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
     inherit_empty_list_keys = {"allowed_setups", "allowed_directions", "blocked_hours"}
 
     ratio_keys = {"zone_min_close_ratio", "pressure_reclaim_ratio", "pressure_min_efficiency"}
+    nonnegative_integer_keys = {"cooldown_minutes"}
 
     def migrate_legacy_config(storage, stored):
         """Materialize the legacy JSON config into normalized MySQL tables."""
         if not isinstance(stored, dict):
             return
         now = int(time.time())
-        base = {k: v for k, v in stored.items() if k in allowed}
+        base = {k: v for k, v in stored.items() if k in allowed or k == setup_default_key}
+        if isinstance(stored.get(setup_default_key), dict):
+            base[setup_default_key] = stored[setup_default_key]
         storage.execute(
             "INSERT INTO structure_default_configs(user_id,version,config_json,updated_at) VALUES(0,1,?,?) "
             "ON DUPLICATE KEY UPDATE config_json=config_json",
@@ -91,7 +100,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         storage.execute(
             "INSERT INTO structure_default_configs(user_id,version,config_json,updated_by,updated_at) VALUES(0,?,?,0,?) "
             "ON DUPLICATE KEY UPDATE version=version+1,config_json=VALUES(config_json),updated_at=VALUES(updated_at)",
-            (default_version, json.dumps({k: cfg.get(k) for k in allowed if k in cfg}, ensure_ascii=False), now),
+            (default_version, json.dumps({k: cfg.get(k) for k in allowed if k in cfg} | ({setup_default_key: cfg.get(setup_default_key, {})} if isinstance(cfg.get(setup_default_key), dict) else {}), ensure_ascii=False), now),
         )
         old_p = {(str(x.get('symbol')).upper(), str(x.get('period')).upper()): x for x in old_profiles}
         active_profiles = set()
@@ -127,7 +136,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             )
         storage.execute(
             "INSERT INTO structure_config_change_logs(user_id,scope,before_json,after_json,source,reason,created_at) VALUES(0,'default',?,?, 'manual', ?, ?) ",
-            (json.dumps(old_default_json, ensure_ascii=False), json.dumps({k: cfg.get(k) for k in allowed if k in cfg}, ensure_ascii=False), reason, now),
+            (json.dumps(old_default_json, ensure_ascii=False), json.dumps({k: cfg.get(k) for k in allowed if k in cfg} | ({setup_default_key: cfg.get(setup_default_key, {})} if isinstance(cfg.get(setup_default_key), dict) else {}), ensure_ascii=False), reason, now),
         )
 
     def as_bool(value, default=False):
@@ -143,14 +152,44 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
 
     @router.get("/admin/market-structure/config", dependencies=[Depends(require_admin)])
     async def get_config(user: AuthUser = Depends(require_admin)):
+        storage = get_storage()
         items = RuntimeStateRepository(0, 0).list_entities("market_structure_config")
-        stored = items[-1] if items else {}
-        migrate_legacy_config(get_storage(), stored)
+        legacy = items[-1] if items and isinstance(items[-1], dict) else {}
+        # Old installations kept the complete configuration in runtime state.
+        # Materialize it once, then always read the normalized MySQL tables so
+        # the UI sees exactly what the save endpoint persisted.
+        migrate_legacy_config(storage, legacy)
+        default_row, profile_rows, setup_rows, decode = read_normalized(storage)
+        normalized_default = decode(default_row)
+        config = {**allowed, **normalized_default}
+        if not normalized_default:
+            config = {**allowed, **{k: v for k, v in legacy.items() if k in allowed}}
+        if not isinstance(config.get(setup_default_key), dict):
+            config[setup_default_key] = legacy.get(setup_default_key, {}) if isinstance(legacy.get(setup_default_key), dict) else {}
+
+        profiles = []
+        for row in profile_rows:
+            item = {"symbol": row.get("symbol"), "period": row.get("period"), **decode(row)}
+            profiles.append(item)
+        if not profiles and isinstance(legacy.get("profiles"), list):
+            profiles = legacy.get("profiles", [])
+
+        setup_profiles = []
+        for row in setup_rows:
+            item = {
+                "symbol": row.get("symbol"),
+                "period": row.get("period"),
+                "setup_type": row.get("setup_type"),
+                **decode(row),
+            }
+            setup_profiles.append(item)
+        if not setup_profiles and isinstance(legacy.get("setup_profiles"), list):
+            setup_profiles = legacy.get("setup_profiles", [])
         return {
             "status": "ok",
-            "config": {**allowed, **{k: v for k, v in stored.items() if k in allowed}},
-            "profiles": stored.get("profiles", []) if isinstance(stored, dict) else [],
-            "setup_profiles": stored.get("setup_profiles", []) if isinstance(stored, dict) else [],
+            "config": {k: v for k, v in config.items() if k in allowed or k == setup_default_key},
+            "profiles": profiles,
+            "setup_profiles": setup_profiles,
         }
 
     @router.get("/admin/market-structure/config/effective", dependencies=[Depends(require_admin)])
@@ -159,9 +198,12 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         effective = resolve_structure_plan_config(symbol, period, setup_type)
         source = {}
         storage = get_storage()
-        _, profiles, setups, decode = read_normalized(storage)
+        default_row, profiles, setups, decode = read_normalized(storage)
         profile_row = next((x for x in profiles if str(x.get('symbol')).upper()==symbol.upper() and str(x.get('period')).upper()==period.upper()), None)
         setup_row = next((x for x in setups if str(x.get('symbol')).upper()==symbol.upper() and str(x.get('period')).upper()==period.upper() and str(x.get('setup_type')).lower()==setup_type.lower()), None)
+        public_default = decode(default_row)
+        setup_defaults = public_default.get("setup_defaults") if isinstance(public_default.get("setup_defaults"), dict) else {}
+        setup_default = setup_defaults.get(setup_type, {}) if setup_type else {}
         profile, setup = decode(profile_row), decode(setup_row)
         def has_override(layer, key):
             if key not in layer:
@@ -169,7 +211,12 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             value = layer.get(key)
             return not (key in inherit_empty_list_keys and isinstance(value, list) and not value)
         for key in effective:
-            source[key] = "setup" if has_override(setup, key) else "symbol_period" if has_override(profile, key) else "default"
+            source[key] = (
+                "setup" if has_override(setup, key)
+                else "symbol_period" if has_override(profile, key)
+                else "setup_default" if has_override(setup_default, key)
+                else "default"
+            )
         return {"status": "ok", "symbol": symbol.upper(), "period": period.upper(), "setup_type": setup_type.lower(), "config": effective, "sources": source}
 
     @router.get("/admin/market-structure/config/overview", dependencies=[Depends(require_admin)])
@@ -228,12 +275,14 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
     @router.put("/admin/market-structure/config", dependencies=[Depends(require_admin)])
     async def put_config(payload: Dict, user: AuthUser = Depends(require_admin)):
         cfg = dict(allowed)
-        def normalize(item, *, setup=False):
-            if not item.get("symbol") or not item.get("period") or (setup and not item.get("setup_type")):
-                return None
-            result = {"symbol": str(item["symbol"]).strip(), "period": str(item["period"]).upper()}
-            if setup:
-                result["setup_type"] = str(item["setup_type"]).strip().lower()
+        def normalize_fields(item):
+            """Normalize one configuration layer using the same rules.
+
+            Public SETUP defaults and symbol/setup overrides must have identical
+            types; otherwise a value saved from the editor can compare unequal
+            to the resolver's value (for example ``"2"`` vs ``2``).
+            """
+            result = {}
             for key in allowed:
                 if key in list_keys and key in item:
                     value = item.get(key)
@@ -254,9 +303,26 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
                         if key in ratio_keys:
                             result[key] = min(1.0, max(0.0, value))
                         else:
-                            result[key] = max(1, int(value)) if key in integer_keys else max(0.0, value)
+                            result[key] = (max(0, int(value)) if key in nonnegative_integer_keys
+                                           else max(1, int(value)) if key in integer_keys
+                                           else max(0.0, value))
                     except (TypeError, ValueError):
                         pass
+            return result
+        setup_defaults = payload.get(setup_default_key)
+        if isinstance(setup_defaults, dict):
+            cfg[setup_default_key] = {
+                str(setup).strip().lower(): normalize_fields(value)
+                for setup, value in setup_defaults.items()
+                if isinstance(value, dict)
+            }
+        def normalize(item, *, setup=False):
+            if not item.get("symbol") or not item.get("period") or (setup and not item.get("setup_type")):
+                return None
+            result = {"symbol": str(item["symbol"]).strip(), "period": str(item["period"]).upper()}
+            if setup:
+                result["setup_type"] = str(item["setup_type"]).strip().lower()
+            result.update(normalize_fields(item))
             return result
         for key in allowed:
             if key in list_keys and key in payload:
@@ -278,15 +344,27 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
                     if key in ratio_keys:
                         cfg[key] = min(1.0, max(0.0, value))
                     else:
-                        cfg[key] = max(1, int(value)) if key in integer_keys else max(0.0, value)
+                        cfg[key] = (max(0, int(value)) if key in nonnegative_integer_keys
+                                    else max(1, int(value)) if key in integer_keys
+                                    else max(0.0, value))
                 except (TypeError, ValueError):
                     pass
+        if not isinstance(cfg.get(setup_default_key), dict):
+            cfg[setup_default_key] = {}
         profiles = [x for x in (normalize(item) for item in (payload.get("profiles") or []) if isinstance(item, dict)) if x]
-        setup_profiles = [x for x in (normalize(item, setup=True) for item in (payload.get("setup_profiles") or []) if isinstance(item, dict)) if x]
+        setup_profiles = []
+        for item in (payload.get("setup_profiles") or []):
+            if not isinstance(item, dict):
+                continue
+            normalized = normalize(item, setup=True)
+            # A metadata-only row is not a real override.  Omitting it lets
+            # persist_normalized mark a previously saved empty override inactive.
+            if normalized and any(k not in {"symbol", "period", "setup_type"} for k in normalized):
+                setup_profiles.append(normalized)
         cfg["profiles"] = profiles; cfg["setup_profiles"] = setup_profiles
         RuntimeStateRepository(0, 0).upsert_entity("market_structure_config", "default", cfg, status="active")
         persist_normalized(get_storage(), cfg, profiles, setup_profiles, str(payload.get("reason") or "手工保存结构分析配置"))
-        return {"status": "ok", "config": {k: v for k, v in cfg.items() if k in allowed}, "profiles": profiles, "setup_profiles": setup_profiles}
+        return {"status": "ok", "config": {k: v for k, v in cfg.items() if k in allowed or k == setup_default_key}, "profiles": profiles, "setup_profiles": setup_profiles}
 
     @router.post("/admin/market-structure/optimize-setups", dependencies=[Depends(require_admin)])
     async def optimize_setups(payload: Dict | None = None, user: AuthUser = Depends(require_admin)):

@@ -131,7 +131,14 @@
               <span class="text-caption text-medium-emphasis">{{ structureConfigSourceLabel }}</span>
             </div>
             <v-divider class="my-5" />
-            <div class="llm-section-head compact"><div><h3>{{ structureConfigScope === 'default' ? '公共默认参数' : '品种/周期专属参数' }}</h3><p>规则引擎用于 Pivot、趋势线、箱体和突破确认。参数修改后，下次行情请求立即使用。</p></div><div class="d-flex ga-2 flex-wrap"><v-btn v-if="structureConfigScope === 'default'" variant="tonal" color="secondary" :disabled="structureEngineSaving" @click="openSaveAsStructureProfile">另存为品种/周期配置</v-btn><v-btn color="primary" :loading="structureEngineSaving" @click="saveStructureEngineConfig">{{ structureConfigScope === 'default' ? '保存公共默认参数' : '保存当前品种/周期参数' }}</v-btn></div></div>
+            <div class="llm-section-head compact"><div><h3>{{ structureConfigScope === 'default' ? '公共默认参数' : '品种/周期专属参数' }}</h3><p>规则引擎用于 Pivot、趋势线、箱体和突破确认。下拉框切换配置范围，所有参数都在这里编辑；未覆盖的字段自动继承公共默认值。</p></div><div class="d-flex ga-2 flex-wrap"><v-btn variant="tonal" color="secondary" :disabled="structureEngineSaving" @click="openSaveAsStructureProfile">另存为品种/周期配置</v-btn><v-btn color="primary" :loading="structureEngineSaving" @click="saveStructureEngineConfig">{{ structureConfigScope === 'default' ? '保存公共默认参数' : '保存当前品种/周期参数' }}</v-btn></div></div>
+            <v-alert v-if="structureConfigScope !== 'default'" type="warning" variant="tonal" density="compact" class="mt-3">
+              <strong>{{ structureConfigSourceLabel }}</strong><br />
+              下面标记的字段是该品种/周期相对公共配置的专属覆盖：
+              <v-chip v-for="field in structureOverrideFields" :key="field" size="x-small" color="warning" class="mx-1 mt-1">{{ field }}</v-chip>
+              <span v-if="!structureOverrideFields.length">暂无专属字段，当前全部继承公共默认值。</span>
+            </v-alert>
+            <v-card variant="tonal" class="mb-4 mt-3"><v-card-text><div class="text-subtitle-2 mb-1">允许交易 SETUP</div><div class="text-caption text-medium-emphasis mb-2">默认全部选中。品种/周期配置可以单独调整；未保存专项覆盖时继承公共默认。</div><v-select v-model="structureEngineConfig.allowed_setups" :items="structureSetupTypes" item-title="label" item-value="value" multiple chips closable-chips label="选择允许自动生成交易计划的 SETUP" hint="这里只控制结构计划是否允许交易，不影响结构识别和第三层 SETUP 专属参数。" persistent-hint density="compact" variant="outlined" /></v-card-text></v-card>
             <v-row class="mt-2">
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pivot_legs" type="number" min="2" max="12" label="小级别 Pivot 腿数" hint="左右各观察几根K线" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.medium_pivot_legs" type="number" min="3" max="30" label="中级别 Pivot 腿数" density="compact" variant="outlined" /></v-col>
@@ -221,34 +228,34 @@
             <v-alert type="info" variant="tonal" density="compact" class="mt-4 mb-3">
               配置按三层生效：<strong>公共默认参数 → 品种+周期参数 → 品种+周期+SETUP 参数</strong>。越靠后的配置优先级越高；没有填写的项目会自动沿用上一层。比如只给 GOLD_ M5 设置参数，不会影响 BTCUSD 或其他周期。
             </v-alert>
-            <div class="llm-section-head compact mt-4"><div><h3>第二层：品种 + 周期配置</h3><p>控制这个品种在这个周期允许使用哪些 SETUP，并覆盖该组合的公共参数。</p></div></div>
-            <div class="d-flex flex-wrap ga-2 align-center">
-              <v-select v-model="structureProfileDraft.symbol" :items="symbols" label="品种" density="compact" variant="outlined" hide-details style="max-width:220px" />
-              <v-select v-model="structureProfileDraft.period" :items="['M1','M5','M15','H1','H4']" label="周期" density="compact" variant="outlined" hide-details style="max-width:150px" />
-              <v-select v-model="structureProfileDraft.allowed_setups" :items="structureSetupTypes" item-title="label" item-value="value" label="允许交易 SETUP（不选=全部）" multiple chips closable-chips density="compact" variant="outlined" hide-details style="min-width:320px;max-width:520px" />
-              <v-btn color="secondary" variant="tonal" :loading="structureEngineSaving" @click="saveStructureProfile">保存品种/周期配置</v-btn>
+            <div class="llm-section-head compact mt-4"><div><h3>第三层：SETUP 参数</h3><p>公共 SETUP 默认和品种 · 周期 · SETUP 专项配置在同一编辑区完成。专项只保存相对公共默认的覆盖字段。</p></div><div class="d-flex ga-2"><v-btn size="small" color="primary" variant="tonal" :loading="structureOptimizerRunning" @click="optimizeStructureSetups">生成历史优化建议</v-btn><v-btn size="small" variant="tonal" color="secondary" :disabled="structureEngineSaving || !structureSetupScope" @click="openSaveAsStructureSetup">另存为品种/周期/SETUP</v-btn></div></div>
+            <div class="d-flex flex-wrap ga-2 align-center mb-2">
+              <v-select v-model="structureSetupScope" :items="structureSetupScopeOptions" item-title="label" item-value="value" label="当前查看的 SETUP 配置" density="compact" variant="outlined" hide-details style="min-width:340px;max-width:520px" @update:model-value="selectStructureSetupScope" />
+              <v-chip v-if="structureSetupScope?.startsWith('default::')" color="primary" variant="tonal">公共默认</v-chip>
+              <v-chip v-else-if="structureSetupScope" color="warning" variant="tonal">专项覆盖</v-chip>
             </div>
-            <v-alert v-if="structureConfigScope !== 'default'" type="warning" variant="tonal" density="compact" class="mt-3">
-              <strong>{{ structureConfigSourceLabel }}</strong><br />
-              下面标记的字段是该品种/周期相对公共配置的专属覆盖：
-              <v-chip v-for="field in structureOverrideFields" :key="field" size="x-small" color="warning" class="mx-1 mt-1">{{ field }}</v-chip>
-              <span v-if="!structureOverrideFields.length">暂无专属字段，当前全部继承公共默认值。</span>
+            <v-alert v-if="structureSetupScope && !structureSetupScope.startsWith('default::')" type="warning" variant="tonal" density="compact" class="mb-3">
+              <div class="d-flex flex-wrap align-center ga-2">
+                <span>当前专项相对公共默认的覆盖字段：</span>
+                <v-chip v-for="field in structureSetupOverrideFields" :key="field" size="x-small" color="warning">{{ field }}</v-chip>
+                <span v-if="!structureSetupOverrideFields.length">暂无覆盖，当前全部继承公共默认。</span>
+                <v-spacer />
+                <v-btn size="small" color="warning" variant="text" :loading="structureEngineSaving" @click="clearCurrentStructureSetupOverride">清除专项，恢复公共默认</v-btn>
+              </div>
             </v-alert>
-            <div class="llm-section-head compact mt-4"><div><h3>第三层：品种 + 周期 + SETUP 配置</h3><p>只影响选中的一个 SETUP。例如 BTCUSD · M5 · range_breakout，不会影响同品种的其他 SETUP。</p></div><v-btn size="small" color="primary" variant="tonal" :loading="structureOptimizerRunning" @click="optimizeStructureSetups">生成历史优化建议</v-btn></div>
             <div class="d-flex flex-wrap ga-2 align-center">
-              <v-select v-model="structureSetupProfileDraft.symbol" :items="symbols" label="品种" density="compact" variant="outlined" hide-details style="max-width:200px" />
-              <v-select v-model="structureSetupProfileDraft.period" :items="['M1','M5','M15','H1','H4']" label="周期" density="compact" variant="outlined" hide-details style="max-width:130px" />
-              <v-select v-model="structureSetupProfileDraft.setup_type" :items="structureSetupTypes" item-title="label" item-value="value" label="Setup" density="compact" variant="outlined" hide-details style="max-width:250px" />
               <v-switch v-model="structureSetupProfileDraft.enabled" color="primary" inset hide-details label="允许交易" />
-              <v-select v-model="structureSetupProfileDraft.allowed_directions" :items="['buy','sell']" label="方向" multiple chips density="compact" variant="outlined" hide-details style="max-width:180px" />
-              <v-select v-model="structureSetupProfileDraft.entry_mode" :items="['touch_or_near','touch_and_reclaim','breakout_retest','close_breakout']" label="入场方式" density="compact" variant="outlined" hide-details style="max-width:190px" />
+              <v-select v-model="structureSetupProfileDraft.allowed_directions" :items="[{title:'买入',value:'buy'},{title:'卖出',value:'sell'}]" item-title="title" item-value="value" label="允许方向" multiple chips density="compact" variant="outlined" hide-details style="max-width:190px" />
+              <v-select v-model="structureSetupProfileDraft.entry_mode" :items="[{title:'触碰或接近',value:'touch_or_near'},{title:'触碰并收回',value:'touch_and_reclaim'},{title:'突破回踩',value:'breakout_retest'},{title:'收盘突破',value:'close_breakout'}]" item-title="title" item-value="value" label="入场方式" density="compact" variant="outlined" hide-details style="max-width:190px" />
               <v-text-field v-model.number="structureSetupProfileDraft.confirmation_bars" type="number" min="1" max="10" label="确认K线" density="compact" variant="outlined" hide-details style="max-width:110px" />
               <v-text-field v-model.number="structureSetupProfileDraft.min_displacement_atr" type="number" min="0" step="0.1" label="最小位移 ATR" density="compact" variant="outlined" hide-details style="max-width:140px" />
+              <v-text-field v-model.number="structureSetupProfileDraft.min_body_atr" type="number" min="0" step="0.1" label="突破实体 ATR" density="compact" variant="outlined" hide-details style="max-width:130px" />
               <v-switch v-model="structureSetupProfileDraft.require_reclaim" color="primary" inset hide-details label="要求回收" />
               <v-text-field v-model.number="structureSetupProfileDraft.min_real_risk_reward" type="number" min="0" step="0.1" label="最低盈亏比" density="compact" variant="outlined" hide-details style="max-width:130px" />
               <v-text-field v-model.number="structureSetupProfileDraft.entry_zone_atr" type="number" min="0" step="0.05" label="入场 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
               <v-text-field v-model.number="structureSetupProfileDraft.stop_buffer_atr" type="number" min="0" step="0.05" label="止损 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
               <v-text-field v-model.number="structureSetupProfileDraft.target_buffer_atr" type="number" min="0" step="0.05" label="止盈 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
+              <v-text-field v-model.number="structureSetupProfileDraft.max_plan_lifetime_bars" type="number" min="10" max="1000" label="计划安全兜底（K线）" hint="结构事件未发生时的最长保留上限" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
               <template v-if="structureSetupProfileDraft.setup_type === 'pressure_reversal' || structureSetupProfileDraft.setup_type === 'pressure_zone_breakout'">
                 <v-text-field v-model.number="structureSetupProfileDraft.pressure_min_rejections" type="number" min="1" label="密集区最少拒绝次数" density="compact" variant="outlined" hide-details style="max-width:150px" />
                 <v-text-field v-model.number="structureSetupProfileDraft.pressure_min_displacement_atr" type="number" min="0" step="0.1" label="密集区最小位移 ATR" density="compact" variant="outlined" hide-details style="max-width:160px" />
@@ -260,7 +267,7 @@
                 <v-switch v-model="structureSetupProfileDraft.invalidate_on_zone_return" color="primary" inset hide-details label="回到区域即失效" />
                 <v-text-field v-model.number="structureSetupProfileDraft.retest_tolerance_atr" type="number" min="0" step="0.05" label="回踩容差 ATR" density="compact" variant="outlined" hide-details style="max-width:130px" />
               </template>
-              <v-btn color="secondary" variant="tonal" :loading="structureEngineSaving" @click="saveStructureSetupProfile">保存当前 SETUP 配置</v-btn>
+              <v-btn color="primary" variant="tonal" :loading="structureEngineSaving" @click="saveStructureSetupConfig">{{ structureSetupScope?.startsWith('default::') ? '保存公共 SETUP 默认' : '保存当前 SETUP 专项' }}</v-btn>
             </div>
             <v-dialog v-model="structureOptimizerPreviewOpen" max-width="1100">
               <v-card>
@@ -1518,6 +1525,19 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="saveAsStructureSetupOpen" max-width="560">
+      <v-card>
+        <v-card-title>另存为品种 · 周期 · SETUP 专项</v-card-title>
+        <v-card-text>
+          <p class="text-body-2 mb-4">从当前公共默认或已有专项复制参数。保存后只记录相对公共默认的显式覆盖，未修改字段继续继承公共默认。</p>
+          <v-select v-model="saveAsStructureSetupDraft.symbol" :items="symbols" label="品种" density="compact" variant="outlined" :disabled="structureEngineSaving" />
+          <v-select v-model="saveAsStructureSetupDraft.period" :items="['M1','M5','M15','H1','H4']" label="周期" density="compact" variant="outlined" :disabled="structureEngineSaving" />
+          <v-select v-model="saveAsStructureSetupDraft.setup_type" :items="structureSetupTypes" item-title="label" item-value="value" label="SETUP" density="compact" variant="outlined" :disabled="structureEngineSaving" />
+        </v-card-text>
+        <v-card-actions><v-spacer/><v-btn variant="text" @click="saveAsStructureSetupOpen=false">取消</v-btn><v-btn color="primary" :loading="structureEngineSaving" :disabled="!saveAsStructureSetupDraft.symbol || !saveAsStructureSetupDraft.setup_type" @click="saveAsStructureSetup">保存专项</v-btn></v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-dialog v-model="structureEffectiveDialog" max-width="900"><v-card><v-card-title>最终生效配置 · {{ structureEffectiveTarget.symbol }} · {{ structureEffectiveTarget.period }}<span v-if="structureEffectiveTarget.setupType"> · {{ setupTypeLabel(structureEffectiveTarget.setupType) }}</span></v-card-title><v-card-text><v-progress-linear v-if="structureEffectiveLoading" indeterminate /><v-table v-else-if="structureEffective" density="compact"><thead><tr><th>字段</th><th>最终值</th><th>来源</th></tr></thead><tbody><tr v-for="(value,key) in structureEffective.config" :key="key" :class="{ 'bg-green-lighten-5': structureEffective.sources?.[key] !== 'default' }"><td>{{ structureFieldLabels[key] || key }}</td><td class="text-caption">{{ formatStructureValue(value) }}</td><td><v-chip size="x-small" :color="structureEffective.sources?.[key] !== 'default' ? 'primary' : 'grey'" variant="tonal">{{ structureSourceLabel(structureEffective.sources?.[key]) }}</v-chip></td></tr></tbody></v-table></v-card-text><v-card-actions><v-spacer/><v-btn variant="text" @click="structureEffectiveDialog=false">关闭</v-btn></v-card-actions></v-card></v-dialog>
 
     <!-- 错误提示 -->
@@ -1551,11 +1571,11 @@ export default {
     const pageTitle = computed(() => isStrategyPage.value ? '策略管理' : '用户配置')
     const settingsTab = ref('account')
     const llmWorkspaceTab = ref('providers')
-    const structureEngineConfig = ref({ pivot_legs: 3, medium_pivot_legs: 8, large_pivot_legs: 25, min_reversal_atr: 0.5, break_buffer_atr: 0.1, break_confirm_bars: 2, retest_bars: 2, displacement_atr: 0.8, range_touch_tolerance: 0.003, range_touch_atr: 0.45, range_min_touches: 2, range_min_inside_ratio: 0.65, range_min_bars: 24, range_max_atr: 8, min_segment_bars: 12, trendline_touch_atr: 0.5, trendline_min_touches: 2, trendline_min_bars: 18, trend_min_direction_ratio: 0.62, trend_relaxed_direction_ratio: 0.55, trend_min_efficiency: 0.30, trend_min_net_change_atr: 1.5, trend_push_decay_ratio: 0.75, trend_mature_pullback_ratio: 0.45, trend_weakening_pullback_ratio: 0.618, trend_require_healthy_phase: true, trend_mature_retest_only: true, trend_normal_stop_atr: 2.5, trend_retest_stop_atr: 4, trend_max_stop_atr: 6, choch_max_stop_atr: 3, entry_zone_atr: 0.35, stop_buffer_atr: 0.25, min_real_risk_reward: 1.2, trend_min_real_risk_reward: 0.5, location_reclaim_min_body_atr: 0.3, location_reclaim_min_close_extension_atr: 0.1, location_require_swing_external_alignment: true, location_require_internal_confirmation: true, min_breakout_displacement_atr: 0.6, trend_max_event_age_bars_m1: 5, trend_max_event_age_bars_other: 3, trend_continuation_hold_bars: 2, breakout_target_atr: 3, breakout_retest_valid_bars: 6, triangle_breakout_min_body_atr: 0.5, triangle_breakout_min_close_extension_atr: 0.1, triangle_breakout_require_swing_external_alignment: true, enable_triangle_prebreakout: true, require_location_reclaim: true, event_risk_enabled: true, event_risk_rules: [], event_risk_min_importance: 3, event_risk_calendar_before_minutes: 30, event_risk_calendar_after_minutes: 45, event_risk_major_before_minutes: 45, event_risk_resume_confirmation_bars: 1, enable_zone_pressure: true, zone_pressure_enabled: true, zone_lookback_bars: 80, zone_bin_atr: 0.5, zone_min_close_ratio: 0.2, zone_min_visits: 3, zone_leave_atr: 0.5, zone_max_width_atr: 2, zone_identity_match_atr: 0.75, zone_identity_max_gap_bars: 2, pressure_touch_atr: 0.35, pressure_min_rejections: 3, pressure_reclaim_ratio: 0.5, pressure_min_displacement_atr: 0.8, pressure_min_efficiency: 0.55, pivot_zone_enabled: true, pivot_zone_merge_atr: 0.45, pivot_zone_min_points: 1, pressure_plan_valid_bars: 6, pressure_breakout_target_multiple: 2, pressure_min_event_confidence: 65 })
+    const structureEngineConfig = ref({ allowed_setups: [], pivot_legs: 3, medium_pivot_legs: 8, large_pivot_legs: 25, min_reversal_atr: 0.5, break_buffer_atr: 0.1, break_confirm_bars: 2, retest_bars: 2, displacement_atr: 0.8, range_touch_tolerance: 0.003, range_touch_atr: 0.45, range_min_touches: 2, range_min_inside_ratio: 0.65, range_min_bars: 24, range_max_atr: 8, min_segment_bars: 12, trendline_touch_atr: 0.5, trendline_min_touches: 2, trendline_min_bars: 18, trend_min_direction_ratio: 0.62, trend_relaxed_direction_ratio: 0.55, trend_min_efficiency: 0.30, trend_min_net_change_atr: 1.5, trend_push_decay_ratio: 0.75, trend_mature_pullback_ratio: 0.45, trend_weakening_pullback_ratio: 0.618, trend_require_healthy_phase: true, trend_mature_retest_only: true, trend_normal_stop_atr: 2.5, trend_retest_stop_atr: 4, trend_max_stop_atr: 6, choch_max_stop_atr: 3, entry_zone_atr: 0.35, stop_buffer_atr: 0.25, min_real_risk_reward: 1.2, trend_min_real_risk_reward: 0.5, location_reclaim_min_body_atr: 0.3, location_reclaim_min_close_extension_atr: 0.1, location_require_swing_external_alignment: true, location_require_internal_confirmation: true, min_breakout_displacement_atr: 0.6, trend_max_event_age_bars_m1: 5, trend_max_event_age_bars_other: 3, trend_continuation_hold_bars: 2, breakout_target_atr: 3, breakout_retest_valid_bars: 6, triangle_breakout_min_body_atr: 0.5, triangle_breakout_min_close_extension_atr: 0.1, triangle_breakout_require_swing_external_alignment: true, enable_triangle_prebreakout: true, require_location_reclaim: true, event_risk_enabled: true, event_risk_rules: [], event_risk_min_importance: 3, event_risk_calendar_before_minutes: 30, event_risk_calendar_after_minutes: 45, event_risk_major_before_minutes: 45, event_risk_resume_confirmation_bars: 1, enable_zone_pressure: true, zone_pressure_enabled: true, zone_lookback_bars: 80, zone_bin_atr: 0.5, zone_min_close_ratio: 0.2, zone_min_visits: 3, zone_leave_atr: 0.5, zone_max_width_atr: 2, zone_identity_match_atr: 0.75, zone_identity_max_gap_bars: 2, pressure_touch_atr: 0.35, pressure_min_rejections: 3, pressure_min_displacement_atr: 0.8, pressure_min_efficiency: 0.55, pivot_zone_enabled: true, pivot_zone_merge_atr: 0.45, pivot_zone_min_points: 1, pressure_plan_valid_bars: 6, pressure_breakout_target_multiple: 2, pressure_min_event_confidence: 65 })
     const structureGlobalConfig = ref({ ...structureEngineConfig.value })
     const structureEngineSaving = ref(false)
     const structureProfiles = ref([])
-    const structureProfileDraft = ref({ symbol: '', period: 'M5', allowed_setups: [] })
+    const structureProfileDraft = ref({ symbol: '', period: 'M5' })
     const saveAsStructureProfileOpen = ref(false)
     const saveAsStructureProfileDraft = ref({ symbol: '', period: 'M5' })
     const structureConfigScope = ref('default')
@@ -1588,6 +1608,9 @@ export default {
     })
     const structureSetupProfiles = ref([])
     const structureSetupScope = ref('')
+    const structureSetupDefaults = ref({})
+    const saveAsStructureSetupOpen = ref(false)
+    const saveAsStructureSetupDraft = ref({ symbol: '', period: 'M5', setup_type: '' })
     const structureOptimizerRunning = ref(false)
     const structureOptimizerApplying = ref(false)
     const structureOptimizerPreviewOpen = ref(false)
@@ -1604,8 +1627,73 @@ export default {
     const structureEffectiveTarget = ref({ symbol: '', period: '', setupType: '' })
     const structureHistory = ref([])
     const structureHistoryLoading = ref(false)
-    const structureFieldLabels = { min_real_risk_reward: '最低真实盈亏比', entry_mode: '入场方式', require_reclaim: '要求回收确认', confirmation_bars: '确认 K 线数', min_displacement_atr: '最小位移 ATR', cooldown_minutes: '冷却分钟' }
-    const structureSourceLabel = value => ({ default: '公共默认', symbol_period: '品种/周期', setup: 'SETUP' }[value] || value || '--')
+    // Keep the effective-config dialog readable for administrators.  The
+    // resolver still works with stable machine keys, but the UI should never
+    // fall back to keys such as `pressure_min_efficiency` when a saved field
+    // is selected.  This also makes the source/override comparison useful
+    // when reviewing a symbol-period-setup exception.
+    const structureFieldLabels = {
+      enabled: '允许交易',
+      allowed_setups: '允许交易 SETUP',
+      allowed_directions: '允许方向',
+      blocked_hours: '禁止时段',
+      entry_mode: '入场方式',
+      confirmation_bars: '确认 K 线数',
+      min_displacement_atr: '最小位移 ATR',
+      min_body_atr: '突破实体 ATR',
+      min_real_risk_reward: '最低真实盈亏比',
+      trend_min_real_risk_reward: '趋势最低真实盈亏比',
+      require_reclaim: '要求回收确认',
+      require_retest: '要求回踩确认',
+      retest_tolerance_atr: '回踩容差 ATR',
+      entry_zone_atr: '入场区域 ATR',
+      stop_buffer_atr: '止损缓冲 ATR',
+      target_buffer_atr: '止盈缓冲 ATR',
+      target_multiple: '目标倍数',
+      max_entries_per_opportunity: '单机会最大入场次数',
+      cooldown_minutes: '冷却分钟',
+      invalidate_on_zone_return: '回到区域即失效',
+      max_plan_lifetime_bars: '计划安全兜底 K 线数',
+      pivot_legs: '小级别 Pivot 腿数',
+      medium_pivot_legs: '中级别 Pivot 腿数',
+      large_pivot_legs: '大级别 Pivot 腿数',
+      min_reversal_atr: '最小反转幅度 ATR',
+      break_buffer_atr: '突破缓冲 ATR',
+      break_confirm_bars: '突破确认 K 线数',
+      range_min_touches: '箱体最少触碰次数',
+      range_min_inside_ratio: '箱体内部收盘比例',
+      trend_min_efficiency: '趋势最小方向效率',
+      trend_min_net_change_atr: '趋势最小净位移 ATR',
+      trend_continuation_hold_bars: '趋势延续保持 K 线数',
+      zone_pressure_enabled: '启用成交密集区识别',
+      zone_lookback_bars: '密集区回看 K 线数',
+      zone_bin_atr: '密集区价格桶 ATR',
+      zone_min_visits: '密集区最少访问次数',
+      pressure_min_rejections: '密集区最少拒绝次数',
+      pressure_min_displacement_atr: '密集区最小位移 ATR',
+      pressure_min_efficiency: '密集区最小效率',
+      pressure_reclaim_ratio: '密集区回收比例',
+      pivot_zone_enabled: '启用 Pivot 支撑阻力融合',
+      pivot_zone_min_points: 'Pivot 区域最少点数',
+      enable_zone_pressure: '生成密集区交易计划',
+      pressure_plan_valid_bars: '密集区计划有效 K 线数',
+      pressure_breakout_target_multiple: '密集区突破目标倍数',
+      pressure_min_event_confidence: '密集区最低事件置信度',
+      target_multiple: '目标倍数',
+      enable_range_boundary: '启用箱体边界计划',
+      enable_range_breakout: '启用箱体突破计划',
+      enable_choch: '启用 CHOCH 计划',
+      enable_liquidity_sweep: '启用流动性扫单计划',
+      enable_trend: '启用趋势计划',
+      event_risk_enabled: '启用事件风险规避',
+      event_risk_min_importance: '日历最低影响级别',
+      event_risk_calendar_before_minutes: '普通事件前暂停分钟',
+      event_risk_calendar_after_minutes: '普通事件后暂停分钟',
+      event_risk_major_before_minutes: '重大事件前暂停分钟',
+      event_risk_major_after_minutes: '重大事件后暂停分钟',
+      event_risk_resume_confirmation_bars: '事件后恢复确认 K 线数',
+    }
+    const structureSourceLabel = value => ({ default: '公共默认', setup_default: '公共 SETUP 默认', symbol_period: '品种/周期', setup: '品种/周期/SETUP' }[value] || value || '--')
     const formatStructureValue = value => {
       if (value === null || value === undefined) return '--'
       if (typeof value === 'boolean') return value ? '是' : '否'
@@ -1613,10 +1701,63 @@ export default {
       if (typeof value === 'object') return JSON.stringify(value)
       return String(value)
     }
-    const structureSetupProfileDraft = ref({ symbol: '', period: 'M5', setup_type: 'structure_location_pullback', enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '', confirmation_bars: null, min_displacement_atr: null, require_reclaim: null, min_real_risk_reward: null, entry_zone_atr: null, stop_buffer_atr: null, target_buffer_atr: null, pressure_min_rejections: null, pressure_min_displacement_atr: null, pressure_min_efficiency: null, target_multiple: null, max_entries_per_opportunity: null, cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null, invalidate_on_zone_return: null })
+    const structureSetupProfileDraft = ref({ symbol: '', period: 'M5', setup_type: 'structure_location_pullback', enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '', confirmation_bars: null, min_displacement_atr: null, min_body_atr: null, require_reclaim: null, min_real_risk_reward: null, entry_zone_atr: null, stop_buffer_atr: null, target_buffer_atr: null, pressure_min_rejections: null, pressure_min_displacement_atr: null, pressure_min_efficiency: null, target_multiple: null, max_entries_per_opportunity: null, cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null, invalidate_on_zone_return: null })
     const setupTypeNames = { pressure_reversal: '密集区反转', pressure_zone_breakout: '密集区突破', structure_location_pullback: '结构位置回撤', range_lower_reversal: '箱体下沿反转', range_upper_reversal: '箱体上沿反转', range_breakout: '箱体突破', range_false_breakout: '箱体假突破', triangle_breakout: '三角形突破', triangle_breakout_watch: '三角形突破观察', triangle_prebreakout_pullback: '三角形提前回撤', choch_reversal: 'CHOCH反转', liquidity_sweep_reclaim: '流动性扫单回收', trend_continuation: '趋势延续', structure_reversal: '结构反转' }
     const setupTypeLabel = type => setupTypeNames[type] || type
     const structureSetupTypes = Object.keys(setupTypeNames).map(value => ({ value, label: setupTypeNames[value] }))
+    const setupFieldKeys = ['enabled', 'allowed_directions', 'entry_mode', 'confirmation_bars', 'min_displacement_atr', 'min_body_atr', 'require_reclaim', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'target_buffer_atr', 'pressure_min_rejections', 'pressure_min_displacement_atr', 'pressure_min_efficiency', 'target_multiple', 'max_entries_per_opportunity', 'cooldown_minutes', 'require_retest', 'retest_tolerance_atr', 'invalidate_on_zone_return', 'max_plan_lifetime_bars']
+    const setupFieldLabels = { enabled: '允许交易', allowed_directions: '允许方向', entry_mode: '入场方式', confirmation_bars: '确认 K 线数', min_displacement_atr: '最小位移 ATR', min_body_atr: '突破实体 ATR', require_reclaim: '要求回收', min_real_risk_reward: '最低盈亏比', entry_zone_atr: '入场 ATR', stop_buffer_atr: '止损 ATR', target_buffer_atr: '止盈 ATR', pressure_min_rejections: '密集区拒绝次数', pressure_min_displacement_atr: '密集区最小位移 ATR', pressure_min_efficiency: '密集区最小效率', target_multiple: '目标倍数', max_entries_per_opportunity: '机会最大入场次数', cooldown_minutes: '冷却分钟', require_retest: '要求回踩', retest_tolerance_atr: '回踩容差 ATR', invalidate_on_zone_return: '回到区域即失效', max_plan_lifetime_bars: '最大计划 K 线数' }
+    // The API may return an older/incomplete setup_defaults row.  Keep the
+    // editor aligned with the runtime resolver by filling every setup field
+    // from the same conservative public defaults before applying saved
+    // overrides.  This also makes "另存为" compare against the real effective
+    // public value instead of persisting a large set of meaningless overrides.
+    const setupRuntimeDefaults = {
+      enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '',
+      confirmation_bars: 1, min_displacement_atr: 0, min_body_atr: 0, require_reclaim: false,
+      min_real_risk_reward: 1.2, entry_zone_atr: 0.35, stop_buffer_atr: 0.25,
+      target_buffer_atr: 0.1, pressure_min_rejections: 3,
+      pressure_min_displacement_atr: 0.8, pressure_min_efficiency: 0.55,
+      target_multiple: 2, max_entries_per_opportunity: 1, cooldown_minutes: 0,
+      require_retest: true, retest_tolerance_atr: 0.35,
+      invalidate_on_zone_return: true, max_plan_lifetime_bars: 100,
+    }
+    const makeSetupDefault = setupType => ({
+      ...setupRuntimeDefaults,
+      ...(structureSetupDefaults.value[setupType] || {}),
+    })
+    const normalizeSetupScopeSymbol = value => String(value || '').trim().toUpperCase()
+    const normalizeSetupScopePeriod = value => String(value || '').trim().toUpperCase()
+    const normalizeSetupScopeType = value => {
+      if (value && typeof value === 'object') return String(value.value || '').trim().toLowerCase()
+      return String(value || '').trim().toLowerCase()
+    }
+    const structureSetupScopeOptions = computed(() => [
+      ...structureSetupTypes.map(item => ({ label: `公共默认 · ${item.label}`, value: `default::${item.value}` })),
+      ...structureSetupProfiles.value
+        .map(item => ({
+          symbol: normalizeSetupScopeSymbol(item.symbol),
+          period: normalizeSetupScopePeriod(item.period),
+          setup_type: normalizeSetupScopeType(item.setup_type),
+        }))
+        .filter(item => item.symbol && item.period && item.setup_type)
+        .filter((item, index, all) => all.findIndex(other => other.symbol === item.symbol && other.period === item.period && other.setup_type === item.setup_type) === index)
+        .map(item => ({ label: `${item.symbol} · ${item.period} · ${setupTypeLabel(item.setup_type)} 专项`, value: `${item.symbol}::${item.period}::${item.setup_type}` }))
+    ])
+    const setupProfileForScope = scope => {
+      if (!scope || scope.startsWith('default::')) return null
+      const [symbol, period, setupType] = scope.split('::')
+      const normalizedSymbol = normalizeSetupScopeSymbol(symbol)
+      const normalizedPeriod = normalizeSetupScopePeriod(period)
+      const normalizedSetupType = normalizeSetupScopeType(setupType)
+      return structureSetupProfiles.value.find(item => normalizeSetupScopeSymbol(item.symbol) === normalizedSymbol && normalizeSetupScopePeriod(item.period) === normalizedPeriod && normalizeSetupScopeType(item.setup_type) === normalizedSetupType) || null
+    }
+    const structureSetupOverrideFields = computed(() => {
+      const profile = setupProfileForScope(structureSetupScope.value)
+      if (!profile) return []
+      const base = makeSetupDefault(profile.setup_type)
+      return setupFieldKeys.filter(key => profile[key] !== undefined && JSON.stringify(profile[key]) !== JSON.stringify(base[key])).map(key => setupFieldLabels[key] || key)
+    })
     // Profiles created by older builds may contain setup objects instead of
     // setup ids.  Keep the select model normalized to string ids so Vuetify
     // renders labels instead of coercing objects to "Object".
@@ -1624,6 +1765,16 @@ export default {
       .map(item => (item && typeof item === 'object') ? item.value : item)
       .map(value => String(value || '').trim())
       .filter(Boolean)
+    const allStructureSetupValues = () => structureSetupTypes.map(item => item.value)
+    const persistAllowedSetups = value => {
+      const normalized = normalizeSetupValues(value)
+      const all = new Set(allStructureSetupValues())
+      return normalized.length === all.size && normalized.every(item => all.has(item)) ? [] : normalized
+    }
+    const effectiveAllowedSetups = (value, fallback = []) => {
+      const normalized = normalizeSetupValues(value)
+      return normalized.length ? normalized : (fallback.length ? normalizeSetupValues(fallback) : allStructureSetupValues())
+    }
 
     // 交易配置
     const tradeConfig = ref({
@@ -2006,12 +2157,24 @@ export default {
           loadTradeConfig(), loadSymbols()
         ])
         const engineData = await marketAPI.getMarketStructureConfig()
-        structureEngineConfig.value = { ...structureEngineConfig.value, ...(engineData.config || {}) }
+        const rawConfig = engineData.config || {}
+        const { setup_defaults: rawSetupDefaults, ...structureConfig } = rawConfig
+        structureSetupDefaults.value = { ...(rawSetupDefaults || {}) }
+        for (const item of structureSetupTypes) {
+          if (!structureSetupDefaults.value[item.value]) {
+            structureSetupDefaults.value[item.value] = { enabled: true, allowed_directions: ['buy', 'sell'] }
+          }
+        }
+        structureEngineConfig.value = { ...structureEngineConfig.value, ...structureConfig }
+        structureEngineConfig.value.allowed_setups = effectiveAllowedSetups(structureEngineConfig.value.allowed_setups)
         structureGlobalConfig.value = { ...structureEngineConfig.value }
         structureProfiles.value = (Array.isArray(engineData.profiles) ? engineData.profiles : [])
           .map(profile => ({ ...profile, allowed_setups: normalizeSetupValues(profile.allowed_setups) }))
         structureConfigScope.value = 'default'
-        structureSetupProfiles.value = Array.isArray(engineData.setup_profiles) ? engineData.setup_profiles : []
+        structureSetupProfiles.value = (Array.isArray(engineData.setup_profiles) ? engineData.setup_profiles : [])
+          .map(item => ({ ...item, allowed_directions: normalizeSetupValues(item.allowed_directions) }))
+        structureSetupScope.value = `default::${structureSetupTypes[0]?.value || 'structure_location_pullback'}`
+        selectStructureSetupScope(structureSetupScope.value)
         await Promise.all([loadStructureOverview(), loadStructureHistory()])
         await loadIBKRConfig()
         await loadTickPersistenceConfig()
@@ -2023,26 +2186,57 @@ export default {
       }
     }
 
-    const saveStructureEngineConfig = async () => {
-      structureEngineSaving.value = true
+    const saveStructureEngineConfig = async (manageLoading = true) => {
+      if (manageLoading) structureEngineSaving.value = true
       try {
-        let payload = { ...structureEngineConfig.value, profiles: structureProfiles.value, setup_profiles: structureSetupProfiles.value }
+        const sanitizedProfiles = structureProfiles.value.map(profile => ({ ...profile, allowed_setups: persistAllowedSetups(profile.allowed_setups) }))
+        let payload = { ...structureEngineConfig.value, profiles: sanitizedProfiles, setup_profiles: structureSetupProfiles.value, setup_defaults: structureSetupDefaults.value }
         if (structureConfigScope.value !== 'default') {
           const [symbol, period] = structureConfigScope.value.split('::')
-          const item = { symbol, period, ...structureEngineConfig.value }
+          const item = { symbol, period, ...structureEngineConfig.value, allowed_setups: persistAllowedSetups(structureEngineConfig.value.allowed_setups) }
           const index = structureProfiles.value.findIndex(x => x.symbol === symbol && x.period === period)
           if (index >= 0) structureProfiles.value.splice(index, 1, item); else structureProfiles.value.push(item)
-          payload = { ...structureEngineConfig.value, profiles: structureProfiles.value, setup_profiles: structureSetupProfiles.value }
+          payload = { ...structureGlobalConfig.value, profiles: structureProfiles.value, setup_profiles: structureSetupProfiles.value, setup_defaults: structureSetupDefaults.value }
         }
         const data = await marketAPI.saveMarketStructureConfig(payload)
-        structureEngineConfig.value = { ...structureEngineConfig.value, ...(data.config || {}) }
-        if (structureConfigScope.value === 'default') structureGlobalConfig.value = { ...structureEngineConfig.value }
+        if (structureConfigScope.value === 'default') {
+          const savedConfig = data.config || {}
+          const { setup_defaults: savedSetupDefaults, ...savedStructureConfig } = savedConfig
+          if (savedSetupDefaults && typeof savedSetupDefaults === 'object') structureSetupDefaults.value = { ...structureSetupDefaults.value, ...savedSetupDefaults }
+          structureEngineConfig.value = { ...structureEngineConfig.value, ...savedStructureConfig }
+          structureGlobalConfig.value = { ...structureEngineConfig.value }
+        } else {
+          const [symbol, period] = structureConfigScope.value.split('::')
+          const savedProfile = structureProfiles.value.find(x => x.symbol === symbol && x.period === period)
+          structureEngineConfig.value = savedProfile
+            ? { ...structureGlobalConfig.value, ...savedProfile }
+            : { ...structureEngineConfig.value }
+        }
+        // Use the normalized response as the source of truth after every save.
+        // This keeps the selector, override chips and the next refresh aligned
+        // with what the MySQL endpoint actually accepted (including inactive
+        // rows and legacy setup values normalized by the backend).
+        if (Array.isArray(data.profiles)) {
+          structureProfiles.value = data.profiles.map(profile => ({
+            ...profile,
+            allowed_setups: persistAllowedSetups(profile.allowed_setups),
+          }))
+        } else {
+          structureProfiles.value = structureProfiles.value.map(profile => ({ ...profile, allowed_setups: persistAllowedSetups(profile.allowed_setups) }))
+        }
+        if (Array.isArray(data.setup_profiles)) {
+          structureSetupProfiles.value = data.setup_profiles.map(item => ({
+            ...item,
+            setup_type: typeof item.setup_type === 'object' ? item.setup_type?.value : String(item.setup_type || '').trim().toLowerCase(),
+            allowed_directions: normalizeSetupValues(item.allowed_directions),
+          }))
+        }
         successMessage.value = '系统结构识别参数已保存'
         showSuccess.value = true
       } catch (err) {
         errorMessage.value = err.response?.data?.detail || '保存结构识别参数失败'
         showError.value = true
-      } finally { structureEngineSaving.value = false }
+      } finally { if (manageLoading) structureEngineSaving.value = false }
     }
     const switchStructureScope = value => {
       structureConfigScope.value = value || 'default'
@@ -2052,37 +2246,29 @@ export default {
       }
       const [symbol, period] = structureConfigScope.value.split('::')
       const profile = structureProfiles.value.find(x => x.symbol === symbol && x.period === period)
-      structureEngineConfig.value = profile ? { ...structureGlobalConfig.value, ...profile, allowed_setups: normalizeSetupValues(profile.allowed_setups) } : { ...structureGlobalConfig.value }
+      structureEngineConfig.value = profile
+        ? { ...structureGlobalConfig.value, ...profile, allowed_setups: effectiveAllowedSetups(profile.allowed_setups, structureGlobalConfig.value.allowed_setups) }
+        : { ...structureGlobalConfig.value }
       structureProfileDraft.value = {
         ...structureProfileDraft.value,
         symbol,
         period,
-        allowed_setups: normalizeSetupValues(profile?.allowed_setups),
       }
     }
-    const saveStructureProfile = async () => {
-      if (!structureProfileDraft.value.symbol) return
-      const item = { symbol: structureProfileDraft.value.symbol, period: structureProfileDraft.value.period, ...structureEngineConfig.value, allowed_setups: normalizeSetupValues(structureProfileDraft.value.allowed_setups) }
-      const index = structureProfiles.value.findIndex(x => x.symbol === item.symbol && x.period === item.period)
-      if (index >= 0) structureProfiles.value.splice(index, 1, item); else structureProfiles.value.push(item)
-      await saveStructureEngineConfig()
-    }
     const openSaveAsStructureProfile = () => {
+      const [currentSymbol, currentPeriod] = structureConfigScope.value !== 'default'
+        ? structureConfigScope.value.split('::')
+        : ['', 'M5']
       saveAsStructureProfileDraft.value = {
-        symbol: structureProfileDraft.value.symbol || symbols.value[0] || '',
-        period: structureProfileDraft.value.period || 'M5'
+        symbol: currentSymbol || symbols.value[0] || '',
+        period: currentPeriod || 'M5'
       }
       saveAsStructureProfileOpen.value = true
     }
     const saveAsStructureProfile = async () => {
       const { symbol, period } = saveAsStructureProfileDraft.value
       if (!symbol || !period) return
-      const item = {
-        symbol: String(symbol).trim(),
-        period: String(period).trim(),
-        ...structureGlobalConfig.value,
-        allowed_setups: normalizeSetupValues(structureGlobalConfig.value.allowed_setups)
-      }
+      const item = { symbol: String(symbol).trim(), period: String(period).trim(), ...structureEngineConfig.value, allowed_setups: persistAllowedSetups(structureEngineConfig.value.allowed_setups) }
       const index = structureProfiles.value.findIndex(x => x.symbol === item.symbol && x.period === item.period)
       if (index >= 0) structureProfiles.value.splice(index, 1, item)
       else structureProfiles.value.push(item)
@@ -2090,10 +2276,9 @@ export default {
         ...structureProfileDraft.value,
         symbol: item.symbol,
         period: item.period,
-        allowed_setups: normalizeSetupValues(item.allowed_setups)
       }
       structureConfigScope.value = `${item.symbol}::${item.period}`
-      structureEngineConfig.value = { ...item }
+      structureEngineConfig.value = { ...structureGlobalConfig.value, ...item }
       saveAsStructureProfileOpen.value = false
       await saveStructureEngineConfig()
       await loadStructureOverview()
@@ -2101,47 +2286,120 @@ export default {
       showSuccess.value = true
     }
     const removeStructureProfile = async item => { structureProfiles.value = structureProfiles.value.filter(x => !(x.symbol === item.symbol && x.period === item.period)); await saveStructureEngineConfig() }
-    const saveStructureSetupProfile = async () => {
-      const draft = structureSetupProfileDraft.value
-      if (!draft.symbol || !draft.period || !draft.setup_type) return
-      structureSetupScope.value = `${draft.symbol}::${draft.period}::${draft.setup_type}`
-      const item = { symbol: draft.symbol, period: draft.period, setup_type: draft.setup_type }
-      for (const key of ['min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'target_buffer_atr', 'confirmation_bars', 'min_displacement_atr', 'pressure_min_rejections', 'pressure_min_displacement_atr', 'pressure_min_efficiency', 'target_multiple', 'pressure_breakout_target_multiple', 'max_entries_per_opportunity', 'cooldown_minutes', 'retest_tolerance_atr', 'max_plan_lifetime_bars']) {
-        if (draft[key] !== null && draft[key] !== '' && Number.isFinite(Number(draft[key]))) item[key] = Number(draft[key])
-      }
-      item.enabled = draft.enabled !== false
-      item.allowed_directions = draft.allowed_directions || ['buy', 'sell']
-      if (draft.entry_mode) item.entry_mode = draft.entry_mode
-      if (draft.require_reclaim !== null) item.require_reclaim = Boolean(draft.require_reclaim)
-      if (draft.require_retest !== null) item.require_retest = Boolean(draft.require_retest)
-      if (draft.invalidate_on_zone_return !== null) item.invalidate_on_zone_return = Boolean(draft.invalidate_on_zone_return)
-      const index = structureSetupProfiles.value.findIndex(x => x.symbol === item.symbol && x.period === item.period && x.setup_type === item.setup_type)
-      if (index >= 0) structureSetupProfiles.value.splice(index, 1, item); else structureSetupProfiles.value.push(item)
-      await saveStructureEngineConfig()
-    }
-    const selectStructureSetupProfile = item => {
-      structureSetupScope.value = `${item.symbol}::${item.period}::${item.setup_type}`
+    const setupDraftDefaults = setupType => ({
+      symbol: '', period: 'M5', setup_type: setupType,
+      enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '',
+      confirmation_bars: null, min_displacement_atr: null, min_body_atr: null, require_reclaim: null,
+      min_real_risk_reward: null, entry_zone_atr: null, stop_buffer_atr: null,
+      target_buffer_atr: null, pressure_min_rejections: null,
+      pressure_min_displacement_atr: null, pressure_min_efficiency: null,
+      target_multiple: null, max_entries_per_opportunity: null,
+      cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null,
+      invalidate_on_zone_return: null, max_plan_lifetime_bars: null,
+    })
+    const selectStructureSetupScope = scope => {
+      if (!scope) return
+      const parts = String(scope).split('::')
+      const isDefault = String(scope).startsWith('default::')
+      const setupType = isDefault ? parts[1] : parts[2]
+      if (!setupType) return
+      const base = makeSetupDefault(setupType)
+      const profile = setupProfileForScope(scope)
+      const values = { ...base, ...(profile || {}) }
       structureSetupProfileDraft.value = {
-        symbol: item.symbol, period: item.period, setup_type: item.setup_type,
-        enabled: item.enabled !== false,
-        allowed_directions: item.allowed_directions || ['buy', 'sell'],
-        entry_mode: item.entry_mode || '',
-        confirmation_bars: item.confirmation_bars ?? null,
-        min_displacement_atr: item.min_displacement_atr ?? null,
-        require_reclaim: item.require_reclaim ?? null,
-        min_real_risk_reward: item.min_real_risk_reward ?? null,
-        entry_zone_atr: item.entry_zone_atr ?? null,
-        stop_buffer_atr: item.stop_buffer_atr ?? null,
-        target_buffer_atr: item.target_buffer_atr ?? null,
-        pressure_min_rejections: item.pressure_min_rejections ?? null,
-        pressure_min_displacement_atr: item.pressure_min_displacement_atr ?? null,
-        pressure_min_efficiency: item.pressure_min_efficiency ?? null,
-        target_multiple: item.target_multiple ?? item.pressure_breakout_target_multiple ?? null,
-        max_entries_per_opportunity: item.max_entries_per_opportunity ?? null,
-        cooldown_minutes: item.cooldown_minutes ?? null,
-        require_retest: item.require_retest ?? null,
-        retest_tolerance_atr: item.retest_tolerance_atr ?? null,
-        invalidate_on_zone_return: item.invalidate_on_zone_return ?? null,
+        ...setupDraftDefaults(setupType), ...values,
+        symbol: profile?.symbol || '', period: profile?.period || 'M5', setup_type: setupType,
+        allowed_directions: normalizeSetupValues(values.allowed_directions).length ? normalizeSetupValues(values.allowed_directions) : ['buy', 'sell'],
+        enabled: values.enabled !== false,
+      }
+      structureSetupScope.value = scope
+    }
+    const collectSetupDraft = () => {
+      const draft = structureSetupProfileDraft.value
+      const item = {}
+      for (const key of setupFieldKeys) {
+        const value = draft[key]
+        if (value === null || value === '' || value === undefined) continue
+        if (key === 'allowed_directions') item[key] = normalizeSetupValues(value)
+        else if (['enabled', 'require_reclaim', 'require_retest', 'invalidate_on_zone_return'].includes(key)) item[key] = Boolean(value)
+        else if (typeof value === 'number' || Number.isFinite(Number(value))) item[key] = Number(value)
+        else item[key] = value
+      }
+      return item
+    }
+    const saveStructureSetupConfig = async () => {
+      const scope = structureSetupScope.value
+      if (!scope) return
+      const setupType = String(scope).startsWith('default::') ? String(scope).split('::')[1] : String(scope).split('::')[2]
+      const draftValues = collectSetupDraft()
+      if (!setupType) return
+      structureEngineSaving.value = true
+      try {
+        if (String(scope).startsWith('default::')) {
+          structureSetupDefaults.value = { ...structureSetupDefaults.value, [setupType]: draftValues }
+        } else {
+          const [rawSymbol, rawPeriod] = String(scope).split('::')
+          const symbol = normalizeSetupScopeSymbol(rawSymbol)
+          const period = normalizeSetupScopePeriod(rawPeriod)
+          const base = makeSetupDefault(setupType)
+          const item = { symbol, period, setup_type: setupType }
+          for (const key of setupFieldKeys) {
+            if (draftValues[key] !== undefined && JSON.stringify(draftValues[key]) !== JSON.stringify(base[key])) item[key] = draftValues[key]
+          }
+          const index = structureSetupProfiles.value.findIndex(x => normalizeSetupScopeSymbol(x.symbol) === symbol && normalizeSetupScopePeriod(x.period) === period && normalizeSetupScopeType(x.setup_type) === setupType)
+          if (index >= 0) structureSetupProfiles.value.splice(index, 1, item); else structureSetupProfiles.value.push(item)
+        }
+        await saveStructureEngineConfig(false)
+        selectStructureSetupScope(scope)
+        successMessage.value = 'SETUP 配置已保存'; showSuccess.value = true
+      } catch (err) {
+        errorMessage.value = err.response?.data?.detail || '保存 SETUP 配置失败'; showError.value = true
+      } finally { structureEngineSaving.value = false }
+    }
+    const openSaveAsStructureSetup = () => {
+      const setupType = String(structureSetupScope.value || '').startsWith('default::') ? String(structureSetupScope.value).split('::')[1] : String(structureSetupScope.value || '').split('::')[2]
+      saveAsStructureSetupDraft.value = { symbol: symbols.value[0] || '', period: 'M5', setup_type: setupType || structureSetupTypes[0]?.value || '' }
+      saveAsStructureSetupOpen.value = true
+    }
+    const saveAsStructureSetup = async () => {
+      const { symbol, period, setup_type: setupType } = saveAsStructureSetupDraft.value
+      if (!symbol || !period || !setupType) return
+      const values = collectSetupDraft(); const base = makeSetupDefault(setupType)
+      const item = { symbol: normalizeSetupScopeSymbol(symbol), period: normalizeSetupScopePeriod(period), setup_type: normalizeSetupScopeType(setupType) }
+      for (const key of setupFieldKeys) if (values[key] !== undefined && JSON.stringify(values[key]) !== JSON.stringify(base[key])) item[key] = values[key]
+      const index = structureSetupProfiles.value.findIndex(x => normalizeSetupScopeSymbol(x.symbol) === item.symbol && normalizeSetupScopePeriod(x.period) === item.period && normalizeSetupScopeType(x.setup_type) === item.setup_type)
+      if (index >= 0) structureSetupProfiles.value.splice(index, 1, item); else structureSetupProfiles.value.push(item)
+      structureSetupScope.value = `${item.symbol}::${item.period}::${item.setup_type}`
+      saveAsStructureSetupOpen.value = false
+      selectStructureSetupScope(structureSetupScope.value)
+      await saveStructureEngineConfig(false)
+      successMessage.value = `已另存为 ${item.symbol} · ${item.period} · ${setupTypeLabel(item.setup_type)} 专项`; showSuccess.value = true
+    }
+    // Backward-compatible aliases for any older template/plugin references.
+    const saveStructureSetupProfile = saveStructureSetupConfig
+    const selectStructureSetupProfile = item => selectStructureSetupScope(`${item.symbol}::${item.period}::${item.setup_type}`)
+    const clearCurrentStructureSetupOverride = async () => {
+      const scope = String(structureSetupScope.value || '')
+      if (!scope || scope.startsWith('default::')) return
+      const [rawSymbol, rawPeriod, rawSetupType] = scope.split('::')
+      const symbol = normalizeSetupScopeSymbol(rawSymbol)
+      const period = normalizeSetupScopePeriod(rawPeriod)
+      const setupType = normalizeSetupScopeType(rawSetupType)
+      const before = structureSetupProfiles.value.length
+      structureEngineSaving.value = true
+      try {
+        structureSetupProfiles.value = structureSetupProfiles.value.filter(item => !(normalizeSetupScopeSymbol(item.symbol) === symbol && normalizeSetupScopePeriod(item.period) === period && normalizeSetupScopeType(item.setup_type) === setupType))
+        if (structureSetupProfiles.value.length === before) return
+        await saveStructureEngineConfig(false)
+        const publicScope = `default::${setupType}`
+        selectStructureSetupScope(publicScope)
+        successMessage.value = `${symbol} · ${period} · ${setupTypeLabel(setupType)} 已清除专项覆盖，恢复公共默认`
+        showSuccess.value = true
+      } catch (err) {
+        errorMessage.value = err.response?.data?.detail || '清除 SETUP 专项失败'
+        showError.value = true
+      } finally {
+        structureEngineSaving.value = false
       }
     }
     const optimizeStructureSetups = async () => {
@@ -2191,6 +2449,7 @@ export default {
           }
           structureProfiles.value = profiles
         }
+        await saveStructureEngineConfig()
         // Persist the merged symbol whitelist returned by the optimizer.
         structureOptimizerPreviewOpen.value = false
         successMessage.value = proposals.length ? `已应用 ${proposals.length} 条 Setup 优化配置` : '没有可应用的优化建议'
@@ -2205,7 +2464,10 @@ export default {
         ? structureOptimizerPreview.value.map(item => `${item.symbol}-${item.period}-${item.setup_type}`)
         : []
     }
-    const removeStructureSetupProfile = async item => { structureSetupProfiles.value = structureSetupProfiles.value.filter(x => !(x.symbol === item.symbol && x.period === item.period && x.setup_type === item.setup_type)); await saveStructureEngineConfig() }
+    const removeStructureSetupProfile = async item => {
+      structureSetupProfiles.value = structureSetupProfiles.value.filter(x => !(normalizeSetupScopeSymbol(x.symbol) === normalizeSetupScopeSymbol(item.symbol) && normalizeSetupScopePeriod(x.period) === normalizeSetupScopePeriod(item.period) && normalizeSetupScopeType(x.setup_type) === normalizeSetupScopeType(item.setup_type)))
+      await saveStructureEngineConfig()
+    }
     const loadInstrumentMappings = async () => {
       if (!isAdmin.value) return
       try {
@@ -4105,6 +4367,16 @@ export default {
       structureProfileDraft,
       structureSetupProfiles,
       structureSetupScope,
+      structureSetupDefaults,
+      structureSetupScopeOptions,
+      structureSetupOverrideFields,
+      saveAsStructureSetupOpen,
+      saveAsStructureSetupDraft,
+      selectStructureSetupScope,
+      saveStructureSetupConfig,
+      clearCurrentStructureSetupOverride,
+      openSaveAsStructureSetup,
+      saveAsStructureSetup,
       structureOptimizerRunning,
       structureOptimizerApplying,
       structureOptimizerPreviewOpen,
@@ -4115,7 +4387,6 @@ export default {
       structureSetupProfileDraft,
       structureSetupTypes,
       setupTypeLabel,
-      saveStructureProfile,
       removeStructureProfile,
       saveStructureSetupProfile,
       selectStructureSetupProfile,
