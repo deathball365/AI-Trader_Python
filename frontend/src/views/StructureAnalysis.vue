@@ -74,7 +74,7 @@
     </v-card>
     <v-card v-if="bars.length" class="chart-card mb-4"><v-card-title>K线与结构段</v-card-title><v-card-text><div ref="chartRef" class="chart" style="height:480px;width:100%"></div><div class="structure-strip-title">结构时间轴（按 K 线数量）</div><div class="structure-strip"><div v-for="(item,index) in segments" :key="`strip-${item.id}`" class="structure-strip-segment" :style="stripStyle(item,index)" :title="`${labels[item.type]||item.type} · ${item.start} → ${item.end} · 强度 ${item.strength ?? item.confidence ?? 0}%`"><span>{{ labels[item.type]||item.type }}</span></div></div><div class="legend"><span v-for="type in ['up','sideways','triangle','down','transition']" :key="type"><i :style="{background:legendColors[type]}"></i>{{ labels[type] }}</span></div></v-card-text></v-card>
     <v-row v-if="structureResult">
-      <v-col cols="12" v-if="zonePressureRows.length"><v-card class="summary pressure-card"><v-card-title>价格密集区与攻防</v-card-title><v-card-subtitle>把支撑、阻力和当前价格放到同一条价格带上，优先看距离最近、测试次数多、状态活跃的区域。</v-card-subtitle><v-card-text>
+      <v-col cols="12" v-if="zonePressureRows.length"><v-card class="summary pressure-card"><v-card-title>价格密集区与攻防</v-card-title><v-card-subtitle>在 K 线图上叠加支撑、阻力区域；色带越深表示访问次数和收盘聚集密度越高。</v-card-subtitle><v-card-text>
         <div class="pressure-summary">
           <div class="pressure-stat"><small>当前价格</small><strong>{{ currentMarketPrice == null ? '--' : currentMarketPrice.toFixed(2) }}</strong></div>
           <div class="pressure-stat support"><small>支撑区</small><strong>{{ pressureSummary.supportCount }} 个</strong><span v-if="pressureSummary.nearestSupport">最近 {{ pressureSummary.nearestSupport.upper.toFixed(2) }} · {{ pressureSummary.supportDistance }}</span></div>
@@ -82,7 +82,7 @@
           <div class="pressure-conclusion"><small>当前解读</small><strong>{{ pressureSummary.conclusion }}</strong></div>
         </div>
         <div ref="zoneChartRef" class="zone-chart" aria-label="价格密集区支撑阻力图"></div>
-        <div class="pressure-legend"><span><i class="legend-dot support-dot"></i>支撑</span><span><i class="legend-dot resistance-dot"></i>阻力</span><span><i class="legend-dot inside-dot"></i>当前所在区域</span><span>加粗边框 = 最近区域</span></div>
+        <div class="pressure-legend"><span><i class="legend-dot support-dot"></i>支撑</span><span><i class="legend-dot resistance-dot"></i>阻力</span><span><i class="legend-dot inside-dot"></i>当前所在区域</span><span>色带越深 = 聚集越密</span><span>加粗边框 = 最近区域</span></div>
         <v-expansion-panels variant="accordion" class="pressure-details">
           <v-expansion-panel><v-expansion-panel-title>查看全部区域详情（{{ zonePressureRows.length }} 个）</v-expansion-panel-title><v-expansion-panel-text><div class="zone-detail-list"><article v-for="row in zonePressureRows" :key="`detail-${row.id}`"><div class="card-head"><strong>{{ row.label }} · {{ row.lower.toFixed(2) }}–{{ row.upper.toFixed(2) }}</strong><div class="zone-status"><v-chip size="x-small" :color="row.color" variant="tonal">{{ row.status }}</v-chip><v-chip size="x-small" color="info" variant="tonal">{{ row.meta }}</v-chip></div></div><p>{{ row.reason }}</p><small v-if="row.source === 'dense'">区域版本 {{ row.zoneRevision }} · Pivot 重叠 {{ row.pivotOverlaps }} 个</small><small v-else>来源：{{ row.layers || 'Pivot 结构确认' }}</small><div v-if="row.events" class="zone-events-inline">{{ row.events }}</div></article></div></v-expansion-panel-text></v-expansion-panel>
         </v-expansion-panels>
@@ -169,14 +169,14 @@ const zonePressureRows=computed(()=>{
     const lower=Number(zone.lower);const upper=Number(zone.upper)
     if(!(upper>lower&&lower>0))continue
     const kind=price==null?'neutral':upper<=price?'support':lower>=price?'resistance':'inside'
-    rows.push({id:`dense-${zone.zone_id}`,source:'dense',lower,upper,kind,label:'密集区',status:zoneStatusLabel(zone.status),color:zoneStatusColor(zone.status),meta:`${zone.visit_count||0} 次访问 · 密度 ${Math.round((zone.close_ratio||0)*100)}%`,reason:zone.status_reason||'等待区域事件',zoneRevision:zone.zone_revision||'--',pivotOverlaps:zone.pivot_overlaps?.length||0,events:(zonePressure.value.events||[]).filter(item=>item.zone_id===zone.zone_id).slice(-2).map(item=>item.reason||item.type).join('；')})
+    rows.push({id:`dense-${zone.zone_id}`,source:'dense',lower,upper,kind,label:'密集区',status:zoneStatusLabel(zone.status),color:zoneStatusColor(zone.status),visitCount:Number(zone.visit_count||0),densityRatio:Number(zone.close_ratio||0),meta:`${zone.visit_count||0} 次访问 · 密度 ${Math.round((zone.close_ratio||0)*100)}%`,reason:zone.status_reason||'等待区域事件',zoneRevision:zone.zone_revision||'--',pivotOverlaps:zone.pivot_overlaps?.length||0,events:(zonePressure.value.events||[]).filter(item=>item.zone_id===zone.zone_id).slice(-2).map(item=>item.reason||item.type).join('；')})
   }
   for(const zone of (Array.isArray(zonePressure.value.pivot_zones)?zonePressure.value.pivot_zones:[])){
     const lower=Number(zone.lower);const upper=Number(zone.upper)
     if(!(upper>lower&&lower>0))continue
     const boundary=zone.boundary_type==='support'?'support':'resistance'
     const kind=price==null?boundary:(upper<=price?'support':lower>=price?'resistance':'inside')
-    rows.push({id:`pivot-${zone.zone_id}`,source:'pivot',lower,upper,kind,label:boundary==='support'?'Pivot 支撑':'Pivot 阻力',status:'已确认',color:boundary==='support'?'success':'error',meta:`${zone.layers?.join('/')||'结构层'} · ${zone.pivot_overlaps?.length||0} 层`,reason:'三层结构确认的支撑/阻力区域',layers:zone.layers?.join(' / ')||'Pivot'})
+    rows.push({id:`pivot-${zone.zone_id}`,source:'pivot',lower,upper,kind,label:boundary==='support'?'Pivot 支撑':'Pivot 阻力',status:'已确认',color:boundary==='support'?'success':'error',visitCount:zone.pivot_overlaps?.length||0,densityRatio:0.35,meta:`${zone.layers?.join('/')||'结构层'} · ${zone.pivot_overlaps?.length||0} 层`,reason:'三层结构确认的支撑/阻力区域',layers:zone.layers?.join(' / ')||'Pivot'})
   }
   const supports=rows.filter(row=>row.kind==='support').sort((a,b)=>b.upper-a.upper)
   const resistances=rows.filter(row=>row.kind==='resistance').sort((a,b)=>a.lower-b.lower)
@@ -232,18 +232,29 @@ function renderZoneChart(){
   if(!rows.length){zoneChart.clear();return}
   const range=pressureRange.value
   const colorsByKind={support:'#30976d',resistance:'#d45b52',inside:'#d4a24c',neutral:'#4f91c4'}
-  const fillByKind={support:'rgba(48,151,109,.22)',resistance:'rgba(212,91,82,.22)',inside:'rgba(212,162,76,.30)',neutral:'rgba(79,145,196,.20)'}
-  const data=rows.map((row,index)=>({value:[row.lower,row.upper,index],row}))
+  const data=bars.value.map(x=>[Number(x.open??x.open_price??closeOf(x)),Number(x.close??x.close_price??0),Number(x.low??x.low_price??closeOf(x)),Number(x.high??x.high_price??closeOf(x))])
+  const categories=bars.value.map(stamp)
+  const fillByKind={support:'rgba(48,151,109,',resistance:'rgba(212,91,82,',inside:'rgba(212,162,76,',neutral:'rgba(79,145,196,'}
+  const areaData=rows.map(row=>{
+    const opacity=Math.min(.46,Math.max(.14,.14+Number(row.densityRatio||0)*.32+Math.min(Number(row.visitCount||0),10)*.012))
+    const color=fillByKind[row.kind]||fillByKind.neutral
+    const label=`${row.label} · ${row.visitCount||0}次 · 密度${Math.round(Number(row.densityRatio||0)*100)}%`
+    return [{name:label,xAxis:0,yAxis:row.lower,itemStyle:{color:`${color}${opacity})`,borderColor:colorsByKind[row.kind]||colorsByKind.neutral,borderWidth:row.nearest?2:1},label:{show:true,position:'insideTop',color:colorsByKind[row.kind]||colorsByKind.neutral,fontSize:10,formatter:label}},{xAxis:Math.max(categories.length-1,0),yAxis:row.upper}]
+  })
+  const boundaryLines=rows.flatMap(row=>[
+    {yAxis:row.lower,lineStyle:{color:colorsByKind[row.kind]||colorsByKind.neutral,type:'dashed',width:row.nearest?2:1},label:{show:false}},
+    {yAxis:row.upper,lineStyle:{color:colorsByKind[row.kind]||colorsByKind.neutral,type:'dashed',width:row.nearest?2:1},label:{show:false}},
+  ])
+  const currentLine=currentMarketPrice.value!=null?[{yAxis:currentMarketPrice.value,lineStyle:{color:'#2477c5',width:2},label:{show:true,formatter:`当前 ${currentMarketPrice.value.toFixed(2)}`,color:'#2477c5'}}]:[]
   zoneChart.setOption({
     animation:false,
-    grid:{left:112,right:42,top:28,bottom:42},
-    xAxis:{type:'value',min:range.min,max:range.max,scale:true,name:'价格',nameLocation:'middle',nameGap:28,axisLabel:{hideOverlap:true}},
-    yAxis:{type:'category',inverse:true,data:rows.map((row,index)=>`${row.label} ${index+1} · ${row.status}`),axisLabel:{fontSize:11,color:'#526c60'}},
-    tooltip:{trigger:'item',formatter:params=>{const row=params.data?.row;if(!row)return '';return `<strong>${row.label}</strong><br/>价格：${row.lower.toFixed(2)} – ${row.upper.toFixed(2)}<br/>状态：${row.status}<br/>${row.meta}<br/>来源：${row.source==='dense'?'价格密集区':'Pivot 支撑/阻力'}<br/>${row.reason}${row.events?`<br/>事件：${row.events}`:''}`}},
+    grid:{left:55,right:35,top:48,bottom:58},
+    legend:{top:4,type:'scroll',data:['K线']},
+    xAxis:{type:'category',data:categories,axisLabel:{hideOverlap:true}},
+    yAxis:{type:'value',min:range.min,max:range.max,scale:true,name:'价格',nameLocation:'middle',nameGap:42,axisLabel:{hideOverlap:true}},
+    tooltip:{trigger:'axis',axisPointer:{type:'cross'},formatter:params=>{const item=Array.isArray(params)?params.find(entry=>entry.seriesName==='K线'):params;if(!item)return '';const v=item.value||[];const index=item.dataIndex??0;const candle=bars.value[index]||{};const matched=rows.filter(row=>Number(candle.low??candle.low_price??0)<=row.upper&&Number(candle.high??candle.high_price??0)>=row.lower);const zoneText=matched.map(row=>`${row.label} ${row.lower.toFixed(2)}–${row.upper.toFixed(2)} · ${row.visitCount||0}次 · 密度${Math.round(Number(row.densityRatio||0)*100)}%`).join('<br/>');return `<strong>${categories[index]||''}</strong><br/>开 ${Number(v[0]||0).toFixed(2)} · 高 ${Number(v[3]||0).toFixed(2)}<br/>低 ${Number(v[2]||0).toFixed(2)} · 收 ${Number(v[1]||0).toFixed(2)}${zoneText?`<br/><br/>${zoneText}`:''}`}},
     series:[
-      {name:'价格密集区',type:'custom',data,renderItem:(params,api)=>{const item=data[params.dataIndex];const row=item.row;const start=api.coord([row.lower,params.dataIndex]);const end=api.coord([row.upper,params.dataIndex]);const height=Math.max(api.size([0,1])[1]*.58,14);const rect={x:start[0],y:start[1]-height/2,width:Math.max(end[0]-start[0],2),height};const color=colorsByKind[row.kind]||colorsByKind.neutral;return {type:'rect',shape:rect,style:{fill:fillByKind[row.kind]||fillByKind.neutral,stroke:color,lineWidth:row.nearest?3:1}}},
-       encode:{x:[0,1],y:2},z:2},
-      ...(currentMarketPrice.value!=null?[{name:'当前价格',type:'line',data:[[currentMarketPrice.value,0],[currentMarketPrice.value,Math.max(rows.length-1,0)]],symbol:'none',lineStyle:{color:'#2477c5',width:2},label:{show:true,formatter:`当前 ${currentMarketPrice.value.toFixed(2)}`,color:'#2477c5',position:'insideEndTop'},z:4}]:[]),
+      {name:'K线',type:'candlestick',data,itemStyle:{color:'#1f9d72',color0:'#d95d55',borderColor:'#1f9d72',borderColor0:'#d95d55'},markArea:{silent:true,data:areaData},markLine:{silent:true,symbol:'none',data:[...boundaryLines,...currentLine]},z:3},
     ]
   },true)
 }
