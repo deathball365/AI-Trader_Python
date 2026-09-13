@@ -258,7 +258,7 @@
             <v-alert type="info" variant="tonal" density="compact" class="mt-4 mb-3">
               配置按三层生效：<strong>公共默认参数 → 品种+周期参数 → 品种+周期+SETUP 参数</strong>。越靠后的配置优先级越高；没有填写的项目会自动沿用上一层。比如只给 GOLD_ M5 设置参数，不会影响 BTCUSD 或其他周期。
             </v-alert>
-            <div class="llm-section-head compact mt-4"><div><h3>九、SETUP 专项配置</h3><p>每个 SETUP 可单独覆盖公共交易计划条件；没有覆盖的字段继续继承公共默认或品种/周期配置。</p></div><div class="d-flex ga-2"><v-btn size="small" variant="tonal" color="secondary" :disabled="structureEngineSaving || !structureSetupScope" @click="openSaveAsStructureSetup">另存为品种/周期/SETUP</v-btn></div></div>
+            <div class="llm-section-head compact mt-4"><div><h3>九、当前配置范围 · 所有 SETUP</h3><p>当前范围下平铺显示全部 SETUP；可以只修改其中任意一个 SETUP 的任意字段，未修改字段继续继承上一级范围。</p></div><div class="d-flex ga-2"><v-btn size="small" variant="tonal" color="secondary" :disabled="structureEngineSaving || !structureSetupScope" @click="openSaveAsStructureSetup">另存为当前范围 SETUP</v-btn></div></div>
             <div class="d-flex flex-wrap ga-2 align-center mb-2">
               <v-select v-model="structureSetupScope" :items="structureSetupScopeOptions" item-title="label" item-value="value" label="当前查看的 SETUP 配置" density="compact" variant="outlined" hide-details style="min-width:340px;max-width:520px" @update:model-value="selectStructureSetupScope" />
               <v-chip v-if="structureSetupScope?.startsWith('default::')" color="primary" variant="tonal">公共默认</v-chip>
