@@ -128,6 +128,17 @@
             <div class="d-flex flex-wrap ga-2 align-center mb-3">
               <v-select v-model="structureConfigScope" :items="structureConfigScopes" item-title="label" item-value="value" label="当前查看的配置" density="compact" variant="outlined" hide-details style="max-width:300px" @update:model-value="switchStructureScope" />
               <v-btn v-if="structureConfigScope !== 'default'" size="small" variant="text" @click="switchStructureScope('default')">查看公共默认配置</v-btn>
+              <v-btn
+                v-if="structureConfigScope !== 'default'"
+                size="small"
+                color="warning"
+                variant="tonal"
+                :loading="structureEngineSaving"
+                prepend-icon="mdi-delete-restore"
+                @click="clearCurrentStructureProfile"
+              >
+                清除专项配置
+              </v-btn>
               <span class="text-caption text-medium-emphasis">{{ structureConfigSourceLabel }}</span>
             </div>
             <v-divider class="my-5" />
@@ -233,6 +244,17 @@
               <v-select v-model="structureSetupScope" :items="structureSetupScopeOptions" item-title="label" item-value="value" label="当前查看的 SETUP 配置" density="compact" variant="outlined" hide-details style="min-width:340px;max-width:520px" @update:model-value="selectStructureSetupScope" />
               <v-chip v-if="structureSetupScope?.startsWith('default::')" color="primary" variant="tonal">公共默认</v-chip>
               <v-chip v-else-if="structureSetupScope" color="warning" variant="tonal">专项覆盖</v-chip>
+              <v-btn
+                v-if="structureSetupScope && !structureSetupScope.startsWith('default::')"
+                size="small"
+                color="warning"
+                variant="tonal"
+                :loading="structureEngineSaving"
+                prepend-icon="mdi-delete-restore"
+                @click="clearCurrentStructureSetupOverride"
+              >
+                清除专项配置
+              </v-btn>
             </div>
             <v-alert v-if="structureSetupScope && !structureSetupScope.startsWith('default::')" type="warning" variant="tonal" density="compact" class="mb-3">
               <div class="d-flex flex-wrap align-center ga-2">
@@ -244,28 +266,28 @@
               </div>
             </v-alert>
             <div class="d-flex flex-wrap ga-2 align-center">
-              <v-switch v-model="structureSetupProfileDraft.enabled" color="primary" inset hide-details label="允许交易" />
-              <v-select v-model="structureSetupProfileDraft.allowed_directions" :items="[{title:'买入',value:'buy'},{title:'卖出',value:'sell'}]" item-title="title" item-value="value" label="允许方向" multiple chips density="compact" variant="outlined" hide-details style="max-width:190px" />
-              <v-select v-model="structureSetupProfileDraft.entry_mode" :items="[{title:'触碰或接近',value:'touch_or_near'},{title:'触碰并收回',value:'touch_and_reclaim'},{title:'突破回踩',value:'breakout_retest'},{title:'收盘突破',value:'close_breakout'}]" item-title="title" item-value="value" label="入场方式" density="compact" variant="outlined" hide-details style="max-width:190px" />
-              <v-text-field v-model.number="structureSetupProfileDraft.confirmation_bars" type="number" min="1" max="10" label="确认K线" density="compact" variant="outlined" hide-details style="max-width:110px" />
-              <v-text-field v-model.number="structureSetupProfileDraft.min_displacement_atr" type="number" min="0" step="0.1" label="最小位移 ATR" density="compact" variant="outlined" hide-details style="max-width:140px" />
-              <v-text-field v-model.number="structureSetupProfileDraft.min_body_atr" type="number" min="0" step="0.1" label="突破实体 ATR" density="compact" variant="outlined" hide-details style="max-width:130px" />
-              <v-switch v-model="structureSetupProfileDraft.require_reclaim" color="primary" inset hide-details label="要求回收" />
-              <v-text-field v-model.number="structureSetupProfileDraft.min_real_risk_reward" type="number" min="0" step="0.1" label="最低盈亏比" density="compact" variant="outlined" hide-details style="max-width:130px" />
-              <v-text-field v-model.number="structureSetupProfileDraft.entry_zone_atr" type="number" min="0" step="0.05" label="入场 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
-              <v-text-field v-model.number="structureSetupProfileDraft.stop_buffer_atr" type="number" min="0" step="0.05" label="止损 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
-              <v-text-field v-model.number="structureSetupProfileDraft.target_buffer_atr" type="number" min="0" step="0.05" label="止盈 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
-              <v-text-field v-model.number="structureSetupProfileDraft.max_plan_lifetime_bars" type="number" min="10" max="1000" label="计划安全兜底（K线）" hint="结构事件未发生时的最长保留上限" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
+              <v-switch v-model="structureSetupProfileDraft.enabled" :class="setupFieldClass('enabled')" color="primary" inset hide-details label="允许交易" />
+              <v-select v-model="structureSetupProfileDraft.allowed_directions" :class="setupFieldClass('allowed_directions')" :items="[{title:'买入',value:'buy'},{title:'卖出',value:'sell'}]" item-title="title" item-value="value" label="允许方向" multiple chips density="compact" variant="outlined" hide-details style="max-width:190px" />
+              <v-select v-model="structureSetupProfileDraft.entry_mode" :class="setupFieldClass('entry_mode')" :items="[{title:'触碰或接近',value:'touch_or_near'},{title:'触碰并收回',value:'touch_and_reclaim'},{title:'突破回踩',value:'breakout_retest'},{title:'收盘突破',value:'close_breakout'}]" item-title="title" item-value="value" label="入场方式" density="compact" variant="outlined" hide-details style="max-width:190px" />
+              <v-text-field v-model.number="structureSetupProfileDraft.confirmation_bars" :class="setupFieldClass('confirmation_bars')" type="number" min="1" max="10" label="确认K线" density="compact" variant="outlined" hide-details style="max-width:110px" />
+              <v-text-field v-model.number="structureSetupProfileDraft.min_displacement_atr" :class="setupFieldClass('min_displacement_atr')" type="number" min="0" step="0.1" label="最小位移 ATR" density="compact" variant="outlined" hide-details style="max-width:140px" />
+              <v-text-field v-model.number="structureSetupProfileDraft.min_body_atr" :class="setupFieldClass('min_body_atr')" type="number" min="0" step="0.1" label="突破实体 ATR" density="compact" variant="outlined" hide-details style="max-width:130px" />
+              <v-switch v-model="structureSetupProfileDraft.require_reclaim" :class="setupFieldClass('require_reclaim')" color="primary" inset hide-details label="要求回收" />
+              <v-text-field v-model.number="structureSetupProfileDraft.min_real_risk_reward" :class="setupFieldClass('min_real_risk_reward')" type="number" min="0" step="0.1" label="最低盈亏比" density="compact" variant="outlined" hide-details style="max-width:130px" />
+              <v-text-field v-model.number="structureSetupProfileDraft.entry_zone_atr" :class="setupFieldClass('entry_zone_atr')" type="number" min="0" step="0.05" label="入场 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
+              <v-text-field v-model.number="structureSetupProfileDraft.stop_buffer_atr" :class="setupFieldClass('stop_buffer_atr')" type="number" min="0" step="0.05" label="止损 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
+              <v-text-field v-model.number="structureSetupProfileDraft.target_buffer_atr" :class="setupFieldClass('target_buffer_atr')" type="number" min="0" step="0.05" label="止盈 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
+              <v-text-field v-model.number="structureSetupProfileDraft.max_plan_lifetime_bars" :class="setupFieldClass('max_plan_lifetime_bars')" type="number" min="10" max="1000" label="计划安全兜底（K线）" hint="结构事件未发生时的最长保留上限" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
               <template v-if="structureSetupProfileDraft.setup_type === 'pressure_reversal' || structureSetupProfileDraft.setup_type === 'pressure_zone_breakout'">
-                <v-text-field v-model.number="structureSetupProfileDraft.pressure_min_rejections" type="number" min="1" label="密集区最少拒绝次数" density="compact" variant="outlined" hide-details style="max-width:150px" />
-                <v-text-field v-model.number="structureSetupProfileDraft.pressure_min_displacement_atr" type="number" min="0" step="0.1" label="密集区最小位移 ATR" density="compact" variant="outlined" hide-details style="max-width:160px" />
-                <v-text-field v-model.number="structureSetupProfileDraft.pressure_min_efficiency" type="number" min="0" max="1" step="0.05" label="密集区最小效率" density="compact" variant="outlined" hide-details style="max-width:140px" />
-                <v-text-field v-model.number="structureSetupProfileDraft.target_multiple" type="number" min="1" step="0.1" label="目标倍数" density="compact" variant="outlined" hide-details style="max-width:110px" />
-                <v-text-field v-model.number="structureSetupProfileDraft.max_entries_per_opportunity" type="number" min="1" label="机会最大入场次数" density="compact" variant="outlined" hide-details style="max-width:150px" />
-                <v-text-field v-model.number="structureSetupProfileDraft.cooldown_minutes" type="number" min="0" label="冷却分钟" density="compact" variant="outlined" hide-details style="max-width:110px" />
-                <v-switch v-model="structureSetupProfileDraft.require_retest" color="primary" inset hide-details label="要求回踩" />
-                <v-switch v-model="structureSetupProfileDraft.invalidate_on_zone_return" color="primary" inset hide-details label="回到区域即失效" />
-                <v-text-field v-model.number="structureSetupProfileDraft.retest_tolerance_atr" type="number" min="0" step="0.05" label="回踩容差 ATR" density="compact" variant="outlined" hide-details style="max-width:130px" />
+                <v-text-field v-model.number="structureSetupProfileDraft.pressure_min_rejections" :class="setupFieldClass('pressure_min_rejections')" type="number" min="1" label="密集区最少拒绝次数" density="compact" variant="outlined" hide-details style="max-width:150px" />
+                <v-text-field v-model.number="structureSetupProfileDraft.pressure_min_displacement_atr" :class="setupFieldClass('pressure_min_displacement_atr')" type="number" min="0" step="0.1" label="密集区最小位移 ATR" density="compact" variant="outlined" hide-details style="max-width:160px" />
+                <v-text-field v-model.number="structureSetupProfileDraft.pressure_min_efficiency" :class="setupFieldClass('pressure_min_efficiency')" type="number" min="0" max="1" step="0.05" label="密集区最小效率" density="compact" variant="outlined" hide-details style="max-width:140px" />
+                <v-text-field v-model.number="structureSetupProfileDraft.target_multiple" :class="setupFieldClass('target_multiple')" type="number" min="1" step="0.1" label="目标倍数" density="compact" variant="outlined" hide-details style="max-width:110px" />
+                <v-text-field v-model.number="structureSetupProfileDraft.max_entries_per_opportunity" :class="setupFieldClass('max_entries_per_opportunity')" type="number" min="1" label="机会最大入场次数" density="compact" variant="outlined" hide-details style="max-width:150px" />
+                <v-text-field v-model.number="structureSetupProfileDraft.cooldown_minutes" :class="setupFieldClass('cooldown_minutes')" type="number" min="0" label="冷却分钟" density="compact" variant="outlined" hide-details style="max-width:110px" />
+                <v-switch v-model="structureSetupProfileDraft.require_retest" :class="setupFieldClass('require_retest')" color="primary" inset hide-details label="要求回踩" />
+                <v-switch v-model="structureSetupProfileDraft.invalidate_on_zone_return" :class="setupFieldClass('invalidate_on_zone_return')" color="primary" inset hide-details label="回到区域即失效" />
+                <v-text-field v-model.number="structureSetupProfileDraft.retest_tolerance_atr" :class="setupFieldClass('retest_tolerance_atr')" type="number" min="0" step="0.05" label="回踩容差 ATR" density="compact" variant="outlined" hide-details style="max-width:130px" />
               </template>
               <v-btn color="primary" variant="tonal" :loading="structureEngineSaving" @click="saveStructureSetupConfig">{{ structureSetupScope?.startsWith('default::') ? '保存公共 SETUP 默认' : '保存当前 SETUP 专项' }}</v-btn>
             </div>
@@ -1758,6 +1780,18 @@ export default {
       const base = makeSetupDefault(profile.setup_type)
       return setupFieldKeys.filter(key => profile[key] !== undefined && JSON.stringify(profile[key]) !== JSON.stringify(base[key])).map(key => setupFieldLabels[key] || key)
     })
+    const isStructureSetupFieldOverridden = key => {
+      const scope = String(structureSetupScope.value || '')
+      if (!scope || scope.startsWith('default::')) return false
+      const profile = setupProfileForScope(scope)
+      if (!profile || !Object.prototype.hasOwnProperty.call(profile, key)) return false
+      const base = makeSetupDefault(profile.setup_type)
+      return JSON.stringify(profile[key]) !== JSON.stringify(base[key])
+    }
+    const setupFieldClass = key => ({
+      'structure-setup-field--override': isStructureSetupFieldOverridden(key),
+      'structure-setup-field--inherited': Boolean(structureSetupScope.value && !String(structureSetupScope.value).startsWith('default::') && !isStructureSetupFieldOverridden(key)),
+    })
     // Profiles created by older builds may contain setup objects instead of
     // setup ids.  Keep the select model normalized to string ids so Vuetify
     // renders labels instead of coercing objects to "Object".
@@ -2286,6 +2320,34 @@ export default {
       showSuccess.value = true
     }
     const removeStructureProfile = async item => { structureProfiles.value = structureProfiles.value.filter(x => !(x.symbol === item.symbol && x.period === item.period)); await saveStructureEngineConfig() }
+    const clearCurrentStructureProfile = async () => {
+      const scope = String(structureConfigScope.value || '')
+      if (!scope || scope === 'default') return
+      const [rawSymbol, rawPeriod] = scope.split('::')
+      const symbol = String(rawSymbol || '').trim().toUpperCase()
+      const period = String(rawPeriod || '').trim().toUpperCase()
+      const before = structureProfiles.value.length
+      if (!symbol || !period) return
+      structureEngineSaving.value = true
+      try {
+        structureProfiles.value = structureProfiles.value.filter(item => (
+          String(item.symbol || '').trim().toUpperCase() !== symbol ||
+          String(item.period || '').trim().toUpperCase() !== period
+        ))
+        if (structureProfiles.value.length === before) return
+        structureConfigScope.value = 'default'
+        structureEngineConfig.value = { ...structureGlobalConfig.value }
+        await saveStructureEngineConfig(false)
+        await loadStructureOverview()
+        successMessage.value = `${symbol} · ${period} 已清除专项配置，恢复公共默认`
+        showSuccess.value = true
+      } catch (err) {
+        errorMessage.value = err.response?.data?.detail || '清除品种/周期专项配置失败'
+        showError.value = true
+      } finally {
+        structureEngineSaving.value = false
+      }
+    }
     const setupDraftDefaults = setupType => ({
       symbol: '', period: 'M5', setup_type: setupType,
       enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '',
@@ -4370,6 +4432,8 @@ export default {
       structureSetupDefaults,
       structureSetupScopeOptions,
       structureSetupOverrideFields,
+      isStructureSetupFieldOverridden,
+      setupFieldClass,
       saveAsStructureSetupOpen,
       saveAsStructureSetupDraft,
       selectStructureSetupScope,
@@ -4388,6 +4452,7 @@ export default {
       structureSetupTypes,
       setupTypeLabel,
       removeStructureProfile,
+      clearCurrentStructureProfile,
       saveStructureSetupProfile,
       selectStructureSetupProfile,
       optimizeStructureSetups,
@@ -4678,6 +4743,33 @@ export default {
 .signal-source-type-card--disabled { opacity: .52; cursor: not-allowed; }
 .signal-source-type-card span { font-weight: 600; color: #26352d; }
 .signal-source-type-card small { color: #8a5d38; }
+.structure-setup-field--override {
+  position: relative;
+  padding: 4px 5px 3px;
+  border: 1px solid #e6a23c;
+  border-radius: 9px;
+  background: #fff8e6;
+  box-shadow: 0 0 0 1px rgba(230,162,60,.08);
+}
+.structure-setup-field--override::after {
+  position: absolute;
+  top: -7px;
+  right: 6px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  color: #8a5a12;
+  background: #ffe7b0;
+  content: '专项值';
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.35;
+  pointer-events: none;
+}
+.structure-setup-field--override :deep(.v-field) { background: #fff8e6; }
+.structure-setup-field--override :deep(.v-field__outline) { --v-field-border-opacity: 1; color: #e6a23c; }
+.structure-setup-field--override :deep(.v-label),
+.structure-setup-field--override :deep(.v-switch__label) { color: #8a5a12; font-weight: 650; }
+.structure-setup-field--inherited { opacity: .9; }
 .strategy-workspace { --strategy-ink: #18342b; --strategy-muted: #6c7f77; --strategy-line: #dfe9e4; --strategy-green: #176b4d; margin-top: 0; }
 .strategy-hero { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 28px; min-height: 180px; padding: 34px 38px; overflow: hidden; border-radius: 24px; color: #f7fff9; background: linear-gradient(120deg, #123b31 0%, #176b4d 58%, #d9a441 160%); box-shadow: 0 18px 45px rgba(26, 76, 59, .18); }
 .strategy-hero::after { position: absolute; right: -55px; bottom: -110px; width: 300px; height: 300px; border: 55px solid rgba(255,255,255,.08); border-radius: 50%; content: ''; }
