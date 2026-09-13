@@ -230,8 +230,42 @@ class MySQLStorage:
                     KEY idx_platform_instrument_group (mapping_group, enabled)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                   COLLATE=utf8mb4_unicode_ci
-                    """
+                """
                 )
+                conn.execute("""
+                CREATE TABLE IF NOT EXISTS structure_default_configs (
+                    user_id BIGINT NOT NULL, version BIGINT NOT NULL DEFAULT 1,
+                    config_json JSON NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'active',
+                    updated_by BIGINT NOT NULL DEFAULT 0, updated_at BIGINT NOT NULL,
+                    PRIMARY KEY (user_id), KEY idx_structure_default_updated (updated_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """)
+                conn.execute("""
+                CREATE TABLE IF NOT EXISTS structure_symbol_period_configs (
+                    user_id BIGINT NOT NULL, symbol VARCHAR(80) NOT NULL, period VARCHAR(16) NOT NULL,
+                    version BIGINT NOT NULL DEFAULT 1, config_json JSON NOT NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'active', updated_by BIGINT NOT NULL DEFAULT 0,
+                    updated_at BIGINT NOT NULL, PRIMARY KEY (user_id,symbol,period)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """)
+                conn.execute("""
+                CREATE TABLE IF NOT EXISTS structure_setup_configs (
+                    user_id BIGINT NOT NULL, symbol VARCHAR(80) NOT NULL, period VARCHAR(16) NOT NULL,
+                    setup_type VARCHAR(80) NOT NULL, version BIGINT NOT NULL DEFAULT 1, config_json JSON NOT NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'active', updated_by BIGINT NOT NULL DEFAULT 0,
+                    updated_at BIGINT NOT NULL, PRIMARY KEY (user_id,symbol,period,setup_type)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """)
+                conn.execute("""
+                CREATE TABLE IF NOT EXISTS structure_config_change_logs (
+                    id BIGINT NOT NULL AUTO_INCREMENT, user_id BIGINT NOT NULL, scope VARCHAR(30) NOT NULL,
+                    symbol VARCHAR(80) NOT NULL DEFAULT '', period VARCHAR(16) NOT NULL DEFAULT '',
+                    setup_type VARCHAR(80) NOT NULL DEFAULT '', before_json JSON NULL, after_json JSON NOT NULL,
+                    source VARCHAR(30) NOT NULL DEFAULT 'manual', reason VARCHAR(500) NOT NULL DEFAULT '',
+                    changed_by BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL,
+                    PRIMARY KEY (id), KEY idx_structure_change_user (user_id,created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """)
                 conn.execute(
                     """
                 CREATE TABLE IF NOT EXISTS account_instrument_specs (

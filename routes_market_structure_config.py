@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends
 
 from auth import AuthUser, require_admin
 from mysql_repositories import RuntimeStateRepository, get_storage
-from llm_governance import AI_SIGNAL_ANALYSIS
+from llm_governance import AI_SIGNAL_ANALYSIS, STRUCTURE_ANALYSIS
 
 
 def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: Dict, engine_manager=None) -> APIRouter:
@@ -37,8 +37,98 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         "invalidate_on_zone_return",
     }
     string_keys = {"entry_mode"}
+    inherit_empty_list_keys = {"allowed_setups", "allowed_directions", "blocked_hours"}
 
     ratio_keys = {"zone_min_close_ratio", "pressure_reclaim_ratio", "pressure_min_efficiency"}
+
+    def migrate_legacy_config(storage, stored):
+        """Materialize the legacy JSON config into normalized MySQL tables."""
+        if not isinstance(stored, dict):
+            return
+        now = int(time.time())
+        base = {k: v for k, v in stored.items() if k in allowed}
+        storage.execute(
+            "INSERT INTO structure_default_configs(user_id,version,config_json,updated_at) VALUES(0,1,?,?) "
+            "ON DUPLICATE KEY UPDATE config_json=config_json",
+            (json.dumps(base, ensure_ascii=False), now),
+        )
+        for item in stored.get("profiles") or []:
+            if not isinstance(item, dict) or not item.get("symbol") or not item.get("period"):
+                continue
+            cfg = {k: v for k, v in item.items() if k not in {"symbol", "period", "setup_profiles", "profiles"}}
+            storage.execute(
+                "INSERT INTO structure_symbol_period_configs(user_id,symbol,period,config_json,updated_at) VALUES(0,?,?,?,?) "
+                "ON DUPLICATE KEY UPDATE symbol=symbol",
+                (str(item["symbol"]).upper(), str(item["period"]).upper(), json.dumps(cfg, ensure_ascii=False), now),
+            )
+        for item in stored.get("setup_profiles") or []:
+            if not isinstance(item, dict) or not item.get("symbol") or not item.get("period") or not item.get("setup_type"):
+                continue
+            cfg = {k: v for k, v in item.items() if k not in {"symbol", "period", "setup_type"}}
+            storage.execute(
+                "INSERT INTO structure_setup_configs(user_id,symbol,period,setup_type,config_json,updated_at) VALUES(0,?,?,?,?,?) "
+                "ON DUPLICATE KEY UPDATE setup_type=setup_type",
+                (str(item["symbol"]).upper(), str(item["period"]).upper(), str(item["setup_type"]).lower(), json.dumps(cfg, ensure_ascii=False), now),
+            )
+
+    def read_normalized(storage):
+        default = storage.fetchone("SELECT * FROM structure_default_configs WHERE user_id=0 AND status='active'") or {}
+        profiles = storage.fetchall("SELECT * FROM structure_symbol_period_configs WHERE user_id=0 AND status='active' ORDER BY symbol,period")
+        setups = storage.fetchall("SELECT * FROM structure_setup_configs WHERE user_id=0 AND status='active' ORDER BY symbol,period,setup_type")
+        def decode(row):
+            value = row.get("config_json") if row else {}
+            if isinstance(value, str):
+                try: value = json.loads(value)
+                except (TypeError, ValueError): value = {}
+            return value if isinstance(value, dict) else {}
+        return default, profiles, setups, decode
+
+    def persist_normalized(storage, cfg, profiles, setup_profiles, reason="手工保存结构分析配置"):
+        now = int(time.time())
+        old_default, old_profiles, old_setups, decode = read_normalized(storage)
+        old_default_json = decode(old_default)
+        default_version = int(old_default.get("version") or 0) + 1
+        storage.execute(
+            "INSERT INTO structure_default_configs(user_id,version,config_json,updated_by,updated_at) VALUES(0,?,?,0,?) "
+            "ON DUPLICATE KEY UPDATE version=version+1,config_json=VALUES(config_json),updated_at=VALUES(updated_at)",
+            (default_version, json.dumps({k: cfg.get(k) for k in allowed if k in cfg}, ensure_ascii=False), now),
+        )
+        old_p = {(str(x.get('symbol')).upper(), str(x.get('period')).upper()): x for x in old_profiles}
+        active_profiles = set()
+        for item in profiles:
+            symbol, period = str(item['symbol']).upper(), str(item['period']).upper()
+            active_profiles.add((symbol, period))
+            old = old_p.get((symbol, period), {})
+            storage.execute(
+                "INSERT INTO structure_symbol_period_configs(user_id,symbol,period,version,config_json,updated_by,updated_at) VALUES(0,?,?,?, ?,0,?) "
+                "ON DUPLICATE KEY UPDATE version=version+1,config_json=VALUES(config_json),status='active',updated_at=VALUES(updated_at)",
+                (symbol, period, int(old.get('version') or 0) + 1, json.dumps({k:v for k,v in item.items() if k not in {'symbol','period'}}, ensure_ascii=False), now),
+            )
+        old_s = {(str(x.get('symbol')).upper(), str(x.get('period')).upper(), str(x.get('setup_type')).lower()): x for x in old_setups}
+        active_setups = set()
+        for item in setup_profiles:
+            symbol, period, setup = str(item['symbol']).upper(), str(item['period']).upper(), str(item['setup_type']).lower()
+            active_setups.add((symbol, period, setup))
+            old = old_s.get((symbol, period, setup), {})
+            storage.execute(
+                "INSERT INTO structure_setup_configs(user_id,symbol,period,setup_type,version,config_json,updated_by,updated_at) VALUES(0,?,?,?,?,?,0,?) "
+                "ON DUPLICATE KEY UPDATE version=version+1,config_json=VALUES(config_json),status='active',updated_at=VALUES(updated_at)",
+                (symbol, period, setup, int(old.get('version') or 0) + 1, json.dumps({k:v for k,v in item.items() if k not in {'symbol','period','setup_type'}}, ensure_ascii=False), now),
+            )
+        for key in set(old_p) - active_profiles:
+            storage.execute(
+                "UPDATE structure_symbol_period_configs SET status='inactive',updated_at=? WHERE user_id=0 AND symbol=? AND period=?",
+                (now, key[0], key[1]),
+            )
+        for key in set(old_s) - active_setups:
+            storage.execute(
+                "UPDATE structure_setup_configs SET status='inactive',updated_at=? WHERE user_id=0 AND symbol=? AND period=? AND setup_type=?",
+                (now, key[0], key[1], key[2]),
+            )
+        storage.execute(
+            "INSERT INTO structure_config_change_logs(user_id,scope,before_json,after_json,source,reason,created_at) VALUES(0,'default',?,?, 'manual', ?, ?) ",
+            (json.dumps(old_default_json, ensure_ascii=False), json.dumps({k: cfg.get(k) for k in allowed if k in cfg}, ensure_ascii=False), reason, now),
+        )
 
     def as_bool(value, default=False):
         if isinstance(value, str):
@@ -55,12 +145,85 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
     async def get_config(user: AuthUser = Depends(require_admin)):
         items = RuntimeStateRepository(0, 0).list_entities("market_structure_config")
         stored = items[-1] if items else {}
+        migrate_legacy_config(get_storage(), stored)
         return {
             "status": "ok",
             "config": {**allowed, **{k: v for k, v in stored.items() if k in allowed}},
             "profiles": stored.get("profiles", []) if isinstance(stored, dict) else [],
             "setup_profiles": stored.get("setup_profiles", []) if isinstance(stored, dict) else [],
         }
+
+    @router.get("/admin/market-structure/config/effective", dependencies=[Depends(require_admin)])
+    async def get_effective_config(symbol: str, period: str, setup_type: str = "", user: AuthUser = Depends(require_admin)):
+        from market.services.signal.structure_plan_signal import resolve_structure_plan_config
+        effective = resolve_structure_plan_config(symbol, period, setup_type)
+        source = {}
+        storage = get_storage()
+        _, profiles, setups, decode = read_normalized(storage)
+        profile_row = next((x for x in profiles if str(x.get('symbol')).upper()==symbol.upper() and str(x.get('period')).upper()==period.upper()), None)
+        setup_row = next((x for x in setups if str(x.get('symbol')).upper()==symbol.upper() and str(x.get('period')).upper()==period.upper() and str(x.get('setup_type')).lower()==setup_type.lower()), None)
+        profile, setup = decode(profile_row), decode(setup_row)
+        def has_override(layer, key):
+            if key not in layer:
+                return False
+            value = layer.get(key)
+            return not (key in inherit_empty_list_keys and isinstance(value, list) and not value)
+        for key in effective:
+            source[key] = "setup" if has_override(setup, key) else "symbol_period" if has_override(profile, key) else "default"
+        return {"status": "ok", "symbol": symbol.upper(), "period": period.upper(), "setup_type": setup_type.lower(), "config": effective, "sources": source}
+
+    @router.get("/admin/market-structure/config/overview", dependencies=[Depends(require_admin)])
+    async def get_config_overview(user: AuthUser = Depends(require_admin)):
+        storage = get_storage()
+        default_row, profile_rows, setup_rows, decode = read_normalized(storage)
+        profiles = [{"symbol": x.get("symbol"), "period": x.get("period"), "version": x.get("version"), "updated_at": x.get("updated_at"), **decode(x)} for x in profile_rows]
+        setups = [{"symbol": x.get("symbol"), "period": x.get("period"), "setup_type": x.get("setup_type"), "version": x.get("version"), "updated_at": x.get("updated_at"), **decode(x)} for x in setup_rows]
+        keys = {(str(x.get("symbol")).upper(), str(x.get("period")).upper()) for x in profiles if x.get("symbol") and x.get("period")}
+        keys.update((str(x.get("symbol")).upper(), str(x.get("period")).upper()) for x in setups if x.get("symbol") and x.get("period"))
+        rows = []
+        for symbol, period in sorted(keys):
+            local = [x for x in setups if str(x.get("symbol")).upper() == symbol and str(x.get("period")).upper() == period]
+            rows.append({"symbol": symbol, "period": period, "has_profile": any(str(x.get("symbol")).upper() == symbol and str(x.get("period")).upper() == period for x in profiles), "setups": [{"setup_type": x.get("setup_type"), "enabled": x.get("enabled", True)} for x in local]})
+        return {"status": "ok", "default_configured": bool(default_row), "default": {"version": default_row.get("version", 0), "updated_at": default_row.get("updated_at", 0)}, "items": rows, "profiles": profiles, "setup_profiles": setups}
+
+    @router.get("/admin/market-structure/config/history", dependencies=[Depends(require_admin)])
+    async def get_config_history(limit: int = 50, user: AuthUser = Depends(require_admin)):
+        limit = max(1, min(int(limit), 200))
+        rows = get_storage().fetchall(
+            f"SELECT id, user_id, scope, before_json, after_json, source, reason, created_at "
+            f"FROM structure_config_change_logs WHERE user_id=0 ORDER BY created_at DESC, id DESC LIMIT {limit}"
+        )
+        for row in rows:
+            for key in ("before_json", "after_json"):
+                if isinstance(row.get(key), str):
+                    try: row[key] = json.loads(row[key])
+                    except (TypeError, ValueError): pass
+        return {"status": "ok", "items": rows}
+
+    @router.post("/admin/market-structure/config/generate", dependencies=[Depends(require_admin)])
+    async def generate_config(payload: Dict, user: AuthUser = Depends(require_admin)):
+        symbol = str(payload.get("symbol") or "").strip().upper()
+        period = str(payload.get("period") or "M5").strip().upper()
+        setup_type = str(payload.get("setup_type") or "").strip().lower()
+        scope = str(payload.get("scope") or "symbol_period")
+        if not symbol or not period or scope not in {"symbol_period", "setup"} or (scope == "setup" and not setup_type):
+            return {"status": "failed", "reason": "symbol、period 必填；SETUP 配置还需要 setup_type"}
+        storage = get_storage(); default_row, profile_rows, setup_rows, decode = read_normalized(storage)
+        base = decode(default_row)
+        profile = next((x for x in profile_rows if str(x.get("symbol")).upper()==symbol and str(x.get("period")).upper()==period), None)
+        if profile: base = {**base, **decode(profile)}
+        setup = next((x for x in setup_rows if str(x.get("symbol")).upper()==symbol and str(x.get("period")).upper()==period and str(x.get("setup_type")).lower()==setup_type), None)
+        if scope == "setup" and setup: base = {**base, **decode(setup)}
+        candidate = dict(base)
+        changes = []
+        overrides = payload.get("overrides") if isinstance(payload.get("overrides"), dict) else {}
+        for key, value in overrides.items():
+            if key not in allowed: continue
+            if base.get(key) != value:
+                changes.append({"field": key, "before": base.get(key), "after": value, "reason": payload.get("reason") or "特殊配置生成器"})
+            candidate[key] = value
+        candidate.update({"symbol": symbol, "period": period, **({"setup_type": setup_type} if scope == "setup" else {})})
+        return {"status": "ok", "scope": scope, "base": base, "candidate": candidate, "changes": changes}
 
     @router.put("/admin/market-structure/config", dependencies=[Depends(require_admin)])
     async def put_config(payload: Dict, user: AuthUser = Depends(require_admin)):
@@ -122,6 +285,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         setup_profiles = [x for x in (normalize(item, setup=True) for item in (payload.get("setup_profiles") or []) if isinstance(item, dict)) if x]
         cfg["profiles"] = profiles; cfg["setup_profiles"] = setup_profiles
         RuntimeStateRepository(0, 0).upsert_entity("market_structure_config", "default", cfg, status="active")
+        persist_normalized(get_storage(), cfg, profiles, setup_profiles, str(payload.get("reason") or "手工保存结构分析配置"))
         return {"status": "ok", "config": {k: v for k, v in cfg.items() if k in allowed}, "profiles": profiles, "setup_profiles": setup_profiles}
 
     @router.post("/admin/market-structure/optimize-setups", dependencies=[Depends(require_admin)])
@@ -292,7 +456,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             engine = engine_manager.get_engine_for_user(user.user_id)
             review = engine.llm_service.call_llm(
                 prompt, system_prompt="你是交易配置建议审核器，只做复核，不直接写入配置。",
-                scene_code=AI_SIGNAL_ANALYSIS, object_type="structure_setup_optimizer_review",
+                scene_code=STRUCTURE_ANALYSIS, object_type="structure_setup_optimizer_review",
                 object_id=f"{int(time.time())}:{user.user_id}", max_tokens=3500,
             )
             return {"status": "ok", "review": review or {}}

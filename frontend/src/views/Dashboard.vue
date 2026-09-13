@@ -60,7 +60,7 @@
             <div><strong>当前运行正常</strong><p>连接、风控、策略和行情暂未发现需要处理的问题。</p></div>
           </div>
           <div v-else class="attention-list">
-            <button v-for="item in overview.attention" :key="item.type" type="button" @click="go(item.path)">
+            <button v-for="item in overview.attention" :key="item.type" type="button" @click="handleAttention(item)">
               <v-avatar :color="severityMeta(item.severity).color" variant="tonal" size="38"><v-icon size="20">{{ severityMeta(item.severity).icon }}</v-icon></v-avatar>
               <div><strong>{{ item.title }}</strong><span>{{ item.detail }}</span></div>
               <v-icon size="18">mdi-chevron-right</v-icon>
@@ -152,6 +152,42 @@
         <div v-else class="empty-state compact"><v-icon size="40">mdi-chart-candlestick</v-icon><strong>暂未收到行情数据</strong><span>EA 完成全量 K 线初始化后会显示行情健康状态。</span></div>
       </v-card-text>
     </v-card>
+
+    <v-dialog v-model="instructionDialog" max-width="1100" scrollable>
+      <v-card class="instruction-dialog">
+        <v-card-title class="section-head">
+          <div><v-icon color="info">mdi-console-network-outline</v-icon><span>MT5 待处理指令</span></div>
+          <v-btn icon="mdi-close" variant="text" @click="instructionDialog = false" />
+        </v-card-title>
+        <v-card-text>
+          <div class="instruction-summary">
+            <v-chip size="small" color="warning" variant="tonal">待领取 {{ instructionSummary.pending }}</v-chip>
+            <v-chip size="small" color="info" variant="tonal">已领取待回执 {{ instructionSummary.delivered }}</v-chip>
+            <v-chip size="small" color="grey" variant="tonal">历史兼容 {{ instructionSummary.sent }}</v-chip>
+            <span v-if="instructionLoading" class="section-note">正在刷新指令状态…</span>
+          </div>
+          <v-alert v-if="instructionError" type="error" variant="tonal" class="mb-3">{{ instructionError }}</v-alert>
+          <div v-if="!instructionLoading && !pendingInstructions.length" class="empty-state compact">
+            <v-icon size="40">mdi-check-circle-outline</v-icon><strong>当前没有待处理指令</strong>
+            <span>仪表盘数据可能刚刚刷新，建议再次刷新确认。</span>
+          </div>
+          <v-table v-else-if="pendingInstructions.length" density="comfortable" class="instruction-table">
+            <thead><tr><th>账户 / 品种</th><th>方向</th><th>价格</th><th>手数</th><th>止损 / 止盈</th><th>来源</th><th>状态</th><th>时间</th></tr></thead>
+            <tbody>
+              <tr v-for="item in pendingInstructions" :key="item.instruction_id">
+                <td><strong>{{ item.symbol }}</strong><small>{{ overview.account.account_name || '当前账户' }}</small></td>
+                <td><v-chip :color="directionMeta(item.action).color" size="x-small" variant="tonal">{{ actionLabel(item.action) }}</v-chip></td>
+                <td>{{ price(item.price) }}</td><td>{{ item.mount ?? item.volume ?? '--' }}</td>
+                <td>{{ price(item.sl) }} / {{ price(item.tp) }}</td>
+                <td>{{ item.source || item.reason || '--' }}</td>
+                <td><v-chip size="x-small" :color="instructionStatusMeta(item.status).color" variant="tonal">{{ instructionStatusMeta(item.status).label }}</v-chip></td>
+                <td><small>{{ formatTime(item.created_at || item.sent_at || item.last_delivery_at) }}</small><small v-if="item.delivery_attempts">投递 {{ item.delivery_attempts }} 次</small></td>
+              </tr>
+            </tbody>
+          </v-table>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
@@ -166,6 +202,11 @@ const { selectedAccountId, selectedAccount } = useAccountContext()
 const loading = ref(false)
 const error = ref('')
 const overview = reactive(emptyOverview())
+const instructionDialog = ref(false)
+const instructionLoading = ref(false)
+const instructionError = ref('')
+const pendingInstructions = ref([])
+const instructionSummary = reactive({ pending: 0, delivered: 0, sent: 0 })
 let refreshTimer = null
 
 function emptyOverview() {
@@ -215,6 +256,21 @@ const formatTime = value => {
   const date = typeof value === 'number' ? new Date(value * 1000) : new Date(value)
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN')
 }
+const actionLabel = value => ['b', 'buy', 'long'].includes(String(value || '').toLowerCase()) ? '买入' : ['s', 'sell', 'short'].includes(String(value || '').toLowerCase()) ? '卖出' : String(value || '--')
+const instructionStatusMeta = value => ({ pending: { label: '待领取', color: 'warning' }, delivered: { label: '已领取待回执', color: 'info' }, sent: { label: '历史兼容', color: 'grey' } }[String(value || '').toLowerCase()] || { label: value || '待处理', color: 'grey' })
+const flattenInstructions = payload => Object.values(payload?.pending_trades || {}).flatMap(items => Array.isArray(items) ? items : [])
+async function loadPendingInstructions() {
+  instructionDialog.value = true; instructionLoading.value = true; instructionError.value = ''
+  try {
+    const payload = await tradingAPI.getPendingTrades(selectedAccountId.value)
+    pendingInstructions.value = flattenInstructions(payload)
+    instructionSummary.pending = pendingInstructions.value.filter(item => item.status === 'pending').length
+    instructionSummary.delivered = pendingInstructions.value.filter(item => item.status === 'delivered').length
+    instructionSummary.sent = pendingInstructions.value.filter(item => item.status === 'sent').length
+  } catch (err) { instructionError.value = err.response?.data?.detail || `加载指令失败: ${err.message}` }
+  finally { instructionLoading.value = false }
+}
+const handleAttention = item => item.type === 'pending_instructions' ? loadPendingInstructions() : go(item.path)
 const go = path => path && router.push(path)
 
 onMounted(() => { loadData(); refreshTimer = setInterval(loadData, 30000) })

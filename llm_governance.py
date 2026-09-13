@@ -23,6 +23,7 @@ AI_SIGNAL_PROMPT_GENERATION = "ai_signal_prompt_generation"
 BACKTEST_REPORT_ANALYSIS = "backtest_report_analysis"
 ALPHA_CANDIDATE_GENERATION = "alpha_candidate_generation"
 ALPHA_ITERATIVE_REFINEMENT = "alpha_iterative_refinement"
+STRUCTURE_ANALYSIS = "market_structure_analysis"
 
 DEFAULT_SYSTEM_PROMPT = (
     "你是一位专业的金融分析师，擅长技术分析和趋势判断。"
@@ -223,6 +224,15 @@ SCENE_DEFAULTS = (
     (
         ALPHA_ITERATIVE_REFINEMENT, "Alpha 迭代优化", "low", 0, 0,
         ALPHA_SYSTEM_PROMPT, ALPHA_REFINEMENT_PROMPT_TEMPLATE,
+    ),
+    (
+        STRUCTURE_ANALYSIS, "结构分析历史优化", "low", 0, 1,
+        "你是结构交易系统的历史复盘专家。请基于提供的成交样本、结构状态和配置差异，输出可验证、保守的配置建议。只返回合法 JSON，不输出 Markdown。",
+        """请分析下面的结构交易历史快照，并判断哪些配置值得保留、调整或拒绝。
+必须区分样本证据与推测；样本不足时只能给 review，不得建议激进放宽。
+输出 JSON：{\"summary\":\"\",\"decision\":\"apply|reject|review\",\"recommendations\":[{\"symbol\":\"\",\"period\":\"\",\"setup_type\":\"\",\"field\":\"\",\"current_value\":\"\",\"suggested_value\":\"\",\"reason\":\"\",\"risk\":\"\",\"validation\":\"\"}]}
+
+{{structure_analysis_snapshot}}""",
     ),
 )
 FREE_DAILY_LIMIT = 30
@@ -547,6 +557,8 @@ class LLMGovernanceService:
             ):
                 if token not in user_prompt_template:
                     raise LLMGovernanceError(f"Alpha迭代提示词必须保留 {token}")
+        if scene_code == STRUCTURE_ANALYSIS and "{{structure_analysis_snapshot}}" not in user_prompt_template:
+            raise LLMGovernanceError("结构分析历史优化提示词必须保留 {{structure_analysis_snapshot}}")
 
     def save_scene(self, scene_code: str, data: Dict, admin_user_id: int) -> Dict:
         current = self.storage.fetchone(

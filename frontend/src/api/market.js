@@ -290,6 +290,22 @@ export const marketAPI = {
     const response = await api.get('/admin/market-structure/config')
     return response.data
   },
+  async getMarketStructureConfigOverview() {
+    const response = await api.get('/admin/market-structure/config/overview')
+    return response.data
+  },
+  async getEffectiveMarketStructureConfig(symbol, period, setupType = '') {
+    const response = await api.get('/admin/market-structure/config/effective', { params: { symbol, period, setup_type: setupType } })
+    return response.data
+  },
+  async getMarketStructureConfigHistory(limit = 50) {
+    const response = await api.get('/admin/market-structure/config/history', { params: { limit } })
+    return response.data
+  },
+  async generateMarketStructureConfig(payload) {
+    const response = await api.post('/admin/market-structure/config/generate', payload)
+    return response.data
+  },
   async saveMarketStructureConfig(config) {
     const response = await api.put('/admin/market-structure/config', config)
     return response.data

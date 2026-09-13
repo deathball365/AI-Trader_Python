@@ -119,10 +119,63 @@ class TradingInstructionStore:
             {symbol: [instruction_dict, ...]}
         """
         with self._lock:
+            self._reconcile_execution_reports()
             result = {}
             for symbol, instructions in self._instructions_by_symbol.items():
-                result[symbol] = [inst.to_dict() for inst in instructions]
+                # Dashboard and operator APIs need the persisted delivery
+                # state; the EA polling endpoint uses ``to_dict`` separately.
+                # Include the full record here so pending/delivered/attempt
+                # details are not lost when the dashboard opens the drawer.
+                result[symbol] = []
+                for inst in instructions:
+                    item = inst.to_full_dict()
+                    item["mount"] = inst.mount
+                    result[symbol].append(item)
             return result
+
+    def _reconcile_execution_reports(self) -> None:
+        """对账已落库的 EA 回执，避免旧 ``sent`` 状态长期滞留。
+
+        旧版本在回执写入和指令状态更新之间可能因为进程重启、不同
+        engine 实例或网络重试而留下状态分叉。读取操作顺手做一次按账户
+        范围的批量对账，不依赖 EA 再次领取，也不会把 pending 回执误判为
+        已完成。
+        """
+        if not self._repository:
+            return
+        try:
+            rows = self._repository.storage.fetchall(
+                "SELECT instruction_id, execution_status, success "
+                "FROM trade_execution_reports "
+                "WHERE user_id=? AND account_id=?",
+                (self._repository.user_id, self._repository.account_id),
+            )
+        except Exception:
+            return
+        terminal = {"filled", "rejected", "timeout", "canceled", "cancelled"}
+        reports = {}
+        for row in rows:
+            instruction_id = str(row.get("instruction_id") or "")
+            if not instruction_id:
+                continue
+            status = str(row.get("execution_status") or "").lower()
+            if status not in terminal:
+                status = "filled" if bool(row.get("success")) else "rejected" if row.get("success") is not None else ""
+            if status in terminal:
+                reports[instruction_id] = status
+        for instruction_id, status in reports.items():
+            inst = self._instructions_by_id.get(instruction_id)
+            if not inst or inst.status not in self.ACTIVE_STATUSES:
+                continue
+            inst.status = status
+            inst.executed_at = datetime.now()
+            self._persist(inst)
+            symbol = inst.symbol.upper()
+            self._instructions_by_symbol[symbol] = [
+                item for item in self._instructions_by_symbol.get(symbol, [])
+                if item.instruction_id != instruction_id
+            ]
+            self._instructions_by_id.pop(instruction_id, None)
 
     # ==================== 获取并发送指令（EA调用）====================
 

@@ -117,6 +117,14 @@
             <small>基于分层 Pivot、结构状态机和局部形态实时计算</small>
           </v-card-title>
           <v-card-text>
+            <div class="d-flex align-center justify-space-between flex-wrap ga-2 mb-3">
+              <div><div class="text-subtitle-1 font-weight-bold">结构配置总览矩阵</div><div class="text-caption text-medium-emphasis">公共默认 → 品种/周期 → SETUP，点击查看最终生效值与来源。</div></div>
+              <div class="d-flex ga-2"><v-btn size="small" variant="tonal" prepend-icon="mdi-auto-fix" @click="openStructureGenerator()">特殊配置生成器</v-btn><v-btn size="small" variant="text" :loading="structureOverviewLoading" @click="loadStructureOverview">刷新</v-btn></div>
+            </div>
+            <v-alert v-if="structureOverview && !structureOverview.items?.length" type="info" variant="tonal" density="compact" class="mb-3">当前还没有品种/周期专属覆盖，所有配置均继承公共默认。</v-alert>
+            <v-table v-if="structureOverview?.items?.length" density="compact" class="mb-5"><thead><tr><th>品种</th><th>周期</th><th>专属覆盖</th><th>SETUP</th><th class="text-right">操作</th></tr></thead><tbody><tr v-for="row in structureOverview.items" :key="`${row.symbol}-${row.period}`"><td><strong>{{ row.symbol }}</strong></td><td>{{ row.period }}</td><td><v-chip size="x-small" :color="row.has_profile ? 'primary' : 'grey'" variant="tonal">{{ row.has_profile ? '品种/周期' : '仅 SETUP' }}</v-chip></td><td><v-chip v-for="setup in row.setups" :key="setup.setup_type" size="x-small" class="mr-1" variant="outlined">{{ setupTypeLabel(setup.setup_type) }}</v-chip><span v-if="!row.setups?.length">--</span></td><td class="text-right"><v-btn size="small" variant="text" @click="openEffectiveConfig(row.symbol,row.period)">查看最终配置</v-btn><v-btn size="small" variant="text" @click="openStructureGenerator(row)">生成覆盖</v-btn></td></tr></tbody></v-table>
+            <div class="d-flex align-center justify-space-between mb-2"><div class="text-subtitle-2">配置变更记录</div><v-btn size="small" variant="text" :loading="structureHistoryLoading" @click="loadStructureHistory">刷新记录</v-btn></div>
+            <v-table v-if="structureHistory.length" density="compact" class="mb-5"><thead><tr><th>版本</th><th>时间</th><th>范围</th><th>来源</th><th>原因</th></tr></thead><tbody><tr v-for="item in structureHistory" :key="item.id"><td>#{{ item.id }}</td><td>{{ formatTimestamp(item.created_at) }}</td><td>{{ structureSourceLabel(item.scope) }}</td><td>{{ item.source || '--' }}</td><td class="text-caption">{{ item.reason || '--' }}</td></tr></tbody></v-table>
             <div class="d-flex flex-wrap ga-2 align-center mb-3">
               <v-select v-model="structureConfigScope" :items="structureConfigScopes" item-title="label" item-value="value" label="当前查看的配置" density="compact" variant="outlined" hide-details style="max-width:300px" @update:model-value="switchStructureScope" />
               <v-btn v-if="structureConfigScope !== 'default'" size="small" variant="text" @click="switchStructureScope('default')">查看公共默认配置</v-btn>
@@ -156,7 +164,7 @@
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_retest_stop_atr" type="number" min="1" max="15" step="0.1" label="趋势回踩止损上限（ATR）" hint="超过正常上限后必须回踩，默认 4.0" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.trend_max_stop_atr" type="number" min="1" max="20" step="0.1" label="趋势最大止损上限（ATR）" hint="超过后取消计划，默认 6.0" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.choch_max_stop_atr" type="number" min="0.5" max="10" step="0.1" label="CHOCH 最大止损（ATR）" hint="超过后等待新的结构回踩，默认 3.0" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12"><div class="text-subtitle-2 mt-2">成交密集区识别与 Pivot 融合</div></v-col>
+              <v-col cols="12"><div class="structure-zone-heading mt-2"><div class="text-subtitle-2">成交密集区</div><div class="text-caption text-medium-emphasis">独立控制密集区识别、Pivot 融合，以及密集区反转/突破计划生成。未设置品种周期覆盖时继承公共默认。</div></div></v-col>
               <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.zone_pressure_enabled" color="primary" inset hide-details label="启用成交密集区识别" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.zone_lookback_bars" type="number" min="1" label="密集区回看K线数" density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.zone_bin_atr" type="number" min="0" step="0.05" label="价格桶宽度（ATR）" density="compact" variant="outlined" /></v-col>
@@ -174,6 +182,10 @@
               <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.pivot_zone_enabled" color="primary" inset hide-details label="启用 Pivot 支撑阻力融合" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pivot_zone_merge_atr" type="number" min="0" step="0.05" label="Pivot 合并距离（ATR）" density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pivot_zone_min_points" type="number" min="1" label="Pivot 区域最少点数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.enable_zone_pressure" color="primary" inset hide-details label="生成密集区交易计划" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pressure_plan_valid_bars" type="number" min="1" label="计划有效K线数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pressure_breakout_target_multiple" type="number" min="1" step="0.1" label="突破目标倍数" density="compact" variant="outlined" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pressure_min_event_confidence" type="number" min="0" max="100" label="最低事件置信度" density="compact" variant="outlined" /></v-col>
             </v-row>
             <div class="llm-section-head compact mt-4"><div><h3>结构交易计划参数</h3><p>行情层统一生成计划；按品种/周期专属配置覆盖默认值，策略仅负责引用和执行筛选。</p></div></div>
             <v-row class="mt-2">
@@ -192,10 +204,6 @@
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.max_plan_lifetime_bars" type="number" min="10" max="1000" label="计划安全兜底（K线）" hint="结构事件未发生时的最长保留上限，默认 100 根" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.breakout_target_atr" type="number" min="1" max="10" step="0.5" label="突破目标（ATR）" density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.breakout_retest_valid_bars" type="number" min="1" max="50" label="突破回踩有效K线数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.enable_zone_pressure" color="primary" inset hide-details label="生成密集区交易计划" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pressure_plan_valid_bars" type="number" min="1" label="密集区计划有效K线数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pressure_breakout_target_multiple" type="number" min="1" step="0.1" label="密集区突破目标倍数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pressure_min_event_confidence" type="number" min="0" max="100" label="最低事件置信度" density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.triangle_breakout_min_body_atr" type="number" min="0.1" max="5" step="0.1" label="三角形突破最小实体（ATR）" hint="默认 0.5；实体过小视为无效突破" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.triangle_breakout_min_close_extension_atr" type="number" min="0" max="2" step="0.05" label="三角形收盘越界（ATR）" hint="默认 0.1；收盘需明确位于边界外" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-switch v-model="structureEngineConfig.triangle_breakout_require_swing_external_alignment" color="primary" inset hide-details label="三角形突破要求 Swing/External 同向" /></v-col>
@@ -1501,6 +1509,9 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="structureEffectiveDialog" max-width="900"><v-card><v-card-title>最终生效配置 · {{ structureEffectiveTarget.symbol }} · {{ structureEffectiveTarget.period }}<span v-if="structureEffectiveTarget.setupType"> · {{ setupTypeLabel(structureEffectiveTarget.setupType) }}</span></v-card-title><v-card-text><v-progress-linear v-if="structureEffectiveLoading" indeterminate /><v-table v-else-if="structureEffective" density="compact"><thead><tr><th>字段</th><th>最终值</th><th>来源</th></tr></thead><tbody><tr v-for="(value,key) in structureEffective.config" :key="key" :class="{ 'bg-green-lighten-5': structureEffective.sources?.[key] !== 'default' }"><td>{{ structureFieldLabels[key] || key }}</td><td class="text-caption">{{ formatStructureValue(value) }}</td><td><v-chip size="x-small" :color="structureEffective.sources?.[key] !== 'default' ? 'primary' : 'grey'" variant="tonal">{{ structureSourceLabel(structureEffective.sources?.[key]) }}</v-chip></td></tr></tbody></v-table></v-card-text><v-card-actions><v-spacer/><v-btn variant="text" @click="structureEffectiveDialog=false">关闭</v-btn></v-card-actions></v-card></v-dialog>
+    <v-dialog v-model="structureGeneratorOpen" max-width="760"><v-card><v-card-title>特殊结构配置生成器</v-card-title><v-card-text><v-row dense><v-col cols="12" sm="6"><v-text-field v-model="structureGeneratorDraft.symbol" label="品种" variant="outlined" /></v-col><v-col cols="12" sm="6"><v-select v-model="structureGeneratorDraft.period" :items="['M1','M5','M15','H1','H4']" label="周期" variant="outlined" /></v-col><v-col cols="12" sm="6"><v-select v-model="structureGeneratorDraft.scope" :items="[{title:'品种/周期',value:'symbol_period'},{title:'品种/周期/SETUP',value:'setup'}]" label="配置范围" variant="outlined" /></v-col><v-col v-if="structureGeneratorDraft.scope==='setup'" cols="12" sm="6"><v-select v-model="structureGeneratorDraft.setup_type" :items="structureSetupTypes" item-title="label" item-value="value" label="SETUP" variant="outlined" /></v-col><v-col v-for="field in structureGeneratorFields" :key="field.key" cols="12" sm="6"><v-switch v-if="field.type==='boolean'" v-model="structureGeneratorDraft.overrides[field.key]" :label="field.label" hide-details /><v-text-field v-else v-model="structureGeneratorDraft.overrides[field.key]" :label="field.label" :type="field.type" :step="field.step" variant="outlined" clearable /></v-col><v-col cols="12"><v-textarea v-model="structureGeneratorDraft.reason" label="变更原因" rows="2" variant="outlined" /></v-col></v-row><v-card v-if="structureGeneratorPreview" variant="tonal" class="pa-3"><div class="font-weight-bold mb-2">变更预览</div><div v-for="change in structureGeneratorPreview.changes" :key="change.field" class="d-flex justify-space-between text-caption py-1"><span>{{ structureFieldLabels[change.field] || change.field }}</span><span>{{ formatStructureValue(change.before) }} → <strong>{{ formatStructureValue(change.after) }}</strong></span></div><div v-if="!structureGeneratorPreview.changes?.length" class="text-caption">没有检测到变化。</div></v-card></v-card-text><v-card-actions><v-spacer/><v-btn variant="text" @click="structureGeneratorOpen=false">取消</v-btn><v-btn variant="tonal" :loading="structureGeneratorLoading" @click="generateStructureConfigPreview">生成预览</v-btn><v-btn color="primary" :disabled="!structureGeneratorPreview?.changes?.length" @click="applyStructureGenerator">确认应用</v-btn></v-card-actions></v-card></v-dialog>
+
     <!-- 错误提示 -->
     <v-snackbar v-model="showError" color="error" timeout="5000" location="top">
       {{ errorMessage }}
@@ -1575,6 +1586,35 @@ export default {
     const structureOptimizerLLMReview = ref(null)
     const structureOptimizerSelected = ref([])
     const structureOptimizerAllSelected = computed(() => structureOptimizerPreview.value.length > 0 && structureOptimizerSelected.value.length === structureOptimizerPreview.value.length)
+    const structureOverview = ref(null)
+    const structureOverviewLoading = ref(false)
+    const structureEffective = ref(null)
+    const structureEffectiveLoading = ref(false)
+    const structureEffectiveDialog = ref(false)
+    const structureEffectiveTarget = ref({ symbol: '', period: '', setupType: '' })
+    const structureHistory = ref([])
+    const structureHistoryLoading = ref(false)
+    const structureGeneratorOpen = ref(false)
+    const structureGeneratorLoading = ref(false)
+    const structureGeneratorPreview = ref(null)
+    const structureGeneratorDraft = ref({ symbol: '', period: 'M5', setup_type: '', scope: 'symbol_period', overrides: {}, reason: '' })
+    const structureGeneratorFields = [
+      { key: 'min_real_risk_reward', label: '最低真实盈亏比', type: 'number', step: 0.1 },
+      { key: 'entry_mode', label: '入场方式', type: 'text' },
+      { key: 'require_reclaim', label: '要求回收确认', type: 'boolean' },
+      { key: 'confirmation_bars', label: '确认 K 线数', type: 'number' },
+      { key: 'min_displacement_atr', label: '最小位移 ATR', type: 'number', step: 0.1 },
+      { key: 'cooldown_minutes', label: '冷却分钟', type: 'number' },
+    ]
+    const structureFieldLabels = { min_real_risk_reward: '最低真实盈亏比', entry_mode: '入场方式', require_reclaim: '要求回收确认', confirmation_bars: '确认 K 线数', min_displacement_atr: '最小位移 ATR', cooldown_minutes: '冷却分钟' }
+    const structureSourceLabel = value => ({ default: '公共默认', symbol_period: '品种/周期', setup: 'SETUP' }[value] || value || '--')
+    const formatStructureValue = value => {
+      if (value === null || value === undefined) return '--'
+      if (typeof value === 'boolean') return value ? '是' : '否'
+      if (Array.isArray(value)) return value.join('、') || '继承'
+      if (typeof value === 'object') return JSON.stringify(value)
+      return String(value)
+    }
     const structureSetupProfileDraft = ref({ symbol: '', period: 'M5', setup_type: 'structure_location_pullback', enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '', confirmation_bars: null, min_displacement_atr: null, require_reclaim: null, min_real_risk_reward: null, entry_zone_atr: null, stop_buffer_atr: null, target_buffer_atr: null, pressure_min_rejections: null, pressure_min_displacement_atr: null, pressure_min_efficiency: null, target_multiple: null, max_entries_per_opportunity: null, cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null, invalidate_on_zone_return: null })
     const setupTypeNames = { pressure_reversal: '密集区反转', pressure_zone_breakout: '密集区突破', structure_location_pullback: '结构位置回撤', range_lower_reversal: '箱体下沿反转', range_upper_reversal: '箱体上沿反转', range_breakout: '箱体突破', range_false_breakout: '箱体假突破', triangle_breakout: '三角形突破', triangle_breakout_watch: '三角形突破观察', triangle_prebreakout_pullback: '三角形提前回撤', choch_reversal: 'CHOCH反转', liquidity_sweep_reclaim: '流动性扫单回收', trend_continuation: '趋势延续', structure_reversal: '结构反转' }
     const setupTypeLabel = type => setupTypeNames[type] || type
@@ -1947,6 +1987,13 @@ export default {
       }
     }
 
+    const loadStructureOverview = async () => { structureOverviewLoading.value = true; try { structureOverview.value = await marketAPI.getMarketStructureConfigOverview() } finally { structureOverviewLoading.value = false } }
+    const loadStructureHistory = async () => { structureHistoryLoading.value = true; try { const data = await marketAPI.getMarketStructureConfigHistory(100); structureHistory.value = data.items || [] } finally { structureHistoryLoading.value = false } }
+    const openEffectiveConfig = async (symbol, period, setupType = '') => { structureEffectiveTarget.value = { symbol, period, setupType }; structureEffectiveDialog.value = true; structureEffectiveLoading.value = true; try { structureEffective.value = await marketAPI.getEffectiveMarketStructureConfig(symbol, period, setupType) } finally { structureEffectiveLoading.value = false } }
+    const openStructureGenerator = (row = null) => { structureGeneratorDraft.value = { symbol: row?.symbol || '', period: row?.period || 'M5', setup_type: '', scope: 'symbol_period', overrides: {}, reason: '' }; structureGeneratorPreview.value = null; structureGeneratorOpen.value = true }
+    const generateStructureConfigPreview = async () => { const d = structureGeneratorDraft.value; if (!d.symbol || (d.scope === 'setup' && !d.setup_type)) return; structureGeneratorLoading.value = true; try { structureGeneratorPreview.value = await marketAPI.generateMarketStructureConfig({ ...d, overrides: Object.fromEntries(Object.entries(d.overrides).filter(([,v]) => v !== undefined && v !== null && v !== '')) }) } finally { structureGeneratorLoading.value = false } }
+    const applyStructureGenerator = async () => { const d = structureGeneratorDraft.value; const preview = structureGeneratorPreview.value; if (!preview) return; const overrides = preview.changes.reduce((o, c) => ({ ...o, [c.field]: c.after }), {}); if (d.scope === 'setup') { const item = { symbol: d.symbol.toUpperCase(), period: d.period.toUpperCase(), setup_type: d.setup_type.toLowerCase(), ...overrides }; const i = structureSetupProfiles.value.findIndex(x => x.symbol === item.symbol && x.period === item.period && x.setup_type === item.setup_type); if (i >= 0) structureSetupProfiles.value.splice(i, 1, { ...structureSetupProfiles.value[i], ...item }); else structureSetupProfiles.value.push(item) } else { const item = { symbol: d.symbol.toUpperCase(), period: d.period.toUpperCase(), ...overrides }; const i = structureProfiles.value.findIndex(x => x.symbol === item.symbol && x.period === item.period); if (i >= 0) structureProfiles.value.splice(i, 1, { ...structureProfiles.value[i], ...item }); else structureProfiles.value.push(item) } await saveStructureEngineConfig(); await Promise.all([loadStructureOverview(), loadStructureHistory()]); structureGeneratorOpen.value = false; structureGeneratorPreview.value = null }
+
     const loadAdminWorkspace = async () => {
       quotaSaving.value = 'loading'
       try {
@@ -1962,6 +2009,7 @@ export default {
         structureProfiles.value = Array.isArray(engineData.profiles) ? engineData.profiles : []
         structureConfigScope.value = 'default'
         structureSetupProfiles.value = Array.isArray(engineData.setup_profiles) ? engineData.setup_profiles : []
+        await Promise.all([loadStructureOverview(), loadStructureHistory()])
         await loadIBKRConfig()
         await loadTickPersistenceConfig()
         if (settingsTab.value === 'quota') await loadUserQuotas()
@@ -2001,7 +2049,7 @@ export default {
       }
       const [symbol, period] = structureConfigScope.value.split('::')
       const profile = structureProfiles.value.find(x => x.symbol === symbol && x.period === period)
-      if (profile) structureEngineConfig.value = { ...structureEngineConfig.value, ...profile }
+      structureEngineConfig.value = profile ? { ...structureGlobalConfig.value, ...profile } : { ...structureGlobalConfig.value }
     }
     const saveStructureProfile = async () => {
       if (!structureProfileDraft.value.symbol) return
@@ -4029,6 +4077,10 @@ export default {
       applyStructureOptimization,
       toggleAllStructureOptimization,
       removeStructureSetupProfile,
+      structureOverview, structureOverviewLoading, loadStructureOverview,
+      structureEffective, structureEffectiveLoading, structureEffectiveDialog, structureEffectiveTarget, openEffectiveConfig,
+      structureHistory, structureHistoryLoading, loadStructureHistory,
+      structureGeneratorOpen, structureGeneratorLoading, structureGeneratorPreview, structureGeneratorDraft, structureGeneratorFields, structureFieldLabels, structureSourceLabel, formatStructureValue, openStructureGenerator, generateStructureConfigPreview, applyStructureGenerator,
       tradeConfig,
       newSymbol,
       newVolume,
@@ -4292,6 +4344,7 @@ export default {
 .admission-checks { display: flex; flex-wrap: wrap; gap: 5px; }
 .llm-section-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .llm-section-head.compact { margin: 18px 0 4px; }
+.structure-zone-heading { padding: 12px 14px; border: 1px solid #d8e9e1; border-left: 4px solid #16855e; border-radius: 12px; background: linear-gradient(135deg,#f2faf6,#fbfefd); }
 .provider-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
 .provider-card { padding: 15px; border: 1px solid #dce7e2; border-radius: 14px; background: #fbfdfc; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease; }
 .provider-card.active { border-color: #6fbd92; background: linear-gradient(135deg, #ecfbf2 0%, #fffaf0 100%); box-shadow: 0 10px 24px rgba(37, 112, 77, .08); }

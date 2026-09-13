@@ -1,7 +1,8 @@
 """Resolve market-layer structure-plan configuration."""
 from __future__ import annotations
 
-from typing import Callable, Dict, Iterable
+import json
+from typing import Callable, Dict
 
 
 def resolve(
@@ -18,19 +19,93 @@ def resolve(
     """
     config = dict(defaults)
     try:
+        # Normalized MySQL configuration is authoritative.  Keep the legacy
+        # runtime entity as a fallback for old installations/tests.
+        normalized = None
+        try:
+            from mysql_repositories import get_storage
+            storage = get_storage()
+            wanted_symbol = str(symbol or "").upper()
+            wanted_period = str(period or "").upper()
+            wanted_setup = str(setup_type or "").strip().lower()
+            default_row = storage.fetchone(
+                "SELECT config_json FROM structure_default_configs WHERE user_id=0 AND status='active'"
+            )
+            symbol_row = storage.fetchone(
+                "SELECT config_json FROM structure_symbol_period_configs WHERE user_id=0 AND symbol=? AND period=? AND status='active'",
+                (wanted_symbol, wanted_period),
+            )
+            setup_row = None
+            if wanted_setup and wanted_setup != "__builder__":
+                setup_row = storage.fetchone(
+                    "SELECT config_json FROM structure_setup_configs WHERE user_id=0 AND symbol=? AND period=? AND setup_type=? AND status='active'",
+                    (wanted_symbol, wanted_period, wanted_setup),
+                )
+            def decode(row):
+                if not row:
+                    return {}
+                value = row.get("config_json")
+                if isinstance(value, str):
+                    try:
+                        value = json.loads(value)
+                    except (TypeError, ValueError):
+                        return {}
+                return value if isinstance(value, dict) else {}
+            if default_row or symbol_row or setup_row:
+                normalized = (decode(default_row), decode(symbol_row), decode(setup_row))
+        except Exception as exc:
+            print(f"[StructurePlan] 规范化配置读取失败，回退旧配置: {exc}")
+        if normalized is not None:
+            base, profile, setup_profile = normalized
+            allowed = set(defaults)
+            list_inherit = {"allowed_setups", "allowed_directions", "blocked_hours"}
+            def merge_layer(target, layer, inherit_empty_lists=False):
+                for key, value in layer.items():
+                    if key not in allowed:
+                        continue
+                    if inherit_empty_lists and key in list_inherit and isinstance(value, list) and not value:
+                        continue
+                    target[key] = value
+            merge_layer(config, base)
+            merge_layer(config, profile, inherit_empty_lists=True)
+            merge_layer(config, setup_profile, inherit_empty_lists=True)
+            if setup_type == "__builder__":
+                try:
+                    rows = get_storage().fetchall(
+                        "SELECT setup_type, config_json FROM structure_setup_configs WHERE user_id=0 AND symbol=? AND period=? AND status='active'",
+                        (str(symbol or '').upper(), str(period or '').upper()),
+                    )
+                    config["_setup_profiles"] = [
+                        {"symbol": str(symbol or '').upper(), "period": str(period or '').upper(),
+                         "setup_type": str(row.get("setup_type") or "").lower(), **(
+                             json.loads(row.get("config_json")) if isinstance(row.get("config_json"), str) else (row.get("config_json") or {})
+                         )} for row in rows
+                    ]
+                except Exception:
+                    config["_setup_profiles"] = []
+            return config
+
         stored_items = repository_factory().list_entities("market_structure_config")
         stored = stored_items[-1] if stored_items else {}
         allowed = set(defaults)
         if not isinstance(stored, dict):
             stored = {}
-        config.update({key: value for key, value in stored.items() if key in allowed})
+        list_inherit = {"allowed_setups", "allowed_directions", "blocked_hours"}
+        def merge_layer(target, layer, inherit_empty_lists=False):
+            for key, value in layer.items():
+                if key not in allowed:
+                    continue
+                if inherit_empty_lists and key in list_inherit and isinstance(value, list) and not value:
+                    continue
+                target[key] = value
+        merge_layer(config, stored)
         wanted_symbol = str(symbol or "").upper()
         wanted_period = str(period or "").upper()
         profiles = stored.get("profiles") or []
         for profile in profiles:
             if (str(profile.get("symbol") or "").upper() == wanted_symbol
                     and str(profile.get("period") or "").upper() == wanted_period):
-                config.update({key: value for key, value in profile.items() if key in allowed})
+                merge_layer(config, profile, inherit_empty_lists=True)
                 break
         matching = [
             profile for profile in (stored.get("setup_profiles") or [])
@@ -41,7 +116,7 @@ def resolve(
         if wanted_setup:
             for profile in matching:
                 if str(profile.get("setup_type") or "").strip().lower() == wanted_setup:
-                    config.update({key: value for key, value in profile.items() if key in allowed})
+                    merge_layer(config, profile, inherit_empty_lists=True)
                     break
         if setup_type == "__builder__":
             config["_setup_profiles"] = matching

@@ -1110,6 +1110,11 @@ class TradeExecutionRepository:
         )
         if existing:
             result = self._deserialize(existing)
+            self._sync_instruction_state(
+                user_id, account_id, instruction_id,
+                (result or {}).get("execution_status") or (result or {}).get("status"),
+                bool((result or {}).get("success")),
+            )
             if result is not None:
                 result["duplicate"] = True
             return result
@@ -1185,12 +1190,57 @@ class TradeExecutionRepository:
             (account_id, instruction_id),
         )
         result = self._deserialize(row)
+        self._sync_instruction_state(
+            user_id, account_id, instruction_id,
+            normalized.status, bool(payload.get("success", False)),
+        )
         if result is not None:
             result["status"] = normalized.status
             result["transport"] = normalized.transport
             result["accepted"] = normalized.accepted
             result["duplicate"] = False
         return result
+
+    def _sync_instruction_state(
+        self, user_id: int, account_id: int, instruction_id: str,
+        execution_status: str = "", success: bool = False,
+    ) -> None:
+        """Update the durable instruction state at receipt time.
+
+        This is intentionally performed in the canonical execution repository,
+        rather than relying on whichever in-memory TradingServer instance
+        received the HTTP request. That prevents ``sent`` rows from remaining
+        visible after a filled/rejected EA receipt or a process restart.
+        """
+        status = str(execution_status or "").strip().lower()
+        if status in {"filled", "rejected", "timeout", "canceled", "cancelled"}:
+            final_status = "canceled" if status == "cancelled" else status
+        elif status in {"accepted", "pending", "delivered"}:
+            final_status = "delivered"
+        else:
+            final_status = "filled" if success else "rejected"
+        row = self.storage.fetchone(
+            "SELECT payload_json FROM runtime_entities "
+            "WHERE user_id=? AND account_id=? AND entity_type='trading_instruction' "
+            "AND entity_id=? LIMIT 1",
+            (int(user_id), int(account_id), str(instruction_id)),
+        )
+        if not row:
+            return
+        try:
+            payload = json.loads(row.get("payload_json") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = {}
+        payload["status"] = final_status
+        if final_status in {"filled", "rejected", "timeout", "canceled"}:
+            payload["executed_at"] = datetime.now().isoformat()
+        self.storage.execute(
+            "UPDATE runtime_entities SET status=?, payload_json=?, updated_at=? "
+            "WHERE user_id=? AND account_id=? AND entity_type='trading_instruction' "
+            "AND entity_id=?",
+            (final_status, json.dumps(payload, ensure_ascii=False), _now_ts(),
+             int(user_id), int(account_id), str(instruction_id)),
+        )
 
     @staticmethod
     def _deserialize(row) -> Optional[Dict]:

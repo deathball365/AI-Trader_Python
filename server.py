@@ -1645,9 +1645,16 @@ class TradingServer:
         )
         pending_orders = self.pending_order_service.get_orders_dict()
         instructions = self.get_all_pending_trades()
-        pending_instruction_count = sum(
-            len(items) for items in instructions.values() if isinstance(items, list)
-        )
+        pending_instruction_items = [
+            item for items in instructions.values() if isinstance(items, list)
+            for item in items if isinstance(item, dict)
+        ]
+        pending_instruction_count = len(pending_instruction_items)
+        instruction_status_counts = {
+            status: sum(1 for item in pending_instruction_items
+                        if str(item.get("status") or "pending").lower() == status)
+            for status in ("pending", "delivered", "sent")
+        }
 
         deployed_ids = set(self._active_strategy_ids("live"))
         decisions = self.get_decision_history(count=100)
@@ -1867,8 +1874,12 @@ class TradingServer:
         if pending_instruction_count:
             attention.append({
                 "type": "pending_instructions", "severity": "info",
-                "title": f"有 {pending_instruction_count} 条指令等待 MT5 领取",
-                "detail": "可前往交易指令查看执行链路",
+                "title": f"有 {pending_instruction_count} 条 MT5 指令待处理",
+                "detail": (
+                    f"待领取 {instruction_status_counts['pending']} 条，"
+                    f"已领取待回执 {instruction_status_counts['delivered']} 条，"
+                    f"历史兼容 {instruction_status_counts['sent']} 条"
+                ),
                 "path": "/trades",
             })
         stale_symbols = [item["symbol"] for item in market_health if item["is_stale"]]
@@ -1929,6 +1940,7 @@ class TradingServer:
             "pending": {
                 "confirmation_count": len(pending_orders),
                 "instruction_count": pending_instruction_count,
+                "instruction_status_counts": instruction_status_counts,
             },
             "attention": attention,
             "strategies": strategies,
