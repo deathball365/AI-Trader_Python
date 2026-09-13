@@ -36,14 +36,14 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         "event_risk_calendar_after_minutes", "event_risk_major_before_minutes",
         "event_risk_major_after_minutes", "event_risk_resume_confirmation_bars",
     }
-    list_keys = {"allowed_setups", "allowed_directions", "blocked_hours", "event_risk_rules"}
+    list_keys = {"allowed_setups", "blocked_setups", "allowed_directions", "blocked_hours", "event_risk_rules"}
     bool_keys = {
         "enabled", "require_reclaim", "event_risk_enabled", "enable_zone_pressure",
         "zone_pressure_enabled", "pivot_zone_enabled", "require_retest",
         "invalidate_on_zone_return",
     }
     string_keys = {"entry_mode"}
-    inherit_empty_list_keys = {"allowed_setups", "allowed_directions", "blocked_hours"}
+    inherit_empty_list_keys = {"allowed_setups", "blocked_setups", "allowed_directions", "blocked_hours"}
 
     ratio_keys = {"zone_min_close_ratio", "pressure_reclaim_ratio", "pressure_min_efficiency"}
     nonnegative_integer_keys = {"cooldown_minutes"}
@@ -584,6 +584,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             symbol_groups[(symbol, period)].extend(pnls)
             setup_by_symbol_period[(symbol, period)].append(setup)
         symbol_profiles = []
+        symbol_default_profiles, symbol_default_diagnostics = [], []
         for (symbol, period), pnls in sorted(symbol_groups.items()):
             if len(pnls) < 3:
                 continue
@@ -614,6 +615,47 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             })
             if len(profile) > 2:
                 symbol_profiles.append(profile)
+        # Symbol-wide diagnostics are intentionally conservative: only emit a
+        # proposal when the same setup is observed across at least two periods
+        # and the sample is large enough.  A single weak timeframe must not
+        # change every period of the instrument.
+        symbol_all = defaultdict(list)
+        symbol_setup_periods = defaultdict(set)
+        for (symbol, period, setup), pnls in grouped.items():
+            symbol_all[symbol].extend(pnls)
+            symbol_setup_periods[(symbol, setup)].add(period)
+        for symbol, pnls in sorted(symbol_all.items()):
+            if len(pnls) < 10:
+                continue
+            values = [float(item["pnl"]) for item in pnls]
+            setup_net = defaultdict(float)
+            setup_count = defaultdict(int)
+            for (item_symbol, _period, setup), setup_pnls in grouped.items():
+                if item_symbol != symbol:
+                    continue
+                setup_net[setup] += sum(float(x["pnl"]) for x in setup_pnls)
+                setup_count[setup] += len(setup_pnls)
+            stable_losses = [setup for setup, count in setup_count.items()
+                             if count >= 6 and len(symbol_setup_periods[(symbol, setup)]) >= 2
+                             and setup_net[setup] < 0]
+            profile = {"symbol": symbol, "period": "*"}
+            reasons = []
+            if stable_losses:
+                profile["blocked_setups"] = sorted(stable_losses)
+                reasons.append("该 SETUP 在至少两个周期持续净亏损，建议品种级暂时禁止")
+            diagnostic = {
+                "symbol": symbol, "period": "*", "orders": len(pnls),
+                "winning_orders": sum(1 for value in values if value > 0),
+                "win_rate": round(sum(1 for value in values if value > 0) / len(values) * 100, 2),
+                "net_pnl": round(sum(values), 2),
+                "stable_loss_setups": sorted(stable_losses),
+                "changes": "；".join(f"禁止 {x}" for x in stable_losses) if stable_losses else "保持",
+                "reasons": reasons or ["未发现跨周期一致的系统性亏损"],
+                "proposed": bool(stable_losses),
+            }
+            symbol_default_diagnostics.append(diagnostic)
+            if len(profile) > 2:
+                symbol_default_profiles.append(profile)
         # Surface setup-level conflicts without merging them into the profile.
         conflict_fields = ("entry_mode", "confirmation_bars", "min_displacement_atr",
                            "require_reclaim", "min_real_risk_reward", "min_body_atr",
@@ -644,6 +686,8 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             proposals = [item for item in payload["proposals"] if isinstance(item, dict)]
             if isinstance(payload.get("symbol_profiles"), list):
                 symbol_profiles = [item for item in payload["symbol_profiles"] if isinstance(item, dict)]
+            if isinstance(payload.get("symbol_default_profiles"), list):
+                symbol_default_profiles = [item for item in payload["symbol_default_profiles"] if isinstance(item, dict)]
             else:
                 symbol_profiles = []
         # Keep symbol/period recommendations independent from setup selections.
@@ -664,6 +708,9 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             for item in symbol_profiles:
                 key = (item["symbol"], item["period"])
                 profile_index[key] = {**profile_index.get(key, {}), **item}
+            for item in symbol_default_profiles:
+                key = (item["symbol"], "*")
+                profile_index[key] = {**profile_index.get(key, {}), **item}
             cfg["profiles"] = list(profile_index.values())
             cfg["setup_profiles"] = merged
             RuntimeStateRepository(0, 0).upsert_entity("market_structure_config", "default", cfg, status="active")
@@ -678,6 +725,8 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         return {"status": "ok", "days": days, "applied": applied,
                 "proposals": proposals, "symbol_profiles": symbol_profiles,
                 "diagnostics": diagnostics, "profile_diagnostics": profile_diagnostics,
+                "symbol_default_profiles": symbol_default_profiles,
+                "symbol_default_diagnostics": symbol_default_diagnostics,
                 "conflicts": conflicts}
 
     @router.post("/admin/market-structure/optimize-setups/review", dependencies=[Depends(require_admin)])

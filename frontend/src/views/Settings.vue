@@ -332,7 +332,13 @@
                     <tbody><tr v-for="item in structureOptimizerProfilePreview" :key="`${item.symbol}-${item.period}`"><td><v-checkbox-btn v-model="structureOptimizerProfileSelected" :value="`${item.symbol}::${item.period}`" /></td><td>{{ item.symbol }} · {{ item.period }}</td><td>{{ item.orders }} 笔 · 胜率 {{ item.win_rate }}% · 净盈亏 {{ item.net_pnl }}</td><td>{{ item.changes || '保持' }}</td><td>{{ (item.reasons || []).join('；') }}</td></tr></tbody>
                   </v-table>
                   <v-alert v-else type="info" variant="tonal" density="compact" class="mb-4">暂无满足样本条件的品种+周期整体建议。</v-alert>
-                  <h4 class="text-subtitle-1 mb-2">二、品种 + 周期 + SETUP 专项建议</h4>
+                  <h4 class="text-subtitle-1 mb-2">二、品种默认建议</h4>
+                  <v-table v-if="structureOptimizerSymbolPreview.length" density="compact" class="mb-4">
+                    <thead><tr><th>选择</th><th>品种</th><th>历史表现</th><th>建议变更</th><th>原因</th></tr></thead>
+                    <tbody><tr v-for="item in structureOptimizerSymbolPreview" :key="item.symbol"><td><v-checkbox-btn v-model="structureOptimizerSymbolSelected" :value="`${item.symbol}::*`" /></td><td>{{ item.symbol }} · 所有周期</td><td>{{ item.orders }} 笔 · 胜率 {{ item.win_rate }}% · 净盈亏 {{ item.net_pnl }}</td><td>{{ item.changes || '保持' }}</td><td>{{ (item.reasons || []).join('；') }}</td></tr></tbody>
+                  </v-table>
+                  <v-alert v-else type="info" variant="tonal" density="compact" class="mb-4">暂无满足样本条件的品种级建议。</v-alert>
+                  <h4 class="text-subtitle-1 mb-2">三、品种 + 周期 SETUP 建议</h4>
                   <v-table density="compact">
                     <thead><tr><th style="width:48px"><v-checkbox-btn :model-value="structureOptimizerAllSelected" @update:model-value="toggleAllStructureOptimization" /></th><th>品种/周期</th><th>SETUP</th><th>历史表现</th><th>建议变更</th><th>原因</th></tr></thead>
                     <tbody>
@@ -1693,10 +1699,12 @@ export default {
     const structureOptimizerPreviewOpen = ref(false)
     const structureOptimizerPreview = ref([])
     const structureOptimizerProfilePreview = ref([])
+    const structureOptimizerSymbolPreview = ref([])
     const structureOptimizerPayload = ref(null)
     const structureOptimizerLLMReview = ref(null)
     const structureOptimizerSelected = ref([])
     const structureOptimizerProfileSelected = ref([])
+    const structureOptimizerSymbolSelected = ref([])
     const structureOptimizerAllSelected = computed(() => structureOptimizerPreview.value.length > 0 && structureOptimizerSelected.value.length === structureOptimizerPreview.value.length)
     const structureOptimizerProfileAllSelected = computed(() => structureOptimizerProfilePreview.value.length > 0 && structureOptimizerProfileSelected.value.length === structureOptimizerProfilePreview.value.length)
     const structureOptimizerConflicts = ref([])
@@ -2610,11 +2618,13 @@ export default {
         const proposals = Array.isArray(data.proposals) ? data.proposals : []
         structureOptimizerPreview.value = Array.isArray(data.diagnostics) ? data.diagnostics : []
         structureOptimizerProfilePreview.value = Array.isArray(data.profile_diagnostics) ? data.profile_diagnostics : []
+        structureOptimizerSymbolPreview.value = Array.isArray(data.symbol_default_diagnostics) ? data.symbol_default_diagnostics : []
         structureOptimizerConflicts.value = Array.isArray(data.conflicts) ? data.conflicts : []
         structureOptimizerSelected.value = structureOptimizerPreview.value.map(item => `${item.symbol}-${item.period}-${item.setup_type}`)
         structureOptimizerProfileSelected.value = structureOptimizerProfilePreview.value
           .filter(item => item.proposed)
           .map(item => `${item.symbol}::${item.period}`)
+        structureOptimizerSymbolSelected.value = structureOptimizerSymbolPreview.value.filter(item => item.proposed).map(item => `${item.symbol}::*`)
         structureOptimizerPayload.value = data
         structureOptimizerLLMReview.value = null
         try {
@@ -2622,6 +2632,7 @@ export default {
             proposals: data.proposals || [],
             diagnostics: data.diagnostics || [],
             symbol_profiles: data.symbol_profiles || [],
+            symbol_default_profiles: data.symbol_default_profiles || [],
             profile_diagnostics: data.profile_diagnostics || [],
             conflicts: data.conflicts || [],
           })
@@ -2642,9 +2653,10 @@ export default {
       const selectedProfiles = new Set(structureOptimizerProfileSelected.value)
       const proposals = (data.proposals || []).filter(item => selectedSetups.has(`${item.symbol}-${item.period}-${item.setup_type}`))
       const symbolProfiles = (data.symbol_profiles || []).filter(item => selectedProfiles.has(`${item.symbol}::${item.period}`))
+      const symbolDefaultProfiles = (data.symbol_default_profiles || []).filter(item => structureOptimizerSymbolSelected.value.includes(`${item.symbol}::*`))
       structureOptimizerApplying.value = true
       try {
-        const applied = await marketAPI.applyStructureSetups(proposals, symbolProfiles, data.days || 30)
+        const applied = await marketAPI.applyStructureSetups(proposals, [...symbolProfiles, ...symbolDefaultProfiles], data.days || 30)
         const appliedProposals = Array.isArray(applied.proposals) ? applied.proposals : proposals
         const current = [...structureSetupProfiles.value]
         for (const item of appliedProposals) {
@@ -4610,9 +4622,11 @@ export default {
       structureOptimizerPreviewOpen,
       structureOptimizerPreview,
       structureOptimizerProfilePreview,
+      structureOptimizerSymbolPreview,
       structureOptimizerLLMReview,
       structureOptimizerSelected,
       structureOptimizerProfileSelected,
+      structureOptimizerSymbolSelected,
       structureOptimizerAllSelected,
       structureOptimizerProfileAllSelected,
       structureOptimizerConflicts,

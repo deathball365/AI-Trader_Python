@@ -30,6 +30,7 @@ STRUCTURE_PLAN_DEFAULT_CONFIG = {
     # Empty means all SETUP types are tradable. A symbol/period profile may
     # provide a whitelist to restrict execution without disabling analysis.
     "allowed_setups": [],
+    "blocked_setups": [],
     "enabled": True,
     "allowed_directions": ["buy", "sell"],
     "entry_mode": "",
@@ -2157,7 +2158,8 @@ class StructurePlanSignalGenerator:
                     effective = effective_config
                     allowed_setups = {str(item).strip().lower() for item in (effective.get("allowed_setups") or []) if str(item).strip()}
                     effective_dirs = {str(item).strip().lower() for item in (effective.get("allowed_directions") or ["buy", "sell"]) if str(item).strip().lower() in {"buy", "sell"}}
-                    if (allowed_setups and setup_type not in allowed_setups) or not bool(effective.get("enabled", True)):
+                    blocked_setups = {str(item).strip().lower() for item in (effective.get("blocked_setups") or []) if str(item).strip()}
+                    if (allowed_setups and setup_type not in allowed_setups) or setup_type in blocked_setups or not bool(effective.get("enabled", True)):
                         continue
                     if effective_dirs and direction not in effective_dirs:
                         continue
