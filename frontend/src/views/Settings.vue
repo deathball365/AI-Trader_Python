@@ -119,10 +119,10 @@
           <v-card-text>
             <div class="d-flex align-center justify-space-between flex-wrap ga-2 mb-3">
               <div><div class="text-subtitle-1 font-weight-bold">结构配置总览矩阵</div><div class="text-caption text-medium-emphasis">公共默认 → 品种/周期 → SETUP，点击查看最终生效值与来源。</div></div>
-              <div class="d-flex ga-2"><v-btn size="small" variant="tonal" prepend-icon="mdi-auto-fix" @click="openStructureGenerator()">特殊配置生成器</v-btn><v-btn size="small" variant="text" :loading="structureOverviewLoading" @click="loadStructureOverview">刷新</v-btn></div>
+              <div class="d-flex ga-2"><v-btn size="small" variant="text" :loading="structureOverviewLoading" @click="loadStructureOverview">刷新</v-btn></div>
             </div>
             <v-alert v-if="structureOverview && !structureOverview.items?.length" type="info" variant="tonal" density="compact" class="mb-3">当前还没有品种/周期专属覆盖，所有配置均继承公共默认。</v-alert>
-            <v-table v-if="structureOverview?.items?.length" density="compact" class="mb-5"><thead><tr><th>品种</th><th>周期</th><th>专属覆盖</th><th>SETUP</th><th class="text-right">操作</th></tr></thead><tbody><tr v-for="row in structureOverview.items" :key="`${row.symbol}-${row.period}`"><td><strong>{{ row.symbol }}</strong></td><td>{{ row.period }}</td><td><v-chip size="x-small" :color="row.has_profile ? 'primary' : 'grey'" variant="tonal">{{ row.has_profile ? '品种/周期' : '仅 SETUP' }}</v-chip></td><td><v-chip v-for="setup in row.setups" :key="setup.setup_type" size="x-small" class="mr-1" variant="outlined">{{ setupTypeLabel(setup.setup_type) }}</v-chip><span v-if="!row.setups?.length">--</span></td><td class="text-right"><v-btn size="small" variant="text" @click="openEffectiveConfig(row.symbol,row.period)">查看最终配置</v-btn><v-btn size="small" variant="text" @click="openStructureGenerator(row)">生成覆盖</v-btn></td></tr></tbody></v-table>
+            <v-table v-if="structureOverview?.items?.length" density="compact" class="mb-5"><thead><tr><th>品种</th><th>周期</th><th>专属覆盖</th><th>SETUP</th><th class="text-right">操作</th></tr></thead><tbody><tr v-for="row in structureOverview.items" :key="`${row.symbol}-${row.period}`"><td><strong>{{ row.symbol }}</strong></td><td>{{ row.period }}</td><td><v-chip size="x-small" :color="row.has_profile ? 'primary' : 'grey'" variant="tonal">{{ row.has_profile ? '品种/周期' : '仅 SETUP' }}</v-chip></td><td><v-chip v-for="setup in row.setups" :key="setup.setup_type" size="x-small" class="mr-1" variant="outlined">{{ setupTypeLabel(setup.setup_type) }}</v-chip><span v-if="!row.setups?.length">--</span></td><td class="text-right"><v-btn size="small" variant="text" @click="openEffectiveConfig(row.symbol,row.period)">查看最终配置</v-btn></td></tr></tbody></v-table>
             <div class="d-flex align-center justify-space-between mb-2"><div class="text-subtitle-2">配置变更记录</div><v-btn size="small" variant="text" :loading="structureHistoryLoading" @click="loadStructureHistory">刷新记录</v-btn></div>
             <v-table v-if="structureHistory.length" density="compact" class="mb-5"><thead><tr><th>版本</th><th>时间</th><th>范围</th><th>来源</th><th>原因</th></tr></thead><tbody><tr v-for="item in structureHistory" :key="item.id"><td>#{{ item.id }}</td><td>{{ formatTimestamp(item.created_at) }}</td><td>{{ structureSourceLabel(item.scope) }}</td><td>{{ item.source || '--' }}</td><td class="text-caption">{{ item.reason || '--' }}</td></tr></tbody></v-table>
             <div class="d-flex flex-wrap ga-2 align-center mb-3">
@@ -131,7 +131,7 @@
               <span class="text-caption text-medium-emphasis">{{ structureConfigSourceLabel }}</span>
             </div>
             <v-divider class="my-5" />
-            <div class="llm-section-head compact"><div><h3>{{ structureConfigScope === 'default' ? '公共默认参数' : '品种/周期专属参数' }}</h3><p>规则引擎用于 Pivot、趋势线、箱体和突破确认。参数修改后，下次行情请求立即使用。</p></div><v-btn color="primary" :loading="structureEngineSaving" @click="saveStructureEngineConfig">{{ structureConfigScope === 'default' ? '保存公共默认参数' : '保存当前品种/周期参数' }}</v-btn></div>
+            <div class="llm-section-head compact"><div><h3>{{ structureConfigScope === 'default' ? '公共默认参数' : '品种/周期专属参数' }}</h3><p>规则引擎用于 Pivot、趋势线、箱体和突破确认。参数修改后，下次行情请求立即使用。</p></div><div class="d-flex ga-2 flex-wrap"><v-btn v-if="structureConfigScope === 'default'" variant="tonal" color="secondary" :disabled="structureEngineSaving" @click="openSaveAsStructureProfile">另存为品种/周期配置</v-btn><v-btn color="primary" :loading="structureEngineSaving" @click="saveStructureEngineConfig">{{ structureConfigScope === 'default' ? '保存公共默认参数' : '保存当前品种/周期参数' }}</v-btn></div></div>
             <v-row class="mt-2">
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.pivot_legs" type="number" min="2" max="12" label="小级别 Pivot 腿数" hint="左右各观察几根K线" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field v-model.number="structureEngineConfig.medium_pivot_legs" type="number" min="3" max="30" label="中级别 Pivot 腿数" density="compact" variant="outlined" /></v-col>
@@ -225,11 +225,9 @@
             <div class="d-flex flex-wrap ga-2 align-center">
               <v-select v-model="structureProfileDraft.symbol" :items="symbols" label="品种" density="compact" variant="outlined" hide-details style="max-width:220px" />
               <v-select v-model="structureProfileDraft.period" :items="['M1','M5','M15','H1','H4']" label="周期" density="compact" variant="outlined" hide-details style="max-width:150px" />
-              <v-select v-model="structureProfileDraft.allowed_setups" :items="structureSetupTypes" label="允许交易 SETUP（不选=全部）" multiple chips closable-chips density="compact" variant="outlined" hide-details style="min-width:320px;max-width:520px" />
+              <v-select v-model="structureProfileDraft.allowed_setups" :items="structureSetupTypes" item-title="label" item-value="value" label="允许交易 SETUP（不选=全部）" multiple chips closable-chips density="compact" variant="outlined" hide-details style="min-width:320px;max-width:520px" />
               <v-btn color="secondary" variant="tonal" :loading="structureEngineSaving" @click="saveStructureProfile">保存品种/周期配置</v-btn>
             </div>
-            <div v-if="structureProfiles.length" class="mt-3 text-caption text-medium-emphasis">已配置的品种/周期（点击查看专属参数，带颜色表示当前选中）：</div>
-            <v-chip v-for="item in structureProfiles" :key="`${item.symbol}-${item.period}`" closable size="small" class="mr-2 mt-2" :color="structureConfigScope === `${item.symbol}::${item.period}` ? 'primary' : undefined" :variant="structureConfigScope === `${item.symbol}::${item.period}` ? 'flat' : 'outlined'" @click="switchStructureScope(`${item.symbol}::${item.period}`)" @click:close.stop="removeStructureProfile(item)">{{ item.symbol }} · {{ item.period }}</v-chip>
             <v-alert v-if="structureConfigScope !== 'default'" type="warning" variant="tonal" density="compact" class="mt-3">
               <strong>{{ structureConfigSourceLabel }}</strong><br />
               下面标记的字段是该品种/周期相对公共配置的专属覆盖：
@@ -264,8 +262,6 @@
               </template>
               <v-btn color="secondary" variant="tonal" :loading="structureEngineSaving" @click="saveStructureSetupProfile">保存当前 SETUP 配置</v-btn>
             </div>
-            <div v-if="structureSetupProfiles.length" class="mt-3 text-caption text-medium-emphasis">已配置的 SETUP（点击查看和编辑，带颜色表示当前选中）：</div>
-            <v-chip v-for="item in structureSetupProfiles" :key="`${item.symbol}-${item.period}-${item.setup_type}`" closable size="small" class="mr-2 mt-2" :color="structureSetupScope === `${item.symbol}::${item.period}::${item.setup_type}` ? 'primary' : undefined" :variant="structureSetupScope === `${item.symbol}::${item.period}::${item.setup_type}` ? 'flat' : 'outlined'" @click="selectStructureSetupProfile(item)" @click:close.stop="removeStructureSetupProfile(item)">{{ item.symbol }} · {{ item.period }} · {{ setupTypeLabel(item.setup_type) }}</v-chip>
             <v-dialog v-model="structureOptimizerPreviewOpen" max-width="1100">
               <v-card>
                 <v-card-title>结构 SETUP 优化建议预览</v-card-title>
@@ -1509,8 +1505,20 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="saveAsStructureProfileOpen" max-width="520">
+      <v-card>
+        <v-card-title>另存为品种/周期配置</v-card-title>
+        <v-card-text>
+          <p class="text-body-2 mb-4">将当前公共默认参数复制为指定品种和周期的专属覆盖。复制后仍可继续单独修改，不会改变公共默认参数。</p>
+          <v-select v-model="saveAsStructureProfileDraft.symbol" :items="symbols" label="品种" density="compact" variant="outlined" :disabled="structureEngineSaving" />
+          <v-select v-model="saveAsStructureProfileDraft.period" :items="['M1','M5','M15','H1','H4']" label="周期" density="compact" variant="outlined" :disabled="structureEngineSaving" />
+          <v-alert type="info" variant="tonal" density="compact">如果该品种/周期已有配置，将用当前公共默认参数覆盖其字段；保存后自动切换到该专属配置。</v-alert>
+        </v-card-text>
+        <v-card-actions><v-spacer/><v-btn variant="text" @click="saveAsStructureProfileOpen=false">取消</v-btn><v-btn color="primary" :loading="structureEngineSaving" :disabled="!saveAsStructureProfileDraft.symbol" @click="saveAsStructureProfile">保存专属配置</v-btn></v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-dialog v-model="structureEffectiveDialog" max-width="900"><v-card><v-card-title>最终生效配置 · {{ structureEffectiveTarget.symbol }} · {{ structureEffectiveTarget.period }}<span v-if="structureEffectiveTarget.setupType"> · {{ setupTypeLabel(structureEffectiveTarget.setupType) }}</span></v-card-title><v-card-text><v-progress-linear v-if="structureEffectiveLoading" indeterminate /><v-table v-else-if="structureEffective" density="compact"><thead><tr><th>字段</th><th>最终值</th><th>来源</th></tr></thead><tbody><tr v-for="(value,key) in structureEffective.config" :key="key" :class="{ 'bg-green-lighten-5': structureEffective.sources?.[key] !== 'default' }"><td>{{ structureFieldLabels[key] || key }}</td><td class="text-caption">{{ formatStructureValue(value) }}</td><td><v-chip size="x-small" :color="structureEffective.sources?.[key] !== 'default' ? 'primary' : 'grey'" variant="tonal">{{ structureSourceLabel(structureEffective.sources?.[key]) }}</v-chip></td></tr></tbody></v-table></v-card-text><v-card-actions><v-spacer/><v-btn variant="text" @click="structureEffectiveDialog=false">关闭</v-btn></v-card-actions></v-card></v-dialog>
-    <v-dialog v-model="structureGeneratorOpen" max-width="760"><v-card><v-card-title>特殊结构配置生成器</v-card-title><v-card-text><v-row dense><v-col cols="12" sm="6"><v-text-field v-model="structureGeneratorDraft.symbol" label="品种" variant="outlined" /></v-col><v-col cols="12" sm="6"><v-select v-model="structureGeneratorDraft.period" :items="['M1','M5','M15','H1','H4']" label="周期" variant="outlined" /></v-col><v-col cols="12" sm="6"><v-select v-model="structureGeneratorDraft.scope" :items="[{title:'品种/周期',value:'symbol_period'},{title:'品种/周期/SETUP',value:'setup'}]" label="配置范围" variant="outlined" /></v-col><v-col v-if="structureGeneratorDraft.scope==='setup'" cols="12" sm="6"><v-select v-model="structureGeneratorDraft.setup_type" :items="structureSetupTypes" item-title="label" item-value="value" label="SETUP" variant="outlined" /></v-col><v-col v-for="field in structureGeneratorFields" :key="field.key" cols="12" sm="6"><v-switch v-if="field.type==='boolean'" v-model="structureGeneratorDraft.overrides[field.key]" :label="field.label" hide-details /><v-text-field v-else v-model="structureGeneratorDraft.overrides[field.key]" :label="field.label" :type="field.type" :step="field.step" variant="outlined" clearable /></v-col><v-col cols="12"><v-textarea v-model="structureGeneratorDraft.reason" label="变更原因" rows="2" variant="outlined" /></v-col></v-row><v-card v-if="structureGeneratorPreview" variant="tonal" class="pa-3"><div class="font-weight-bold mb-2">变更预览</div><div v-for="change in structureGeneratorPreview.changes" :key="change.field" class="d-flex justify-space-between text-caption py-1"><span>{{ structureFieldLabels[change.field] || change.field }}</span><span>{{ formatStructureValue(change.before) }} → <strong>{{ formatStructureValue(change.after) }}</strong></span></div><div v-if="!structureGeneratorPreview.changes?.length" class="text-caption">没有检测到变化。</div></v-card></v-card-text><v-card-actions><v-spacer/><v-btn variant="text" @click="structureGeneratorOpen=false">取消</v-btn><v-btn variant="tonal" :loading="structureGeneratorLoading" @click="generateStructureConfigPreview">生成预览</v-btn><v-btn color="primary" :disabled="!structureGeneratorPreview?.changes?.length" @click="applyStructureGenerator">确认应用</v-btn></v-card-actions></v-card></v-dialog>
 
     <!-- 错误提示 -->
     <v-snackbar v-model="showError" color="error" timeout="5000" location="top">
@@ -1548,6 +1556,8 @@ export default {
     const structureEngineSaving = ref(false)
     const structureProfiles = ref([])
     const structureProfileDraft = ref({ symbol: '', period: 'M5', allowed_setups: [] })
+    const saveAsStructureProfileOpen = ref(false)
+    const saveAsStructureProfileDraft = ref({ symbol: '', period: 'M5' })
     const structureConfigScope = ref('default')
     const structureConfigScopes = computed(() => [
       { label: '公共默认配置', value: 'default' },
@@ -1594,18 +1604,6 @@ export default {
     const structureEffectiveTarget = ref({ symbol: '', period: '', setupType: '' })
     const structureHistory = ref([])
     const structureHistoryLoading = ref(false)
-    const structureGeneratorOpen = ref(false)
-    const structureGeneratorLoading = ref(false)
-    const structureGeneratorPreview = ref(null)
-    const structureGeneratorDraft = ref({ symbol: '', period: 'M5', setup_type: '', scope: 'symbol_period', overrides: {}, reason: '' })
-    const structureGeneratorFields = [
-      { key: 'min_real_risk_reward', label: '最低真实盈亏比', type: 'number', step: 0.1 },
-      { key: 'entry_mode', label: '入场方式', type: 'text' },
-      { key: 'require_reclaim', label: '要求回收确认', type: 'boolean' },
-      { key: 'confirmation_bars', label: '确认 K 线数', type: 'number' },
-      { key: 'min_displacement_atr', label: '最小位移 ATR', type: 'number', step: 0.1 },
-      { key: 'cooldown_minutes', label: '冷却分钟', type: 'number' },
-    ]
     const structureFieldLabels = { min_real_risk_reward: '最低真实盈亏比', entry_mode: '入场方式', require_reclaim: '要求回收确认', confirmation_bars: '确认 K 线数', min_displacement_atr: '最小位移 ATR', cooldown_minutes: '冷却分钟' }
     const structureSourceLabel = value => ({ default: '公共默认', symbol_period: '品种/周期', setup: 'SETUP' }[value] || value || '--')
     const formatStructureValue = value => {
@@ -1619,6 +1617,13 @@ export default {
     const setupTypeNames = { pressure_reversal: '密集区反转', pressure_zone_breakout: '密集区突破', structure_location_pullback: '结构位置回撤', range_lower_reversal: '箱体下沿反转', range_upper_reversal: '箱体上沿反转', range_breakout: '箱体突破', range_false_breakout: '箱体假突破', triangle_breakout: '三角形突破', triangle_breakout_watch: '三角形突破观察', triangle_prebreakout_pullback: '三角形提前回撤', choch_reversal: 'CHOCH反转', liquidity_sweep_reclaim: '流动性扫单回收', trend_continuation: '趋势延续', structure_reversal: '结构反转' }
     const setupTypeLabel = type => setupTypeNames[type] || type
     const structureSetupTypes = Object.keys(setupTypeNames).map(value => ({ value, label: setupTypeNames[value] }))
+    // Profiles created by older builds may contain setup objects instead of
+    // setup ids.  Keep the select model normalized to string ids so Vuetify
+    // renders labels instead of coercing objects to "Object".
+    const normalizeSetupValues = values => (Array.isArray(values) ? values : [])
+      .map(item => (item && typeof item === 'object') ? item.value : item)
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
 
     // 交易配置
     const tradeConfig = ref({
@@ -1990,9 +1995,6 @@ export default {
     const loadStructureOverview = async () => { structureOverviewLoading.value = true; try { structureOverview.value = await marketAPI.getMarketStructureConfigOverview() } finally { structureOverviewLoading.value = false } }
     const loadStructureHistory = async () => { structureHistoryLoading.value = true; try { const data = await marketAPI.getMarketStructureConfigHistory(100); structureHistory.value = data.items || [] } finally { structureHistoryLoading.value = false } }
     const openEffectiveConfig = async (symbol, period, setupType = '') => { structureEffectiveTarget.value = { symbol, period, setupType }; structureEffectiveDialog.value = true; structureEffectiveLoading.value = true; try { structureEffective.value = await marketAPI.getEffectiveMarketStructureConfig(symbol, period, setupType) } finally { structureEffectiveLoading.value = false } }
-    const openStructureGenerator = (row = null) => { structureGeneratorDraft.value = { symbol: row?.symbol || '', period: row?.period || 'M5', setup_type: '', scope: 'symbol_period', overrides: {}, reason: '' }; structureGeneratorPreview.value = null; structureGeneratorOpen.value = true }
-    const generateStructureConfigPreview = async () => { const d = structureGeneratorDraft.value; if (!d.symbol || (d.scope === 'setup' && !d.setup_type)) return; structureGeneratorLoading.value = true; try { structureGeneratorPreview.value = await marketAPI.generateMarketStructureConfig({ ...d, overrides: Object.fromEntries(Object.entries(d.overrides).filter(([,v]) => v !== undefined && v !== null && v !== '')) }) } finally { structureGeneratorLoading.value = false } }
-    const applyStructureGenerator = async () => { const d = structureGeneratorDraft.value; const preview = structureGeneratorPreview.value; if (!preview) return; const overrides = preview.changes.reduce((o, c) => ({ ...o, [c.field]: c.after }), {}); if (d.scope === 'setup') { const item = { symbol: d.symbol.toUpperCase(), period: d.period.toUpperCase(), setup_type: d.setup_type.toLowerCase(), ...overrides }; const i = structureSetupProfiles.value.findIndex(x => x.symbol === item.symbol && x.period === item.period && x.setup_type === item.setup_type); if (i >= 0) structureSetupProfiles.value.splice(i, 1, { ...structureSetupProfiles.value[i], ...item }); else structureSetupProfiles.value.push(item) } else { const item = { symbol: d.symbol.toUpperCase(), period: d.period.toUpperCase(), ...overrides }; const i = structureProfiles.value.findIndex(x => x.symbol === item.symbol && x.period === item.period); if (i >= 0) structureProfiles.value.splice(i, 1, { ...structureProfiles.value[i], ...item }); else structureProfiles.value.push(item) } await saveStructureEngineConfig(); await Promise.all([loadStructureOverview(), loadStructureHistory()]); structureGeneratorOpen.value = false; structureGeneratorPreview.value = null }
 
     const loadAdminWorkspace = async () => {
       quotaSaving.value = 'loading'
@@ -2006,7 +2008,8 @@ export default {
         const engineData = await marketAPI.getMarketStructureConfig()
         structureEngineConfig.value = { ...structureEngineConfig.value, ...(engineData.config || {}) }
         structureGlobalConfig.value = { ...structureEngineConfig.value }
-        structureProfiles.value = Array.isArray(engineData.profiles) ? engineData.profiles : []
+        structureProfiles.value = (Array.isArray(engineData.profiles) ? engineData.profiles : [])
+          .map(profile => ({ ...profile, allowed_setups: normalizeSetupValues(profile.allowed_setups) }))
         structureConfigScope.value = 'default'
         structureSetupProfiles.value = Array.isArray(engineData.setup_profiles) ? engineData.setup_profiles : []
         await Promise.all([loadStructureOverview(), loadStructureHistory()])
@@ -2049,14 +2052,53 @@ export default {
       }
       const [symbol, period] = structureConfigScope.value.split('::')
       const profile = structureProfiles.value.find(x => x.symbol === symbol && x.period === period)
-      structureEngineConfig.value = profile ? { ...structureGlobalConfig.value, ...profile } : { ...structureGlobalConfig.value }
+      structureEngineConfig.value = profile ? { ...structureGlobalConfig.value, ...profile, allowed_setups: normalizeSetupValues(profile.allowed_setups) } : { ...structureGlobalConfig.value }
+      structureProfileDraft.value = {
+        ...structureProfileDraft.value,
+        symbol,
+        period,
+        allowed_setups: normalizeSetupValues(profile?.allowed_setups),
+      }
     }
     const saveStructureProfile = async () => {
       if (!structureProfileDraft.value.symbol) return
-      const item = { symbol: structureProfileDraft.value.symbol, period: structureProfileDraft.value.period, ...structureEngineConfig.value, allowed_setups: structureProfileDraft.value.allowed_setups || [] }
+      const item = { symbol: structureProfileDraft.value.symbol, period: structureProfileDraft.value.period, ...structureEngineConfig.value, allowed_setups: normalizeSetupValues(structureProfileDraft.value.allowed_setups) }
       const index = structureProfiles.value.findIndex(x => x.symbol === item.symbol && x.period === item.period)
       if (index >= 0) structureProfiles.value.splice(index, 1, item); else structureProfiles.value.push(item)
       await saveStructureEngineConfig()
+    }
+    const openSaveAsStructureProfile = () => {
+      saveAsStructureProfileDraft.value = {
+        symbol: structureProfileDraft.value.symbol || symbols.value[0] || '',
+        period: structureProfileDraft.value.period || 'M5'
+      }
+      saveAsStructureProfileOpen.value = true
+    }
+    const saveAsStructureProfile = async () => {
+      const { symbol, period } = saveAsStructureProfileDraft.value
+      if (!symbol || !period) return
+      const item = {
+        symbol: String(symbol).trim(),
+        period: String(period).trim(),
+        ...structureGlobalConfig.value,
+        allowed_setups: normalizeSetupValues(structureGlobalConfig.value.allowed_setups)
+      }
+      const index = structureProfiles.value.findIndex(x => x.symbol === item.symbol && x.period === item.period)
+      if (index >= 0) structureProfiles.value.splice(index, 1, item)
+      else structureProfiles.value.push(item)
+      structureProfileDraft.value = {
+        ...structureProfileDraft.value,
+        symbol: item.symbol,
+        period: item.period,
+        allowed_setups: normalizeSetupValues(item.allowed_setups)
+      }
+      structureConfigScope.value = `${item.symbol}::${item.period}`
+      structureEngineConfig.value = { ...item }
+      saveAsStructureProfileOpen.value = false
+      await saveStructureEngineConfig()
+      await loadStructureOverview()
+      successMessage.value = `已另存为 ${item.symbol} · ${item.period} 专属配置`
+      showSuccess.value = true
     }
     const removeStructureProfile = async item => { structureProfiles.value = structureProfiles.value.filter(x => !(x.symbol === item.symbol && x.period === item.period)); await saveStructureEngineConfig() }
     const saveStructureSetupProfile = async () => {
@@ -4052,6 +4094,10 @@ export default {
       structureConfigScopes,
       structureConfigSourceLabel,
       structureOverrideFields,
+      saveAsStructureProfileOpen,
+      saveAsStructureProfileDraft,
+      openSaveAsStructureProfile,
+      saveAsStructureProfile,
       structureEngineSaving,
       saveStructureEngineConfig,
       switchStructureScope,
@@ -4080,7 +4126,7 @@ export default {
       structureOverview, structureOverviewLoading, loadStructureOverview,
       structureEffective, structureEffectiveLoading, structureEffectiveDialog, structureEffectiveTarget, openEffectiveConfig,
       structureHistory, structureHistoryLoading, loadStructureHistory,
-      structureGeneratorOpen, structureGeneratorLoading, structureGeneratorPreview, structureGeneratorDraft, structureGeneratorFields, structureFieldLabels, structureSourceLabel, formatStructureValue, openStructureGenerator, generateStructureConfigPreview, applyStructureGenerator,
+      structureFieldLabels, structureSourceLabel, formatStructureValue,
       tradeConfig,
       newSymbol,
       newVolume,
