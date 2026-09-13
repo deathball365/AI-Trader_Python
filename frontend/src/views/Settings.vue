@@ -260,7 +260,7 @@
             </v-alert>
             <div class="llm-section-head compact mt-4"><div><h3>九、当前配置范围 · 所有 SETUP</h3><p>当前范围下平铺显示全部 SETUP；可以只修改其中任意一个 SETUP 的任意字段，未修改字段继续继承上一级范围。</p></div><div class="d-flex ga-2"><v-btn size="small" variant="tonal" color="secondary" :disabled="structureEngineSaving || !structureSetupScope" @click="openSaveAsStructureSetup">另存为当前范围 SETUP</v-btn></div></div>
             <div class="d-flex flex-wrap ga-2 align-center mb-2">
-              <v-select v-model="structureSetupScope" :items="structureSetupScopeOptions" item-title="label" item-value="value" label="当前查看的 SETUP 配置" density="compact" variant="outlined" hide-details style="min-width:340px;max-width:520px" @update:model-value="selectStructureSetupScope" />
+              <v-select v-model="structureSetupRange" :items="structureSetupRangeOptions" item-title="label" item-value="value" label="当前查看的 SETUP 配置范围" density="compact" variant="outlined" hide-details style="min-width:340px;max-width:520px" @update:model-value="selectStructureSetupRange" />
               <v-chip v-if="structureSetupScope?.startsWith('default::')" color="primary" variant="tonal">公共默认</v-chip>
               <v-chip v-else-if="structureSetupScope" color="warning" variant="tonal">专项覆盖</v-chip>
               <v-btn
@@ -273,6 +273,11 @@
                 @click="clearCurrentStructureSetupOverride"
               >
                 清除专项配置
+              </v-btn>
+            </div>
+            <div class="d-flex flex-wrap ga-2 mb-3">
+              <v-btn v-for="item in structureSetupRows" :key="item.setup_type" size="small" :variant="item.selected ? 'flat' : 'tonal'" :color="item.selected ? 'primary' : (item.overridden ? 'warning' : undefined)" @click="selectStructureSetupInRange(item.setup_type)">
+                {{ item.label }}<v-badge v-if="item.overridden" inline color="warning" content="已覆盖" class="ml-2" />
               </v-btn>
             </div>
             <v-alert v-if="structureSetupScope && !structureSetupScope.startsWith('default::')" type="warning" variant="tonal" density="compact" class="mb-3">
@@ -1679,6 +1684,7 @@ export default {
     })
     const structureSetupProfiles = ref([])
     const structureSetupScope = ref('')
+    const structureSetupRange = ref('default')
     const structureSetupDefaults = ref({})
     const saveAsStructureSetupOpen = ref(false)
     const saveAsStructureSetupDraft = ref({ symbol: '', period: 'M5', setup_type: '' })
@@ -1823,6 +1829,38 @@ export default {
         .filter((item, index, all) => all.findIndex(other => other.symbol === item.symbol && other.period === item.period && other.setup_type === item.setup_type) === index)
           .map(item => ({ label: `${item.symbol} · ${item.period === '*' ? '所有周期' : item.period} · ${setupTypeLabel(item.setup_type)} 专项`, value: `${item.symbol}::${item.period}::${item.setup_type}` }))
     ])
+    const structureSetupRangeOptions = computed(() => {
+      const ranges = [{ label: '公共默认 SETUP', value: 'default' }]
+      const seen = new Set()
+      for (const item of [...structureProfiles.value, ...structureSetupProfiles.value]) {
+        const symbol = normalizeSetupScopeSymbol(item.symbol)
+        const period = normalizeSetupScopePeriod(item.period)
+        if (!symbol || !period) continue
+        const value = `${symbol}::${period}`
+        if (seen.has(value)) continue
+        seen.add(value)
+        ranges.push({ label: `${symbol} · ${period === '*' ? '所有周期' : period} SETUP`, value })
+      }
+      return ranges
+    })
+    const structureSetupRows = computed(() => {
+      const range = structureSetupRange.value
+      return structureSetupTypes.map(item => {
+        const scope = range === 'default' ? `default::${item.value}` : `${range}::${item.value}`
+        const profile = setupProfileForScope(scope)
+        const base = makeSetupDefault(item.value)
+        const overridden = Boolean(profile && setupFieldKeys.some(key => profile[key] !== undefined && JSON.stringify(profile[key]) !== JSON.stringify(base[key])))
+        return { setup_type: item.value, label: item.label, selected: structureSetupScope.value === scope, overridden }
+      })
+    })
+    const selectStructureSetupInRange = setupType => {
+      const scope = structureSetupRange.value === 'default' ? `default::${setupType}` : `${structureSetupRange.value}::${setupType}`
+      selectStructureSetupScope(scope)
+    }
+    const selectStructureSetupRange = range => {
+      structureSetupRange.value = range || 'default'
+      selectStructureSetupInRange(structureSetupTypes[0]?.value || 'structure_location_pullback')
+    }
     const setupProfileForScope = scope => {
       if (!scope || scope.startsWith('default::')) return null
       const [symbol, period, setupType] = scope.split('::')
@@ -2308,6 +2346,7 @@ export default {
         structureSetupProfiles.value = (Array.isArray(engineData.setup_profiles) ? engineData.setup_profiles : [])
           .map(item => ({ ...item, allowed_directions: normalizeSetupValues(item.allowed_directions) }))
         structureSetupScope.value = `default::${structureSetupTypes[0]?.value || 'structure_location_pullback'}`
+        structureSetupRange.value = 'default'
         selectStructureSetupScope(structureSetupScope.value)
         await Promise.all([loadStructureOverview(), loadStructureHistory()])
         await loadIBKRConfig()
@@ -4549,6 +4588,11 @@ export default {
       structureProfileDraft,
       structureSetupProfiles,
       structureSetupScope,
+      structureSetupRange,
+      structureSetupRangeOptions,
+      structureSetupRows,
+      selectStructureSetupRange,
+      selectStructureSetupInRange,
       structureSetupDefaults,
       structureSetupScopeOptions,
       structureSetupOverrideFields,
