@@ -475,8 +475,16 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         auto-disables consistently losing setups.  ``apply`` controls persistence.
         """
         payload = payload or {}
-        days = max(7, min(int(payload.get("days") or 30), 90))
-        now, start = int(time.time()), int(time.time()) - days * 86400
+        now = int(time.time())
+        start_at, end_at = payload.get("start_at"), payload.get("end_at")
+        try:
+            start = int(float(start_at)) if start_at is not None else now - max(7, min(int(payload.get("days") or 30), 90)) * 86400
+            end = int(float(end_at)) if end_at is not None else now
+        except (TypeError, ValueError):
+            return {"status": "failed", "reason": "开始时间和结束时间必须是有效时间戳"}
+        if start >= end or end > now or end - start > 365 * 86400:
+            return {"status": "failed", "reason": "时间范围无效：开始时间必须早于结束时间，且范围不超过365天"}
+        days = max(1, round((end - start) / 86400, 2))
         storage = get_storage()
         stored_items = RuntimeStateRepository(0, 0).list_entities("market_structure_config")
         stored_config = stored_items[-1] if stored_items and isinstance(stored_items[-1], dict) else {}
@@ -485,7 +493,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         rows = storage.fetchall(
             "SELECT position_id, symbol, net_profit, closed_at, position_attribution_json "
             "FROM paper_trades WHERE closed_at>=? AND closed_at<=? ORDER BY closed_at",
-            (start, now),
+            (start, end),
         )
         # Live MT5 deals use a different schema; normalize them to the same
         # position-level shape before aggregation.  Partial deals are merged
@@ -496,7 +504,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             "deal_timestamp AS closed_at, position_attribution_json "
             "FROM live_trade_deals WHERE deal_timestamp>=? AND deal_timestamp<=? "
             "ORDER BY deal_timestamp",
-            (start, now),
+            (start, end),
         )
         # Aggregate all partial exits into one position so split TP does not
         # overweight a setup's apparent win rate.
@@ -722,7 +730,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             persist_normalized(storage, cfg, list(profile_index.values()), merged,
                                reason="应用结构配置历史优化建议")
             applied = True
-        return {"status": "ok", "days": days, "applied": applied,
+        return {"status": "ok", "days": days, "start_at": start, "end_at": end, "applied": applied,
                 "proposals": proposals, "symbol_profiles": symbol_profiles,
                 "diagnostics": diagnostics, "profile_diagnostics": profile_diagnostics,
                 "symbol_default_profiles": symbol_default_profiles,

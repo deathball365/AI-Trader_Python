@@ -310,13 +310,13 @@ export const marketAPI = {
     const response = await api.put('/admin/market-structure/config', config)
     return response.data
   },
-  async optimizeStructureSetups(apply = true, days = 30) {
-    const response = await api.post('/admin/market-structure/optimize-setups', { apply, days })
+  async optimizeStructureSetups(apply = true, days = 30, range = {}) {
+    const response = await api.post('/admin/market-structure/optimize-setups', { apply, days, ...range })
     return response.data
   },
-  async applyStructureSetups(proposals, symbolProfiles, days = 30) {
+  async applyStructureSetups(proposals, symbolProfiles, days = 30, range = {}) {
     const response = await api.post('/admin/market-structure/optimize-setups', {
-      apply: true, days, proposals, symbol_profiles: symbolProfiles,
+      apply: true, days, ...range, proposals, symbol_profiles: symbolProfiles,
     })
     return response.data
   },

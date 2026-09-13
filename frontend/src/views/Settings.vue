@@ -128,7 +128,12 @@
                   <div class="text-caption text-medium-emphasis mt-1">独立于当前选中的公共/品种周期/SETUP 配置。系统会按最近 30 天已平仓的结构计划订单，分别分析品种、周期和 SETUP，并生成可预览的配置建议。</div>
                   <div class="text-caption text-medium-emphasis mt-1">触发方式：管理员手动点击；保存配置、切换 SETUP 或刷新页面都不会自动触发。每个品种/周期/SETUP 至少需要 3 笔已平仓订单，之后还会进行大模型复核。</div>
                 </div>
-                <v-btn color="deep-purple" variant="flat" :loading="structureOptimizerRunning" prepend-icon="mdi-lightbulb-on-outline" @click="optimizeStructureSetups">生成历史优化建议</v-btn>
+                <div class="d-flex flex-wrap align-center ga-2">
+                  <v-select v-model="structureOptimizerRangeMode" :items="[{title:'最近7天',value:'7'},{title:'最近14天',value:'14'},{title:'最近30天',value:'30'},{title:'最近90天',value:'90'},{title:'自定义时间',value:'custom'}]" item-title="title" item-value="value" label="分析时间范围" density="compact" variant="outlined" hide-details style="width:150px" />
+                  <v-text-field v-if="structureOptimizerRangeMode === 'custom'" v-model="structureOptimizerStart" type="datetime-local" label="开始时间（北京时间）" density="compact" variant="outlined" hide-details style="width:205px" />
+                  <v-text-field v-if="structureOptimizerRangeMode === 'custom'" v-model="structureOptimizerEnd" type="datetime-local" label="结束时间（北京时间）" density="compact" variant="outlined" hide-details style="width:205px" />
+                  <v-btn color="deep-purple" variant="flat" :loading="structureOptimizerRunning" prepend-icon="mdi-lightbulb-on-outline" @click="optimizeStructureSetups">生成历史优化建议</v-btn>
+                </div>
               </v-card-text>
             </v-card>
             <v-alert v-if="structureOverview && !structureOverview.items?.length" type="info" variant="tonal" density="compact" class="mb-3">当前还没有品种/周期专属覆盖，所有配置均继承公共默认。</v-alert>
@@ -1695,6 +1700,9 @@ export default {
     const saveAsStructureSetupOpen = ref(false)
     const saveAsStructureSetupDraft = ref({ symbol: '', period: 'M5', setup_type: '' })
     const structureOptimizerRunning = ref(false)
+    const structureOptimizerRangeMode = ref('30')
+    const structureOptimizerStart = ref('')
+    const structureOptimizerEnd = ref('')
     const structureOptimizerApplying = ref(false)
     const structureOptimizerPreviewOpen = ref(false)
     const structureOptimizerPreview = ref([])
@@ -2614,7 +2622,14 @@ export default {
     const optimizeStructureSetups = async () => {
       structureOptimizerRunning.value = true
       try {
-        const data = await marketAPI.optimizeStructureSetups(false, 30)
+        let range = {}
+        if (structureOptimizerRangeMode.value === 'custom') {
+          const start = Date.parse(structureOptimizerStart.value)
+          const end = Date.parse(structureOptimizerEnd.value)
+          if (!Number.isFinite(start) || !Number.isFinite(end)) throw new Error('请选择有效的开始时间和结束时间')
+          range = { start_at: Math.floor(start / 1000), end_at: Math.floor(end / 1000) }
+        }
+        const data = await marketAPI.optimizeStructureSetups(false, Number(structureOptimizerRangeMode.value) || 30, range)
         const proposals = Array.isArray(data.proposals) ? data.proposals : []
         structureOptimizerPreview.value = Array.isArray(data.diagnostics) ? data.diagnostics : []
         structureOptimizerProfilePreview.value = Array.isArray(data.profile_diagnostics) ? data.profile_diagnostics : []
@@ -2639,7 +2654,7 @@ export default {
           if (review.status === 'ok') structureOptimizerLLMReview.value = review.review || {}
         } catch (err) { console.warn('优化建议大模型审核失败', err) }
         structureOptimizerPreviewOpen.value = true
-        successMessage.value = proposals.length ? `已生成 ${proposals.length} 条优化建议，请核对变更原因后确认应用` : '样本不足，暂未生成优化配置（至少需要同一品种/周期/Setup 3 笔已平仓订单）'
+        successMessage.value = proposals.length ? `已生成 ${proposals.length} 条优化建议（${new Date(data.start_at * 1000).toLocaleString()} ～ ${new Date(data.end_at * 1000).toLocaleString()}），请核对后确认应用` : '样本不足，暂未生成优化配置（至少需要同一品种/周期/Setup 3 笔已平仓订单）'
         showSuccess.value = true
       } catch (err) {
         errorMessage.value = err.response?.data?.detail || '生成优化配置失败'
@@ -2656,7 +2671,10 @@ export default {
       const symbolDefaultProfiles = (data.symbol_default_profiles || []).filter(item => structureOptimizerSymbolSelected.value.includes(`${item.symbol}::*`))
       structureOptimizerApplying.value = true
       try {
-        const applied = await marketAPI.applyStructureSetups(proposals, [...symbolProfiles, ...symbolDefaultProfiles], data.days || 30)
+        const applied = await marketAPI.applyStructureSetups(
+          proposals, [...symbolProfiles, ...symbolDefaultProfiles], data.days || 30,
+          { start_at: data.start_at, end_at: data.end_at },
+        )
         const appliedProposals = Array.isArray(applied.proposals) ? applied.proposals : proposals
         const current = [...structureSetupProfiles.value]
         for (const item of appliedProposals) {
@@ -4618,6 +4636,9 @@ export default {
       openSaveAsStructureSetup,
       saveAsStructureSetup,
       structureOptimizerRunning,
+      structureOptimizerRangeMode,
+      structureOptimizerStart,
+      structureOptimizerEnd,
       structureOptimizerApplying,
       structureOptimizerPreviewOpen,
       structureOptimizerPreview,
