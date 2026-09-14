@@ -2,8 +2,9 @@
 """统一交易账户管理接口。"""
 
 import time
-from datetime import datetime
+from datetime import datetime, time as datetime_time
 from typing import Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -28,14 +29,19 @@ from system_event_log import SystemEventLogRepository
 from strategy_admission import StrategyAdmissionService
 
 
-def _execution_funnel(storage, user_id: int, account_id: int, window_seconds: int = 86400) -> Dict:
+def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
     """Return a compact, account-level execution funnel.
 
     This intentionally aggregates by plan/execution rather than strategy or Tick;
     inactive ``no_direction``/``no_new_trigger`` audits are not persisted and do
     not inflate the result.
     """
-    since = int(time.time()) - max(300, int(window_seconds or 86400))
+    # 漏斗按北京时间自然日统计，而不是滚动的最近 24 小时。
+    # 数据库存储的是 Unix 时间戳，因此将北京时间当天 00:00 转成 epoch
+    # 后可直接用于 MySQL 查询；夏令时/冬令时由 ZoneInfo 自动处理。
+    beijing = ZoneInfo("Asia/Shanghai")
+    today_beijing = datetime.now(beijing).date()
+    since = int(datetime.combine(today_beijing, datetime_time.min, tzinfo=beijing).timestamp())
     params = (int(user_id), int(account_id), since)
     plans = storage.fetchone(
         "SELECT COUNT(DISTINCT plan_id) AS n FROM structure_trade_plans "
@@ -71,7 +77,8 @@ def _execution_funnel(storage, user_id: int, account_id: int, window_seconds: in
         "technical_failure": "技术错误",
     }
     return {
-        "window_seconds": max(300, int(window_seconds or 86400)),
+        "window_start": f"{today_beijing.isoformat()} 00:00",
+        "window_timezone": "Asia/Shanghai",
         "labels": ["计划数", "方向形成", "触发数", "风控通过", "下单数"],
         "plans": int((plans or {}).get('n', 0) or 0),
         "directions": int((directions or {}).get('n', 0) or 0),
@@ -571,8 +578,9 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
             position["management_events"] = events_by_position.get(
                 str(position.get("ticket", "")), []
             )
+        # 运行台只展示最近 30 条策略执行回报，避免历史回报拖慢首屏和刷新。
         execution_reports = repositories.trade_execution.list_for_account(
-            user.user_id, account_id, 100,
+            user.user_id, account_id, 30,
         )
         trades = LiveTradeDealRepository(repositories.storage).list_for_account(
             user.user_id, account_id, 20,

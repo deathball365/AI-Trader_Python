@@ -219,7 +219,7 @@
           </section>
 
           <section class="execution-funnel-card">
-            <div class="runtime-section-title"><h3>策略执行漏斗</h3><span>近 {{ Math.round((paperDetail.execution_funnel?.window_seconds || 86400) / 3600) }} 小时 · 按账户汇总</span></div>
+            <div class="runtime-section-title"><h3>策略执行漏斗</h3><span>北京时间 {{ paperDetail.execution_funnel?.window_start || '今日 00:00' }} 起 · 按账户汇总</span></div>
             <div class="execution-funnel-grid">
               <article><span>计划数</span><strong>{{ paperDetail.execution_funnel?.plans || 0 }}</strong></article>
               <i>→</i><article><span>方向形成</span><strong>{{ paperDetail.execution_funnel?.directions || 0 }}</strong></article>
@@ -559,7 +559,7 @@
           </section>
 
           <section class="execution-funnel-card">
-            <div class="runtime-section-title"><h3>策略执行漏斗</h3><span>近 {{ Math.round((liveDetail.execution_funnel?.window_seconds || 86400) / 3600) }} 小时 · 按账户汇总</span></div>
+            <div class="runtime-section-title"><h3>策略执行漏斗</h3><span>北京时间 {{ liveDetail.execution_funnel?.window_start || '今日 00:00' }} 起 · 按账户汇总</span></div>
             <div class="execution-funnel-grid">
               <article><span>计划数</span><strong>{{ liveDetail.execution_funnel?.plans || 0 }}</strong></article>
               <i>→</i><article><span>方向形成</span><strong>{{ liveDetail.execution_funnel?.directions || 0 }}</strong></article>
@@ -648,7 +648,7 @@
           </section>
 
           <section class="runtime-table-card orders-card">
-            <div class="runtime-section-title"><h3>策略下单与执行回报</h3><span>服务端指令在 MT5 的实际成交情况</span></div>
+            <div class="runtime-section-title"><h3>策略下单与执行回报</h3><span>最近 30 条 · 服务端指令在 MT5 的实际成交情况</span></div>
             <div v-if="!liveDetail.execution_reports.length" class="runtime-empty compact">暂无策略指令执行回报</div>
             <div v-for="report in liveDetail.execution_reports" :key="report.id" class="runtime-row order-row">
               <span>{{ formatTime(report.reported_at) }}</span>
