@@ -362,7 +362,18 @@ class PositionManager:
                     f"已自动调整为 {risk:.2f}"
                 ),
             }
-        if maximum and risk > maximum:
+        # Structure plans can carry a deliberate, signal-derived protective
+        # stop.  The legacy 0.70% percentage ceiling was originally intended
+        # for generic stops and was silently rejecting otherwise valid
+        # commodity/index setups (for example OIL), leaving a trigger with no
+        # order.  Keep the configured ceiling as the first limit, but permit a
+        # signal stop up to 3 ATR when ATR is available; explicit absolute
+        # max_stop_distance values remain hard limits.
+        signal_stop_exception = bool(signal_stop_loss) and bool(atr) and not bool(
+            config.get("max_stop_distance", 0)
+        )
+        allowed_maximum = max(maximum, float(atr or 0) * 3.0) if signal_stop_exception else maximum
+        if allowed_maximum and risk > allowed_maximum:
             raise ValueError(
                 f"止损距离 {risk:.2f} 超过持仓管理方案最大比例 "
                 f"{float(config.get('max_stop_percent', 0) or 0):.2f}%"

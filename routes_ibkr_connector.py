@@ -188,7 +188,15 @@ def create_ibkr_connector_routes(engine_manager=None) -> APIRouter:
             async for message in websocket.iter_text():
                 payload = json.loads(message)
                 if payload.get("type") == "event":
-                    _connectors[connector_id]["last_event_at"] = datetime.now(timezone.utc).isoformat()
+                    # A disconnect/cleanup can race with the final WebSocket
+                    # frame.  Do not let a stale frame raise KeyError and
+                    # tear down the ASGI worker (which also interrupts MT5
+                    # quote processing for every account).
+                    connector_state = _connectors.get(connector_id)
+                    if connector_state is None:
+                        logger.info("ignoring event from cleaned IBKR connector: %s", connector_id)
+                        continue
+                    connector_state["last_event_at"] = datetime.now(timezone.utc).isoformat()
                     if payload.get("event") == "accounts":
                         detail = payload.get("payload") or {}
                         try:
