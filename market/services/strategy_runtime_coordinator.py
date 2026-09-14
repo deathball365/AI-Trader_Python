@@ -14,8 +14,12 @@ class StrategyRuntimeCoordinator:
         )
         target_server = str(getattr(account, "mt5_server", "") or "")
         matched = []
+        quote_text = str(quote_symbol or "").strip().upper()
         for strategy in self.strategy_store.get_all_strategies():
-            if str(strategy.symbol).upper() == str(quote_symbol).upper():
+            strategy_text = str(strategy.symbol or "").strip().upper()
+            # Native broker symbols must match exactly.  Cross-broker aliases
+            # are allowed only through an explicit instrument mapping below.
+            if strategy_text == quote_text:
                 matched.append(strategy)
                 continue
             source_user_id = int(

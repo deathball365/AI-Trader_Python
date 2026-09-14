@@ -135,17 +135,15 @@ class KlineStore:
     def get_latest_price(self, symbol: str) -> Optional[float]:
         """获取最新价格（从K线的最新close，优先M1）"""
         with self._lock:
-            actual_symbol = None
-            if symbol in self._klines:
-                actual_symbol = symbol
-            else:
-                symbol_base = symbol.replace('#', '')
-                for s in self._klines:
-                    if s.replace('#', '') == symbol_base:
-                        actual_symbol = s
-                        break
-
-            if not actual_symbol:
+            # 经纪商原生品种必须精确匹配；BTCUSD、BTCUSD#、BTCUSDm
+            # 不得因为后缀相似而串用行情。跨品种复用由显式平台映射负责，
+            # 不应在底层 K 线存储层静默推断。
+            actual_symbol = next(
+                (stored for stored in self._klines
+                 if str(stored).strip().casefold() == str(symbol or "").strip().casefold()),
+                None,
+            )
+            if actual_symbol is None:
                 return None
 
             for period in ['M1', 'M5', 'M15', 'H1', 'H4']:

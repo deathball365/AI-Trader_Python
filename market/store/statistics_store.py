@@ -100,11 +100,9 @@ class StatisticsStore:
     def get_spread(self, symbol: str) -> Optional[float]:
         """获取品种价差"""
         with self._lock:
-            # 规范化品种名称（去掉#后缀）
-            symbol_normalized = symbol.replace('#', '')
+            symbol_exact = str(symbol or "").strip().upper()
             for stat in reversed(list(self._all_data)):
-                stat_normalized = stat.symbol.replace('#', '')
-                if stat_normalized == symbol_normalized:
+                if str(stat.symbol or "").strip().upper() == symbol_exact:
                     if stat.spread > 0:
                         return stat.spread
             return None

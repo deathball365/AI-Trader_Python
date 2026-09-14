@@ -1163,7 +1163,11 @@ class PaperTradingService:
         self, user_id: int, strategy: TradingStrategy, quote_symbol: str,
         quote_account_id: Optional[int],
     ) -> bool:
-        if str(strategy.symbol).upper() == str(quote_symbol).upper():
+        strategy_text = str(strategy.symbol or "").strip().upper()
+        quote_text = str(quote_symbol or "").strip().upper()
+        # Native broker symbols must match exactly.  Only an explicit mapping
+        # in platform_instrument_mappings may bridge two broker-native names.
+        if strategy_text == quote_text:
             return True
         if not quote_account_id:
             return False

@@ -105,9 +105,10 @@ class RiskManager:
 
     def update_account_info(self, balance: float, equity: float, free_margin: float) -> None:
         """更新账户信息"""
-        self._account_balance = balance
-        self._account_equity = equity
-        self._free_margin = free_margin
+        with self._lock:
+            self._account_balance = float(balance or 0.0)
+            self._account_equity = float(equity or 0.0)
+            self._free_margin = float(free_margin or 0.0)
 
     def get_account_balance(self) -> float:
         """获取账户余额"""

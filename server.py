@@ -633,14 +633,21 @@ class TradingServer:
             with self.lock:
                 self._tick_signal_snapshots[snapshot_key] = execution_context
 
+        # A deployment carries a denormalized symbol for the account's native
+        # broker instrument.  Keep it in the live lookup and require an exact
+        # match with the incoming quote.  This prevents a stale/misconfigured
+        # deployment (for example USDJPY vs USDJPY#) from authorizing a live
+        # order even when the strategy itself happens to match another path.
+        quote_symbol = str(symbol or "").strip().casefold()
         live_deployments = {
             str(row["strategy_id"]): str(row["deployment_id"])
             for row in self.repositories.storage.fetchall(
-                "SELECT deployment_id,strategy_id FROM strategy_deployments "
+                "SELECT deployment_id,strategy_id,symbol FROM strategy_deployments "
                 "WHERE user_id=? AND account_id=? AND execution_mode='live' "
                 "AND status='active'",
                 (int(self.user_id or 0), int(self.account_id or 0)),
             )
+            if str(row["symbol"] or "").strip().casefold() == quote_symbol
         }
 
         account = (
@@ -1326,6 +1333,26 @@ class TradingServer:
     def save_statistics(self, stat_data: dict) -> None:
         """保存统计数据"""
         self.statistics_service.process_statistics(stat_data)
+        # Keep the account-scoped risk manager in sync with the same EA
+        # snapshot that was just persisted.  Risk checks run in the tick
+        # path and must not depend on a later lazy refresh of the statistics
+        # store (which previously left live engines at balance=0 after a
+        # restart, blocking every order as ``account information not
+        # initialized`` even though trading_accounts had fresh values).
+        if self.account_id and self._risk_manager:
+            try:
+                balance = stat_data.get("balance")
+                equity = stat_data.get("equity")
+                if balance is not None and equity is not None:
+                    self._risk_manager.update_account_info(
+                        float(balance),
+                        float(equity),
+                        float(stat_data.get("freeMargin", equity) or equity),
+                    )
+            except (TypeError, ValueError):
+                # The statistics payload remains authoritative for display;
+                # malformed optional risk fields must not break ingestion.
+                pass
 
     def get_latest_statistics(
         self,

@@ -860,26 +860,8 @@ def create_market_routes(
         engine = engine_manager.get_market_engine(user.user_id)
         period = period.upper()
         klines = engine.kline_service.get_klines(symbol, period, count)
-        # MT5 broker suffixes (for example BTCUSD/BTCUSDm) can differ from
-        # the strategy symbol while representing the same reported stream.
-        # Fall back to a normalized in-memory symbol so execution charts do
-        # not disappear merely because of the broker suffix.
-        if not klines:
-            store = getattr(engine.kline_service, "store", None)
-            stored = getattr(store, "_klines", {})
-            requested = str(symbol).rstrip("#").lower()
-            requested_base = requested[:-1] if requested.endswith("m") else requested
-            for actual_symbol in stored.keys():
-                normalized = str(actual_symbol).rstrip("#").lower()
-                normalized_base = normalized[:-1] if normalized.endswith("m") else normalized
-                if normalized == requested or normalized_base == requested_base:
-                    klines = engine.kline_service.get_klines(actual_symbol, period, count)
-                    if klines:
-                        symbol = actual_symbol
-                        break
-
         # 结构分析不绑定某个交易账户；当主账户尚未接收该品种行情时，
-        # 从用户其他在线 MT5 账户读取同名/后缀匹配的行情，避免页面误显示为空。
+        # 从用户其他在线 MT5 账户读取同一原生品种的行情。后缀不同不视为同品种。
         if not klines:
             # 服务重启或 EA 暂停上报后，内存可能为空，但最近 7 天的行情已
             # 持久化到 MySQL。优先恢复同一用户、同一品种/周期的历史收盘K线。
@@ -1889,19 +1871,6 @@ def create_market_routes(
                     ]
                 if direct:
                     return direct, requested_symbol
-                store = getattr(source_engine.kline_service, "store", None)
-                stored = getattr(store, "_klines", {})
-                requested = str(requested_symbol).rstrip("#").lower()
-                requested_base = requested[:-1] if requested.endswith("m") else requested
-                for actual_symbol in stored.keys():
-                    normalized = str(actual_symbol).rstrip("#").lower()
-                    normalized_base = normalized[:-1] if normalized.endswith("m") else normalized
-                    if normalized == requested or normalized_base == requested_base:
-                        candidate = source_engine.kline_service.get_all_klines(
-                            actual_symbol, period
-                        )
-                        if candidate:
-                            return candidate, actual_symbol
                 return [], requested_symbol
 
             def parse_mt5_wall_time(value):
@@ -1991,14 +1960,11 @@ def create_market_routes(
                         getattr(market_engine, "account_id", None),
                     )
             bars, mt5_timezone_offset_hours = normalize_chart_bar_times(bars)
-            # 订单/成交记录可能保存标准名，而 K 线来自带后缀的经纪商名；
-            # 两者只要去掉 # 和末尾 m 后一致，就视为同一品种。
+            # 订单/成交记录与图表 K 线必须使用同一原生品种。
+            # BTCUSD、BTCUSD#、BTCUSDm 不得通过后缀归一化串联；
+            # 跨品种仅能由显式平台映射在交易链路中处理。
             def same_symbol(left, right):
-                left_norm = str(left or "").rstrip("#").lower()
-                right_norm = str(right or "").rstrip("#").lower()
-                left_base = left_norm[:-1] if left_norm.endswith("m") else left_norm
-                right_base = right_norm[:-1] if right_norm.endswith("m") else right_norm
-                return left_norm == right_norm or left_base == right_base
+                return str(left or "").strip().casefold() == str(right or "").strip().casefold()
             symbol = chart_symbol
             events = []
             if deployment.get("execution_mode") == "paper":
