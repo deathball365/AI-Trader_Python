@@ -218,6 +218,18 @@
             </div>
           </section>
 
+          <section class="execution-funnel-card">
+            <div class="runtime-section-title"><h3>策略执行漏斗</h3><span>近 {{ Math.round((paperDetail.execution_funnel?.window_seconds || 86400) / 3600) }} 小时 · 按账户汇总</span></div>
+            <div class="execution-funnel-grid">
+              <article><span>计划数</span><strong>{{ paperDetail.execution_funnel?.plans || 0 }}</strong></article>
+              <i>→</i><article><span>方向形成</span><strong>{{ paperDetail.execution_funnel?.directions || 0 }}</strong></article>
+              <i>→</i><article><span>触发数</span><strong>{{ paperDetail.execution_funnel?.triggered || 0 }}</strong></article>
+              <i>→</i><article><span>风控通过</span><strong>{{ paperDetail.execution_funnel?.risk_passed || 0 }}</strong></article>
+              <i>→</i><article><span>下单数</span><strong>{{ paperDetail.execution_funnel?.ordered || 0 }}</strong></article>
+            </div>
+            <div v-if="paperDetail.execution_funnel?.blocked_reasons?.length" class="funnel-blocks">主要拦截：<span v-for="item in paperDetail.execution_funnel.blocked_reasons" :key="item.reason_code">{{ item.label }} {{ item.count }} 次</span></div>
+          </section>
+
           <section class="deployment-workbench">
             <div>
               <div class="section-tag">STRATEGY DEPLOYMENT</div>
@@ -292,7 +304,7 @@
               <v-btn size="small" variant="tonal" color="primary" :loading="reportLoading" @click="loadPaperReport">生成运行报告</v-btn>
             </div>
             <div v-if="paperDetail.equity_curve.length" ref="equityChart" class="equity-chart" />
-            <div v-else class="runtime-empty">收到第一条 EA Tick 后开始记录净值</div>
+            <div v-else class="runtime-empty"><v-btn size="small" color="primary" variant="tonal" :loading="equityLoading" @click="loadPaperEquityCurve">加载资金曲线</v-btn></div>
           </section>
 
           <section class="strategy-performance-card">
@@ -546,10 +558,22 @@
             </div>
           </section>
 
+          <section class="execution-funnel-card">
+            <div class="runtime-section-title"><h3>策略执行漏斗</h3><span>近 {{ Math.round((liveDetail.execution_funnel?.window_seconds || 86400) / 3600) }} 小时 · 按账户汇总</span></div>
+            <div class="execution-funnel-grid">
+              <article><span>计划数</span><strong>{{ liveDetail.execution_funnel?.plans || 0 }}</strong></article>
+              <i>→</i><article><span>方向形成</span><strong>{{ liveDetail.execution_funnel?.directions || 0 }}</strong></article>
+              <i>→</i><article><span>触发数</span><strong>{{ liveDetail.execution_funnel?.triggered || 0 }}</strong></article>
+              <i>→</i><article><span>风控通过</span><strong>{{ liveDetail.execution_funnel?.risk_passed || 0 }}</strong></article>
+              <i>→</i><article><span>下单数</span><strong>{{ liveDetail.execution_funnel?.ordered || 0 }}</strong></article>
+            </div>
+            <div v-if="liveDetail.execution_funnel?.blocked_reasons?.length" class="funnel-blocks">主要拦截：<span v-for="item in liveDetail.execution_funnel.blocked_reasons" :key="item.reason_code">{{ item.label }} {{ item.count }} 次</span></div>
+          </section>
+
           <section class="runtime-chart-card">
             <div class="runtime-section-title"><h3>实盘账户净值</h3><v-select v-model="liveEquityRange" :items="equityRangeOptions" density="compact" hide-details label="时间范围" style="max-width:150px" @update:model-value="refreshLiveDetail" /><span>每 6 秒自动刷新</span></div>
             <div v-if="liveDetail.equity_curve.length" ref="liveEquityChart" class="equity-chart" />
-            <div v-else class="runtime-empty">等待 EA 上报第一条账户资金快照</div>
+            <div v-else class="runtime-empty"><v-btn size="small" color="primary" variant="tonal" :loading="equityLoading" @click="loadLiveEquityCurve">加载资金曲线</v-btn></div>
           </section>
 
           <section class="strategy-performance-card">
@@ -768,6 +792,7 @@ const paperReport = ref(null)
 const reportStrategyId = ref('')
 const equityChart = ref(null)
 const liveEquityChart = ref(null)
+const equityLoading = ref(false)
 const equityRangeOptions = [
   { title: '全部', value: 'all' }, { title: '最近6小时', value: '6h' },
   { title: '最近24小时', value: '24h' }, { title: '最近7天', value: '7d' },
@@ -1295,7 +1320,7 @@ async function refreshLiveDetail() {
   liveRefreshInFlight = true
   try {
     const data = await accountAPI.getLiveMonitoring(liveDetail.value.account.account_id, ...equityRangeParams(liveEquityRange.value))
-    liveDetail.value = data.detail
+    liveDetail.value = { ...data.detail, equity_curve: liveDetail.value.equity_curve || [] }
     await nextTick()
     renderLiveEquityChart()
   } catch (error) {
@@ -1304,6 +1329,26 @@ async function refreshLiveDetail() {
   } finally {
     liveRefreshInFlight = false
   }
+}
+
+async function loadPaperEquityCurve() {
+  if (!paperDetail.value || equityLoading.value) return
+  equityLoading.value = true
+  try {
+    const data = await accountAPI.getPaperEquityCurve(paperDetail.value.account.account_id, ...equityRangeParams(paperEquityRange.value))
+    paperDetail.value.equity_curve = data.equity_curve || []
+    await nextTick(); renderEquityChart()
+  } finally { equityLoading.value = false }
+}
+
+async function loadLiveEquityCurve() {
+  if (!liveDetail.value || equityLoading.value) return
+  equityLoading.value = true
+  try {
+    const data = await accountAPI.getLiveEquityCurve(liveDetail.value.account.account_id, ...equityRangeParams(liveEquityRange.value))
+    liveDetail.value.equity_curve = data.equity_curve || []
+    await nextTick(); renderLiveEquityChart()
+  } finally { equityLoading.value = false }
 }
 
 function closeLiveRuntime() {
@@ -1435,7 +1480,7 @@ function closeLivePromotion() {
 
 async function refreshPaperDetail() {
   const data = await accountAPI.getPaperDetail(paperDetail.value.account.account_id, 1, 30, ...equityRangeParams(paperEquityRange.value))
-  paperDetail.value = data.detail
+  paperDetail.value = { ...data.detail, equity_curve: paperDetail.value.equity_curve || [] }
   await nextTick()
   renderEquityChart()
   await loadAccounts()
@@ -1600,6 +1645,11 @@ onBeforeUnmount(() => {
 .deployment-list article { display: flex; align-items: center; justify-content: space-between; padding: 10px 13px; border: 1px solid #dce6e0; border-radius: 10px; background: #fff; }
 .deployment-list strong,.deployment-list span { display: block; }.deployment-list strong { color: #31554b; font-size: .78rem; }.deployment-list span { color: #87928d; font-size: .64rem; }
 .runtime-chart-card,.runtime-table-card { margin-top: 13px; padding: 15px; border: 1px solid #dfe7e2; border-radius: 13px; background: #fff; }
+.execution-funnel-card { margin-top: 13px; padding: 15px; border: 1px solid #dfe7e2; border-radius: 13px; background: linear-gradient(135deg,#fff,#f6faf7); }
+.execution-funnel-grid { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr auto 1fr; align-items: center; gap: 7px; }
+.execution-funnel-grid article { padding: 10px 8px; text-align: center; border: 1px solid #dce8e0; border-radius: 10px; background: #fff; }
+.execution-funnel-grid article span,.execution-funnel-grid article strong { display: block; }.execution-funnel-grid article span { color: #7d8c84; font-size: .65rem; }.execution-funnel-grid article strong { margin-top: 3px; color: #285947; font-size: 1.05rem; }.execution-funnel-grid i { color: #a0afa8; font-style: normal; }
+.funnel-blocks { margin-top: 9px; color: #8c6d59; font-size: .68rem; }.funnel-blocks span { display: inline-block; margin-left: 8px; padding: 2px 6px; border-radius: 5px; background: #fff1e8; }
 .strategy-performance-card { margin-top:13px; padding:15px; border:1px solid #dfe7e2; border-radius:8px; background:#fff; }
 .strategy-performance-row { padding:13px 0; border-top:1px solid #e7ede9; }
 .strategy-performance-row:first-of-type { border-top:0; }

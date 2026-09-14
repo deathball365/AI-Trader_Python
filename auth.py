@@ -39,6 +39,8 @@ class AuthUser:
     token_version: int = 1
     view_only: bool = False
     impersonated_by: Optional[int] = None
+    is_frozen: bool = False
+    freeze_reason: Optional[str] = None
 
 
 class UsernameAlreadyExistsError(ValueError):
@@ -102,6 +104,8 @@ class AuthManager:
             membership_level=record.membership_level,
             live_trading_enabled=record.live_trading_enabled,
             token_version=record.token_version,
+            is_frozen=bool(getattr(record, "is_frozen", False)),
+            freeze_reason=getattr(record, "freeze_reason", None),
         )
 
     def authenticate(self, username: str, password: str) -> Optional[AuthUser]:
@@ -113,6 +117,8 @@ class AuthManager:
             if user:
                 actual = self._hash_password(password, user.salt)
                 if hmac.compare_digest(user.password_hash, actual):
+                    if user.is_frozen:
+                        return None
                     return self._to_auth_user(user)
         return None
 
@@ -122,6 +128,8 @@ class AuthManager:
             if user:
                 actual = self._hash_password(password, user.salt)
                 if hmac.compare_digest(user.password_hash, actual):
+                    if user.is_frozen:
+                        return None
                     return self._to_auth_user(user)
         return None
 
@@ -213,6 +221,8 @@ class AuthManager:
 
     def start_session(self, user: AuthUser) -> AuthUser:
         """Rotate the per-user version so only the newest login remains valid."""
+        if user.is_frozen:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户登录已被冻结")
         with self._lock:
             record = self.user_repo.rotate_token_version(user.user_id)
         return self._to_auth_user(record)
@@ -288,6 +298,8 @@ class AuthManager:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="登录状态已失效，请重新登录",
             )
+        if user.is_frozen:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户登录已被冻结")
         authenticated = self._to_auth_user(user)
         authenticated.view_only = bool(payload.get("view_only", False))
         authenticated.impersonated_by = payload.get("impersonated_by")

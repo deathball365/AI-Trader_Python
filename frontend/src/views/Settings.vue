@@ -783,12 +783,16 @@
             <v-alert v-else-if="quotaError" type="error" variant="tonal" density="compact" class="mb-3">{{ quotaError }}</v-alert>
             <v-alert v-else-if="!quotaUsers.length" type="warning" variant="tonal" density="compact" class="mb-3">暂无用户数据。</v-alert>
             <v-table v-else density="comfortable" class="quota-table">
-              <thead><tr><th>用户</th><th>会员等级</th><th>实盘授权</th><th>当前用量</th><th>数据集上限</th><th>策略上限</th><th>信号源上限</th><th></th></tr></thead>
+              <thead><tr><th>用户</th><th>会员等级</th><th>实盘授权</th><th>登录状态</th><th>当前用量</th><th>数据集上限</th><th>策略上限</th><th>信号源上限</th><th></th></tr></thead>
               <tbody>
                 <tr v-for="item in quotaUsers" :key="item.user_id">
                   <td><strong>{{ item.username }}</strong><small>{{ item.email || '未绑定邮箱' }}</small></td>
                   <td>
                     <v-select v-model="item.membershipDraft.membership_level" :items="membershipOptions" :disabled="item.role === 'admin'" density="compact" hide-details style="min-width: 126px" @update:model-value="!liveEligibleLevel($event) && (item.membershipDraft.live_trading_enabled = false)" />
+                  </td>
+                  <td>
+                    <v-chip :color="item.is_frozen ? 'error' : 'success'" size="small" variant="tonal">{{ item.is_frozen ? '已冻结' : '正常' }}</v-chip>
+                    <v-btn v-if="item.role !== 'admin'" size="x-small" variant="text" class="ml-1" :loading="freezeSaving === item.user_id" @click="toggleUserFreeze(item)">{{ item.is_frozen ? '解冻' : '冻结' }}</v-btn>
                   </td>
                   <td>
                     <v-switch v-model="item.membershipDraft.live_trading_enabled" color="success" hide-details :disabled="item.role === 'admin' || !liveEligibleLevel(item.membershipDraft.membership_level)" />
@@ -2111,6 +2115,7 @@ export default {
     const quotaLoading = ref(false)
     const quotaError = ref('')
     const quotaSaving = ref(null)
+    const freezeSaving = ref(null)
     const adminStrategies = ref([])
     const adminStrategiesLoading = ref(false)
     const adminStrategySaving = ref(null)
@@ -2826,6 +2831,22 @@ export default {
         showError.value = true
       } finally {
         quotaSaving.value = null
+      }
+    }
+
+    const toggleUserFreeze = async (item) => {
+      freezeSaving.value = item.user_id
+      try {
+        const frozen = !item.is_frozen
+        await authAPI.setUserFreeze(item.user_id, frozen, frozen ? '管理员冻结登录' : '管理员解除冻结')
+        successMessage.value = frozen ? `已冻结 ${item.username} 的登录` : `已解除 ${item.username} 的登录冻结`
+        showSuccess.value = true
+        await loadUserQuotas()
+      } catch (err) {
+        errorMessage.value = err.response?.data?.detail || '更新用户登录状态失败'
+        showError.value = true
+      } finally {
+        freezeSaving.value = null
       }
     }
 
@@ -4711,6 +4732,8 @@ export default {
       saveInstrumentMapping,
       deleteInstrumentMapping,
       quotaUsers,
+      freezeSaving,
+      toggleUserFreeze,
       quotaLoading,
       quotaError,
       quotaSaving,

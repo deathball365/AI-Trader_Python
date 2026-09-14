@@ -28,6 +28,65 @@ from system_event_log import SystemEventLogRepository
 from strategy_admission import StrategyAdmissionService
 
 
+def _execution_funnel(storage, user_id: int, account_id: int, window_seconds: int = 86400) -> Dict:
+    """Return a compact, account-level execution funnel.
+
+    This intentionally aggregates by plan/execution rather than strategy or Tick;
+    inactive ``no_direction``/``no_new_trigger`` audits are not persisted and do
+    not inflate the result.
+    """
+    since = int(time.time()) - max(300, int(window_seconds or 86400))
+    params = (int(user_id), int(account_id), since)
+    plans = storage.fetchone(
+        "SELECT COUNT(DISTINCT plan_id) AS n FROM structure_trade_plans "
+        "WHERE user_id=? AND account_id=? AND created_at>=? AND plan_id<>''", params,
+    )
+    directions = storage.fetchone(
+        "SELECT COUNT(DISTINCT plan_id) AS n FROM structure_trade_plans "
+        "WHERE user_id=? AND account_id=? AND created_at>=? "
+        "AND direction IN ('buy','sell')", params,
+    )
+    trigger_rows = storage.fetchall(
+        "SELECT status, COUNT(*) AS n FROM structure_plan_executions "
+        "WHERE user_id=? AND account_id=? AND created_at>=? "
+        "GROUP BY status", params,
+    )
+    status_counts = {str(row['status'] or '').lower(): int(row['n'] or 0) for row in trigger_rows}
+    triggered_statuses = {'triggered', 'claimed', 'pending', 'ordered', 'filled', 'rejected', 'timeout', 'canceled'}
+    order_statuses = {'ordered', 'filled'}
+    triggered = sum(status_counts.get(key, 0) for key in triggered_statuses)
+    risk_passed = sum(status_counts.get(key, 0) for key in {'pending', 'ordered', 'filled'})
+    ordered = sum(status_counts.get(key, 0) for key in order_statuses)
+    blocks = storage.fetchall(
+        "SELECT reason_code, SUM(occurrence_count) AS n "
+        "FROM execution_gate_audits WHERE user_id=? AND account_id=? AND last_seen_at>=? "
+        "AND status='blocked' GROUP BY reason_code ORDER BY n DESC LIMIT 8", params,
+    )
+    reason_labels = {
+        "risk_limit": "账户风控",
+        "position_limit": "持仓数量限制",
+        "position_policy": "持仓策略限制",
+        "claim_conflict": "指令已被其他实例领取",
+        "invalid_volume": "手数无效",
+        "technical_failure": "技术错误",
+    }
+    return {
+        "window_seconds": max(300, int(window_seconds or 86400)),
+        "labels": ["计划数", "方向形成", "触发数", "风控通过", "下单数"],
+        "plans": int((plans or {}).get('n', 0) or 0),
+        "directions": int((directions or {}).get('n', 0) or 0),
+        "triggered": triggered,
+        "risk_passed": risk_passed,
+        "ordered": ordered,
+        "blocked_reasons": [
+            {"reason_code": str(row['reason_code'] or ''),
+             "label": reason_labels.get(str(row['reason_code'] or ''), str(row['reason_code'] or '')),
+             "count": int(row['n'] or 0)}
+            for row in blocks
+        ],
+    }
+
+
 def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
     router = APIRouter()
     repositories = engine_manager.repositories
@@ -467,7 +526,25 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 user.user_id, account_id, page=page, page_size=page_size,
                 equity_from=equity_from, equity_to=equity_to,
             )
+            detail["execution_funnel"] = _execution_funnel(
+                repository.storage, user.user_id, account_id,
+            )
             return {"status": "ok", "detail": detail}
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.get("/accounts/{account_id}/paper/equity-curve")
+    async def get_paper_equity_curve(
+        account_id: int,
+        equity_from: Optional[int] = Query(None, ge=0),
+        equity_to: Optional[int] = Query(None, ge=0),
+        user: AuthUser = Depends(require_auth),
+    ) -> Dict:
+        try:
+            curve = engine_manager.paper_trading.get_equity_curve(
+                user.user_id, account_id, equity_from, equity_to,
+            )
+            return {"status": "ok", "equity_curve": curve}
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -563,22 +640,33 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 "today_trade_stats": today_trade_stats(
                     repository.storage, user.user_id, account_id, account.account_type,
                 ),
+                "execution_funnel": _execution_funnel(
+                    repository.storage, user.user_id, account_id,
+                ),
                 "positions": positions,
                 "trades": trades,
                 "execution_reports": execution_reports,
                 "strategy_performance": build_live_performance(
                     repository.storage, user.user_id, account_id, positions,
                 ),
-                "equity_curve": repository.list_live_equity_points(
-                    # The runtime chart is a monitoring view, not a raw
-                    # history export.  Five thousand points preserve the
-                    # selectable range while keeping the first response and
-                    # browser chart rendering bounded.
-                    user.user_id, account_id, count=5000,
-                    from_time=equity_from, to_time=equity_to,
-                ),
+                "equity_curve": [],
             },
         }
+
+    @router.get("/accounts/{account_id}/live-monitoring/equity-curve")
+    async def get_live_equity_curve(
+        account_id: int,
+        equity_from: Optional[int] = Query(None, ge=0),
+        equity_to: Optional[int] = Query(None, ge=0),
+        user: AuthUser = Depends(require_auth),
+    ) -> Dict:
+        account = repository.get_by_id(user.user_id, account_id)
+        if account is None or account.account_type not in {"mt5", "ibkr"}:
+            raise HTTPException(status_code=404, detail="实盘账户不存在")
+        return {"status": "ok", "equity_curve": repository.list_live_equity_points(
+            user.user_id, account_id, count=5000,
+            from_time=equity_from, to_time=equity_to,
+        )}
 
     @router.get("/accounts/{account_id}/paper/report")
     async def get_paper_report(

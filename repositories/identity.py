@@ -46,6 +46,9 @@ class UserRecord:
     token_version: int
     created_at: int
     updated_at: int
+    is_frozen: bool = False
+    frozen_at: Optional[int] = None
+    freeze_reason: Optional[str] = None
 
 
 class MetaRepository:
@@ -73,7 +76,7 @@ class UserRepository:
     def get_by_username(self, username: str) -> Optional[UserRecord]:
         return self._row_to_user(self.storage.fetchone(
             """SELECT id, username, email, password_hash, salt, role,
-                      membership_level, live_trading_enabled, token_version,
+                      membership_level, live_trading_enabled, token_version, is_frozen, frozen_at, freeze_reason,
                       created_at, updated_at FROM users WHERE username = ?""",
             (username,),
         ))
@@ -81,7 +84,7 @@ class UserRepository:
     def get_by_id(self, user_id: int) -> Optional[UserRecord]:
         return self._row_to_user(self.storage.fetchone(
             """SELECT id, username, email, password_hash, salt, role,
-                      membership_level, live_trading_enabled, token_version,
+                      membership_level, live_trading_enabled, token_version, is_frozen, frozen_at, freeze_reason,
                       created_at, updated_at FROM users WHERE id = ?""",
             (user_id,),
         ))
@@ -89,7 +92,7 @@ class UserRepository:
     def get_by_email(self, email: str) -> Optional[UserRecord]:
         return self._row_to_user(self.storage.fetchone(
             """SELECT id, username, email, password_hash, salt, role,
-                      membership_level, live_trading_enabled, token_version,
+                      membership_level, live_trading_enabled, token_version, is_frozen, frozen_at, freeze_reason,
                       created_at, updated_at FROM users WHERE email = ?""",
             (email,),
         ))
@@ -136,6 +139,17 @@ class UserRepository:
             raise RuntimeError("刷新登录会话后未找到用户")
         return user
 
+    def set_frozen(self, user_id: int, frozen: bool, reason: str = "") -> UserRecord:
+        now = _now_ts()
+        self.storage.execute(
+            "UPDATE users SET is_frozen=?, frozen_at=?, freeze_reason=?, token_version=token_version+1, updated_at=? WHERE id=?",
+            (int(bool(frozen)), now if frozen else None, str(reason or "").strip() if frozen else None, now, int(user_id)),
+        )
+        user = self.get_by_id(user_id)
+        if user is None:
+            raise RuntimeError("更新用户冻结状态后未找到用户")
+        return user
+
     def count(self) -> int:
         row = self.storage.fetchone("SELECT COUNT(*) AS total FROM users")
         return int(row["total"]) if row else 0
@@ -143,7 +157,7 @@ class UserRepository:
     def list_users(self) -> List[UserRecord]:
         rows = self.storage.fetchall(
             """SELECT id, username, email, password_hash, salt, role,
-               membership_level, live_trading_enabled, token_version,
+               membership_level, live_trading_enabled, token_version, is_frozen, frozen_at, freeze_reason,
                created_at, updated_at FROM users ORDER BY created_at, id"""
         )
         return [user for row in rows if (user := self._row_to_user(row)) is not None]
@@ -154,7 +168,7 @@ class UserRepository:
         total = self.storage.fetchone("SELECT COUNT(*) AS total FROM users")
         rows = self.storage.fetchall(
             """SELECT id, username, email, password_hash, salt, role,
-               membership_level, live_trading_enabled, token_version,
+               membership_level, live_trading_enabled, token_version, is_frozen, frozen_at, freeze_reason,
                created_at, updated_at FROM users
                ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?""",
             (page_size, (page - 1) * page_size),
@@ -184,5 +198,8 @@ class UserRepository:
             membership_level=row["membership_level"],
             live_trading_enabled=bool(row["live_trading_enabled"]),
             token_version=int(row["token_version"]),
+            is_frozen=bool(row.get("is_frozen", 0)),
+            frozen_at=int(row["frozen_at"]) if row.get("frozen_at") else None,
+            freeze_reason=row.get("freeze_reason"),
             created_at=int(row["created_at"]), updated_at=int(row["updated_at"]),
         )

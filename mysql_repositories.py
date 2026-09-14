@@ -722,7 +722,10 @@ class TradingAccountRepository:
         sql += " ORDER BY point_time ASC LIMIT ?"
         # 先取一个有界的时间序列，再在内存中均匀抽样。这样“全部/7天”
         # 仍覆盖完整选择区间，不会因为首屏上限只显示最近一段曲线。
-        max_rows = 100000
+        # The monitoring chart requests at most 5000 points. Reading 100k
+        # heartbeats on every open made the live runtime endpoint sensitive to
+        # RDS latency even though most rows were discarded during sampling.
+        max_rows = max(5000, min(20000, int(count) * 4))
         params.append(max_rows)
         points = [dict(row) for row in self.storage.fetchall(sql, tuple(params))]
         max_points = max(1, min(int(count), 100000))

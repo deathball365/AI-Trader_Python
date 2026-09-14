@@ -8,6 +8,7 @@ import asyncio
 import os
 import smtplib
 import time
+import hashlib
 from pathlib import Path
 from typing import Optional
 
@@ -43,6 +44,7 @@ from email_verification import (
 from membership import MembershipService
 from repositories.accounts import EAActivationRepository, TradingAccountRepository
 from repositories.identity import UserRepository
+from system_event_log import SystemEventLogRepository
 from trading_engine_manager import TradingEngineManager
 from user_quotas import UserQuotaService
 
@@ -63,6 +65,45 @@ def create_auth_routes(
     membership_service = MembershipService()
     user_repository = UserRepository()
     invitation_service = InvitationService()
+    event_logs = SystemEventLogRepository(user_repository.storage)
+
+    def audit_login(request: Request, user: Optional[AuthUser], success: bool,
+                    reason: str = "", method: str = "email_code") -> None:
+        headers = request.headers
+        forwarded = headers.get("x-forwarded-for", "")
+        ip = (forwarded.split(",")[0].strip() if forwarded else "") or headers.get("x-real-ip", "") or (
+            request.client.host if request.client else "unknown"
+        )
+        user_agent = headers.get("user-agent", "")[:1000]
+        raw_features = "|".join([
+            headers.get("sec-ch-ua", ""), headers.get("sec-ch-ua-platform", ""),
+            headers.get("sec-ch-ua-mobile", ""), headers.get("accept-language", ""),
+        ])
+        device_hash = hashlib.sha256(raw_features.encode("utf-8")).hexdigest()[:16]
+        detail = {
+            "ip": ip, "user_agent": user_agent,
+            "device_type": ("mobile" if "mobile" in raw_features.lower() or "android" in user_agent.lower() else "desktop"),
+            "device_features": {
+                "browser_hint": headers.get("sec-ch-ua", "")[:300],
+                "platform": headers.get("sec-ch-ua-platform", "")[:100],
+                "mobile": headers.get("sec-ch-ua-mobile", "")[:20],
+                "accept_language": headers.get("accept-language", "")[:100],
+            },
+            "device_fingerprint": device_hash,
+            "login_method": method,
+        }
+        try:
+            event_logs.add({
+                "level": "info" if success else "warning", "category": "audit",
+                "event_type": "user_login", "event_name": "用户登录成功" if success else "用户登录失败",
+                "user_id": user.user_id if user else 0, "actor_type": "user",
+                "entity_type": "user", "entity_id": str(user.user_id if user else ""),
+                "status": "success" if success else "failed",
+                "message": reason or ("登录成功" if success else "登录失败"), "detail": detail,
+            })
+        except Exception:
+            # Audit failure must never make a valid login fail.
+            pass
 
     def login_response(user: AuthUser) -> LoginResponse:
         auth_manager = get_auth_manager()
@@ -119,7 +160,7 @@ def create_auth_routes(
             ) from exc
 
     @router.post("/login/email", response_model=LoginResponse)
-    async def login_with_email(payload: EmailLoginRequest) -> LoginResponse:
+    async def login_with_email(payload: EmailLoginRequest, request: Request) -> LoginResponse:
         auth_manager = get_auth_manager()
         try:
             email = email_service.assert_valid_code(
@@ -129,13 +170,20 @@ def create_auth_routes(
             if user is None:
                 raise EmailVerificationError("该邮箱尚未加入")
             email_service.consume(email)
-            return login_response(user)
+            if user.is_frozen:
+                audit_login(request, user, False, "用户登录已被冻结")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户登录已被冻结")
+            result = login_response(user)
+            audit_login(request, user, True)
+            return result
         except EmailVerificationError as exc:
+            audit_login(request, None, False, str(exc))
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=str(exc),
             ) from exc
         except (RuntimeError, OSError, smtplib.SMTPException) as exc:
+            audit_login(request, None, False, str(exc))
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"验证码发送失败: {exc}",
@@ -262,11 +310,42 @@ def create_auth_routes(
                 "role": record.role,
                 "membership_level": record.membership_level,
                 "live_trading_enabled": record.live_trading_enabled,
+                "is_frozen": record.is_frozen,
+                "frozen_at": record.frozen_at,
+                "freeze_reason": record.freeze_reason,
                 **summary,
             })
         return {"status": "ok", "users": users, "total": total,
                 "page": page, "page_size": page_size,
                 "has_more": page * page_size < total}
+
+    @router.patch("/admin/users/{user_id}/freeze")
+    async def set_user_freeze(
+        user_id: int,
+        request: Request,
+        user: AuthUser = Depends(require_admin),
+    ):
+        target = user_repository.get_by_id(user_id)
+        if target is None:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        if int(target.user_id) == int(user.user_id):
+            raise HTTPException(status_code=400, detail="不能冻结当前管理员账号")
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        frozen = bool(payload.get("frozen", True))
+        reason = str(payload.get("reason") or "管理员操作").strip()[:255]
+        updated = user_repository.set_frozen(user_id, frozen, reason)
+        return {
+            "status": "ok",
+            "message": "用户已冻结" if frozen else "用户已解冻",
+            "user": {
+                "user_id": updated.user_id, "username": updated.username,
+                "is_frozen": updated.is_frozen, "frozen_at": updated.frozen_at,
+                "freeze_reason": updated.freeze_reason,
+            },
+        }
 
     @router.post("/admin/users/{user_id}/view-token")
     async def create_user_view_token(
@@ -350,6 +429,14 @@ def create_auth_routes(
             "status": "ok",
             "user": _user_info(user).model_dump(),
         }
+
+    @router.get("/admin/login-audits")
+    async def list_login_audits(
+        page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
+        user: AuthUser = Depends(require_admin),
+    ):
+        result = event_logs.list({"event_type": "user_login", "category": "audit", "page": page, "page_size": page_size})
+        return {"status": "ok", **result}
 
     @router.get("/mt5-binding")
     async def get_mt5_binding(user: AuthUser = Depends(require_auth)):

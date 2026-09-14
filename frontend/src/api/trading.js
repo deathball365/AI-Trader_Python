@@ -118,6 +118,20 @@ export const authAPI = {
     return response.data
   },
 
+  async setUserFreeze(userId, frozen, reason = '') {
+    const response = await api.patch(
+      `/auth/admin/users/${encodeURIComponent(userId)}/freeze`, { frozen, reason }
+    )
+    return response.data
+  },
+
+  async getLoginAudits(page = 1, pageSize = 50) {
+    const response = await api.get('/auth/admin/login-audits', {
+      params: { page, page_size: pageSize },
+    })
+    return response.data
+  },
+
   async getInvitations() {
     const response = await api.get('/auth/admin/invitations')
     return response.data
@@ -289,11 +303,27 @@ export const accountAPI = {
     return response.data
   },
 
+  async getPaperEquityCurve(accountId, equityFrom = null, equityTo = null) {
+    const params = {}
+    if (equityFrom != null) params.equity_from = equityFrom
+    if (equityTo != null) params.equity_to = equityTo
+    const response = await api.get(`/accounts/${encodeURIComponent(accountId)}/paper/equity-curve`, { params })
+    return response.data
+  },
+
   async getLiveMonitoring(accountId, equityFrom = null, equityTo = null) {
     const params = {}
     if (equityFrom != null) params.equity_from = equityFrom
     if (equityTo != null) params.equity_to = equityTo
     const response = await api.get(`/accounts/${encodeURIComponent(accountId)}/live-monitoring`, { params })
+    return response.data
+  },
+
+  async getLiveEquityCurve(accountId, equityFrom = null, equityTo = null) {
+    const params = {}
+    if (equityFrom != null) params.equity_from = equityFrom
+    if (equityTo != null) params.equity_to = equityTo
+    const response = await api.get(`/accounts/${encodeURIComponent(accountId)}/live-monitoring/equity-curve`, { params })
     return response.data
   },
 

@@ -1244,7 +1244,22 @@ class PaperTradingService:
             sql += " AND point_time <= ?"; params.append(int(equity_to))
         sql += " ORDER BY point_time ASC LIMIT ?"
         params.append(20000)
-        return [dict(row) for row in self.storage.fetchall(sql, tuple(params))]
+        points = [dict(row) for row in self.storage.fetchall(sql, tuple(params))]
+        # The runtime chart is a monitoring view. Returning every heartbeat
+        # (often tens of thousands of rows) makes the first response and
+        # browser JSON parsing exceed the 10s API timeout. Preserve the full
+        # selected range while uniformly sampling a bounded payload.
+        max_points = 5000
+        if len(points) <= max_points:
+            return points
+        step = (len(points) - 1) / float(max_points - 1)
+        return [points[round(index * step)] for index in range(max_points)]
+
+    def get_equity_curve(self, user_id: int, account_id: int,
+                         equity_from: Optional[int] = None,
+                         equity_to: Optional[int] = None) -> List[Dict]:
+        self._paper_account(user_id, account_id)
+        return self._equity_curve(account_id, 30, 0, equity_from, equity_to)
 
     def get_account_detail(self, user_id: int, account_id: int,
                            page: int = 1, page_size: int = 30,
@@ -1416,7 +1431,9 @@ class PaperTradingService:
                     (account_id, page_size + 1, offset),
                 )[:page_size]
             ],
-            "equity_curve": self._equity_curve(account_id, page_size, offset, equity_from, equity_to),
+            # Loaded lazily by the runtime page; do not make tens of thousands
+            # of heartbeat rows part of the initial account response.
+            "equity_curve": [],
             "page": page,
             "page_size": page_size,
             "orders_has_more": orders_has_more,

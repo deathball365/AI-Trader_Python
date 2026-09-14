@@ -751,6 +751,11 @@ class MySQLStorage:
                         ("occurrence_count", "BIGINT NOT NULL DEFAULT 1"),
                         ("last_tick_id", "VARCHAR(64) NOT NULL DEFAULT ''"),
                     ),
+                    "users": (
+                        ("is_frozen", "TINYINT NOT NULL DEFAULT 0"),
+                        ("frozen_at", "BIGINT NULL"),
+                        ("freeze_reason", "VARCHAR(255) NULL"),
+                    ),
                 }
                 for table, columns in compatibility_columns.items():
                     for column, column_type in columns:
