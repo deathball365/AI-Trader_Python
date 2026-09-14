@@ -69,6 +69,8 @@ class _ExistingExecutionStorage:
         self.execute_called = False
 
     def fetchone(self, _sql, _params=()):
+        if "FROM trade_execution_reports" not in _sql:
+            return None
         return {
             "instruction_id": "inst-duplicate",
             "execution_status": "filled",
@@ -81,6 +83,35 @@ class _ExistingExecutionStorage:
         self.execute_called = True
 
 
+class _PendingExecutionStorage(_ExistingExecutionStorage):
+    def __init__(self):
+        super().__init__()
+        self.row = {
+            "instruction_id": "paper:o1",
+            "execution_status": "pending",
+            "success": 0,
+            "requested_price": 100.0,
+            "payload_json": "{}",
+            "position_attribution_json": "{}",
+        }
+
+    def fetchone(self, sql, params=()):
+        if "SELECT * FROM trade_execution_reports" in sql:
+            return self.row
+        return None
+
+    def execute(self, sql, params=()):
+        self.execute_called = True
+        if "UPDATE trade_execution_reports" in sql:
+            self.row.update({
+                "execution_status": params[1],
+                "success": params[0],
+                "executed_price": params[2],
+                "executed_volume": params[3],
+                "payload_json": params[11],
+            })
+
+
 class TradeExecutionReceiptIdempotencyTest(unittest.TestCase):
     def test_duplicate_receipt_does_not_write_a_second_execution(self):
         storage = _ExistingExecutionStorage()
@@ -91,3 +122,20 @@ class TradeExecutionReceiptIdempotencyTest(unittest.TestCase):
         self.assertTrue(result["duplicate"])
         self.assertEqual(result["status"], "filled")
         self.assertFalse(storage.execute_called)
+
+    def test_pending_receipt_is_upgraded_by_paper_fill(self):
+        storage = _PendingExecutionStorage()
+        result = TradeExecutionRepository(storage).record(
+            1, 2, {
+                "instruction_id": "paper:o1", "order_id": "o1",
+                "symbol": "BTCUSD", "action": "buy", "success": True,
+                "status": "filled", "requested_price": 100,
+                "executed_price": 101, "requested_volume": 0.1,
+                "executed_volume": 0.1, "transport": "paper",
+            },
+        )
+
+        self.assertTrue(storage.execute_called)
+        self.assertTrue(result["upgraded"])
+        self.assertEqual(result["status"], "filled")
+        self.assertEqual(storage.row["execution_status"], "filled")

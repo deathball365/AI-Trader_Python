@@ -1094,6 +1094,73 @@ class TradeExecutionRepository:
     def __init__(self, storage: Optional[MySQLStorage] = None):
         self.storage = storage or get_storage()
 
+    @staticmethod
+    def _is_terminal_status(status: str) -> bool:
+        return str(status or "").strip().lower() in {
+            "filled", "partially_filled", "rejected", "timeout", "canceled", "cancelled",
+        }
+
+    def _upgrade_existing_receipt(
+        self, existing, user_id: int, account_id: int,
+        instruction_id: str, payload: Dict, normalized,
+    ) -> Optional[Dict]:
+        """Promote a non-terminal receipt when a later Paper fill arrives.
+
+        Paper records ``pending`` when the order is created and records a second
+        receipt after Tick matching.  The latter is not a duplicate: it is the
+        terminal transition for the same instruction.  MT5 retries of an
+        already-terminal receipt remain idempotent in ``record``.
+        """
+        old_status = str(
+            (existing or {}).get("execution_status")
+            or (existing or {}).get("status") or ""
+        ).lower()
+        new_status = str(normalized.status or "").lower()
+        if self._is_terminal_status(old_status) or not self._is_terminal_status(new_status):
+            return None
+        action = str(payload.get("action", "") or "").strip().lower()
+        requested_price = float(payload.get("requested_price", existing.get("requested_price", 0)) or 0)
+        executed_price = float(payload.get("executed_price", 0) or 0)
+        raw_slippage = executed_price - requested_price
+        slippage = raw_slippage if action in {"b", "buy"} else -raw_slippage
+        reported_at = int(payload.get("reported_timestamp", 0) or _now_ts())
+        position_id = int(
+            payload.get("mt5_position_id") or payload.get("mt5_position")
+            or payload.get("position_id") or payload.get("position_ticket") or 0
+        )
+        self.storage.execute(
+            """
+            UPDATE trade_execution_reports
+            SET success=?, execution_status=?, executed_price=?, executed_volume=?,
+                slippage=?, mt5_order=?, mt5_deal=?, mt5_position_id=?, retcode=?,
+                error_message=?, reported_at=?, payload_json=?
+            WHERE account_id=? AND instruction_id=?
+            """,
+            (
+                int(bool(payload.get("success", False))), new_status,
+                executed_price, float(payload.get("executed_volume", 0) or 0),
+                slippage, int(payload.get("mt5_order", 0) or 0),
+                int(payload.get("mt5_deal", 0) or 0), position_id,
+                int(payload.get("retcode", 0) or 0),
+                str(payload.get("error_message", "") or "")[:500],
+                reported_at, json.dumps(payload, ensure_ascii=False),
+                int(account_id), instruction_id,
+            ),
+        )
+        row = self.storage.fetchone(
+            "SELECT * FROM trade_execution_reports WHERE account_id=? AND instruction_id=? LIMIT 1",
+            (int(account_id), instruction_id),
+        ) or existing
+        result = self._deserialize(row)
+        self._sync_instruction_state(
+            user_id, account_id, instruction_id, new_status,
+            bool(payload.get("success", False)),
+        )
+        if result is not None:
+            result["duplicate"] = False
+            result["upgraded"] = True
+        return result
+
     def record(self, user_id: int, account_id: int, payload: Dict) -> Dict:
         from market.services.execution_result import ExecutionResult
 
@@ -1103,15 +1170,20 @@ class TradeExecutionRepository:
         instruction_id = str(payload.get("instruction_id", "")).strip()
         if not instruction_id:
             raise ValueError("执行回报缺少 instruction_id")
-        # MT5 retries a receipt when its HTTP response is lost. The original
-        # receipt is authoritative, so a duplicate must be a no-op instead of
-        # re-emitting a filled event or changing the recorded deal.
+        # MT5 retries a receipt when its HTTP response is lost. Terminal
+        # receipts remain idempotent, while Paper's pending -> filled receipt
+        # is a legitimate state transition for the same instruction.
         existing = self.storage.fetchone(
             "SELECT * FROM trade_execution_reports "
             "WHERE account_id = ? AND instruction_id = ? LIMIT 1",
             (int(account_id), instruction_id),
         )
         if existing:
+            upgraded = self._upgrade_existing_receipt(
+                existing, user_id, account_id, instruction_id, payload, normalized,
+            )
+            if upgraded is not None:
+                return upgraded
             result = self._deserialize(existing)
             self._sync_instruction_state(
                 user_id, account_id, instruction_id,

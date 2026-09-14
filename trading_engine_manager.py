@@ -26,6 +26,7 @@ from market.store.structure_plan_store import StructureTradePlanRepository
 from repositories.container import RepositoryContainer
 from account_auto_flatten_service import AccountAutoFlattenService
 from market.services.tick_execution_context import TickExecutionContext
+from market.models import TradingStrategy
 
 
 @dataclass(frozen=True)
@@ -185,6 +186,46 @@ class TradingEngineManager:
                 user_id, account_id, symbol,
             ):
                 strategy_by_id[str(strategy.strategy_id)] = strategy
+
+        # Paper deployments are executed from the deployment table, while the
+        # account engine's strategy store is a cache of user configurations.
+        # After a deployment/config refresh those two views can briefly differ;
+        # building the shared Tick snapshot from the cache alone then makes
+        # PaperTradingService reject the Tick as ``snapshot_missing``.  Include
+        # every active Paper deployment explicitly, still using the exact
+        # broker-symbol matcher (no suffix aliases are introduced here).
+        try:
+            paper_rows = self.repositories.storage.fetchall(
+                """
+                SELECT d.*
+                FROM strategy_deployments d
+                JOIN trading_accounts a ON a.id = d.account_id
+                WHERE d.user_id = ? AND d.status = 'active'
+                  AND d.execution_mode = 'paper'
+                  AND a.account_type = 'paper'
+                  AND a.status = 'active' AND a.enabled = 1
+                  AND a.trading_enabled = 1 AND a.auto_trading_enabled = 1
+                """,
+                (user_id,),
+            )
+            for row in paper_rows:
+                try:
+                    strategy_data = self.paper_trading._deployment_strategy(
+                        user_id, row
+                    )
+                    strategy = TradingStrategy.from_dict(strategy_data)
+                    if self.paper_trading._strategy_matches_quote(
+                        user_id, strategy, symbol, int(row["account_id"]),
+                    ):
+                        strategy_by_id[str(strategy.strategy_id)] = strategy
+                except (KeyError, TypeError, ValueError):
+                    # A malformed/stale deployment is handled by the normal
+                    # deployment audit path and must not stop other accounts.
+                    continue
+        except Exception as exc:
+            # Snapshot construction must remain best effort for live EA calls;
+            # the account path will record the precise gate failure if needed.
+            print(f"[TradingEngineManager] Paper部署快照补充失败: {exc}")
 
         market_engine = self.get_market_engine(user_id)
         context = market_engine.create_tick_execution_context(

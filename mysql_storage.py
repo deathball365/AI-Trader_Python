@@ -62,8 +62,14 @@ class MySQLStorage:
         self.user = os.getenv("AI_TRADER_MYSQL_USER", "").strip()
         self.password = os.getenv("AI_TRADER_MYSQL_PASSWORD", "")
         self.database = os.getenv("AI_TRADER_MYSQL_DATABASE", "ai_trader").strip()
+        # Runtime ticks can fan out across Paper, Live and maintenance work.
+        # Keep the pool configurable, but make the safe default large enough
+        # that a slow receipt/analytics request cannot starve matching.
         self.pool_size = max(
-            2, int(os.getenv("AI_TRADER_MYSQL_POOL_SIZE", "12"))
+            4, int(os.getenv("AI_TRADER_MYSQL_POOL_SIZE", "32"))
+        )
+        self.pool_wait_seconds = max(
+            5, int(os.getenv("AI_TRADER_MYSQL_POOL_WAIT_SECONDS", "60"))
         )
         self._lock = threading.RLock()
         self._initialize_lock = threading.Lock()
@@ -116,9 +122,11 @@ class MySQLStorage:
                     connection = None
             if connection is None:
                 try:
-                    connection = self._pool.get(timeout=30)
+                    connection = self._pool.get(timeout=self.pool_wait_seconds)
                 except queue.Empty as exc:
-                    raise RuntimeError("MySQL 连接池已耗尽，请稍后重试") from exc
+                    raise RuntimeError(
+                        f"MySQL 连接池已耗尽（{self.pool_size} 个连接均繁忙），请稍后重试"
+                    ) from exc
 
         try:
             connection.ping(reconnect=True)
