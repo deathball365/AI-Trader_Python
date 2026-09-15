@@ -42,16 +42,24 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
     beijing = ZoneInfo("Asia/Shanghai")
     today_beijing = datetime.now(beijing).date()
     since = int(datetime.combine(today_beijing, datetime_time.min, tzinfo=beijing).timestamp())
-    params = (int(user_id), int(account_id), since)
+    # 结构计划由行情/结构层按用户公共作用域生成（account_id=0），
+    # 执行记录才按具体账户落库。漏斗需要把公共计划纳入当前账户的候选
+    # 统计，否则实盘账户明明有计划，页面却会显示计划数=0。
+    plan_account_clause = "account_id = 0"
+    plan_params = (int(user_id), since)
+    if int(account_id or 0) == 0:
+        plan_account_clause = "account_id = 0"
     plans = storage.fetchone(
         "SELECT COUNT(DISTINCT plan_id) AS n FROM structure_trade_plans "
-        "WHERE user_id=? AND account_id=? AND created_at>=? AND plan_id<>''", params,
+        f"WHERE user_id=? AND {plan_account_clause} AND created_at>=? AND plan_id<>''",
+        plan_params,
     )
     directions = storage.fetchone(
         "SELECT COUNT(DISTINCT plan_id) AS n FROM structure_trade_plans "
-        "WHERE user_id=? AND account_id=? AND created_at>=? "
-        "AND direction IN ('buy','sell')", params,
+        f"WHERE user_id=? AND {plan_account_clause} AND created_at>=? "
+        "AND direction IN ('buy','sell')", plan_params,
     )
+    params = (int(user_id), int(account_id), since)
     trigger_rows = storage.fetchall(
         "SELECT status, COUNT(*) AS n FROM structure_plan_executions "
         "WHERE user_id=? AND account_id=? AND created_at>=? "
