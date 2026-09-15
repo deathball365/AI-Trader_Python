@@ -58,16 +58,19 @@ class LiveMarketDisconnectMonitor:
         now = int(time.time())
         rows = self.storage.fetchall("""
             SELECT a.id AS account_id, a.user_id, a.account_name, a.mt5_login,
-                   d.symbol, MAX(k.updated_at) AS last_market_at,
+                   d.symbol,
+                   (
+                       SELECT k.updated_at
+                       FROM historical_klines k
+                       WHERE k.user_id = a.user_id AND k.symbol = d.symbol
+                       ORDER BY k.updated_at DESC
+                       LIMIT 1
+                   ) AS last_market_at,
                    u.username, u.email
             FROM trading_accounts a
             JOIN strategy_deployments d ON d.account_id = a.id AND d.status = 'active'
-            LEFT JOIN historical_klines k
-              ON k.user_id = a.user_id AND k.symbol = d.symbol
             JOIN users u ON u.id = a.user_id
             WHERE a.account_type = 'mt5' AND d.execution_mode = 'live'
-            GROUP BY a.id, a.user_id, a.account_name, a.mt5_login, d.symbol,
-                     u.username, u.email
         """)
         for row in rows:
             stale = not row.get("last_market_at") or now - int(row["last_market_at"]) > self.timeout_seconds

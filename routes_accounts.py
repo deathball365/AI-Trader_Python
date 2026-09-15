@@ -58,16 +58,14 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
     # SQL 中第一个占位符是公共计划的 user_id，第二个才是当前账户的
     # deployment.account_id。此前顺序反了，导致所有账户的计划数都被查成 0。
     plan_params = (int(user_id), int(account_id), since)
-    plans = storage.fetchone(
-        "SELECT COUNT(DISTINCT p.plan_id) AS n FROM structure_trade_plans p "
-        f"WHERE p.user_id=? AND {plan_account_clause} AND p.created_at>=? AND p.plan_id<>''",
+    funnel_row = storage.fetchone(
+        "SELECT "
+        "COUNT(DISTINCT CASE WHEN p.plan_id<>'' THEN p.plan_id END) AS plans, "
+        "COUNT(DISTINCT CASE WHEN p.direction IN ('buy','sell') THEN p.plan_id END) AS directions "
+        "FROM structure_trade_plans p "
+        f"WHERE p.user_id=? AND {plan_account_clause} AND p.created_at>=?",
         plan_params,
-    )
-    directions = storage.fetchone(
-        "SELECT COUNT(DISTINCT p.plan_id) AS n FROM structure_trade_plans p "
-        f"WHERE p.user_id=? AND {plan_account_clause} AND p.created_at>=? "
-        "AND p.direction IN ('buy','sell')", plan_params,
-    )
+    ) or {}
     params = (int(user_id), int(account_id), since)
     trigger_rows = storage.fetchall(
         "SELECT status, COUNT(*) AS n FROM structure_plan_executions "
@@ -97,8 +95,8 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
         "window_start": f"{today_beijing.isoformat()} 00:00",
         "window_timezone": "Asia/Shanghai",
         "labels": ["计划数", "方向形成", "触发数", "风控通过", "下单数"],
-        "plans": int((plans or {}).get('n', 0) or 0),
-        "directions": int((directions or {}).get('n', 0) or 0),
+        "plans": int(funnel_row.get('plans', 0) or 0),
+        "directions": int(funnel_row.get('directions', 0) or 0),
         "triggered": triggered,
         "risk_passed": risk_passed,
         "ordered": ordered,

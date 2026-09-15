@@ -8,6 +8,7 @@ import time
 from typing import Dict, List, Optional
 
 from mysql_repositories import MySQLStorage, get_storage
+from runtime_cache import invalidate
 
 
 class MarketEventRepository:
@@ -66,6 +67,7 @@ class MarketEventRepository:
                     ),
                 )
             conn.commit()
+        invalidate({"calendar"})
         return len(events)
 
     def list_calendar(self, event_date: Optional[str] = None) -> List[Dict]:
@@ -132,6 +134,7 @@ class MarketEventRepository:
                     ),
                 )
             conn.commit()
+        invalidate({"calendar"})
         return len(items)
 
     def list_flash_news(self, limit: int = 100) -> List[Dict]:

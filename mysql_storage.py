@@ -1004,9 +1004,24 @@ class MySQLStorage:
                         "user_id, account_id, created_at",
                     ),
                     (
+                        "strategy_deployments",
+                        "idx_strategy_deployments_funnel_match",
+                        "user_id, account_id, symbol, strategy_id, status",
+                    ),
+                    (
+                        "structure_trade_plans",
+                        "idx_structure_plans_funnel_day",
+                        "user_id, account_id, created_at, plan_id, direction, symbol, strategy_id",
+                    ),
+                    (
                         "historical_klines",
                         "idx_historical_klines_utc",
                         "user_id, account_id, symbol, period, timestamp_utc",
+                    ),
+                    (
+                        "historical_klines",
+                        "idx_historical_klines_user_symbol_updated",
+                        "user_id, symbol, updated_at",
                     ),
                     (
                         "live_trade_deals",

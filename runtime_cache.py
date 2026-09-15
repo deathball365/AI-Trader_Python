@@ -14,6 +14,33 @@ _generations = {
     "accounts": 0, "mappings": 0, "strategies": 0, "deployments": 0,
     "configs": 0, "plans": 0, "calendar": 0,
 }
+_stats = {
+    "hits": {},
+    "misses": {},
+    "expired": {},
+    "invalidations": {},
+}
+
+
+def _bump_stat(kind: str, domain: str) -> None:
+    with _lock:
+        bucket = _stats.setdefault(kind, {})
+        bucket[domain] = int(bucket.get(domain, 0)) + 1
+
+
+def stats() -> dict[str, dict[str, int]]:
+    """Return a snapshot of cache counters for operational diagnostics."""
+    with _lock:
+        return {
+            kind: dict(values)
+            for kind, values in _stats.items()
+        }
+
+
+def reset_stats() -> None:
+    with _lock:
+        for values in _stats.values():
+            values.clear()
 
 
 def domains_for_sql(sql: str) -> set[str]:
@@ -36,7 +63,7 @@ def domains_for_sql(sql: str) -> set[str]:
         domains.add("mappings")
     if "structure_trade_plans" in text:
         domains.add("plans")
-    if re.search(r"\b(market_calendar_events|market_key_events)\b", text):
+    if re.search(r"\b(market_calendar_events|market_key_events|market_flash_news)\b", text):
         domains.add("calendar")
     return domains
 
@@ -47,6 +74,7 @@ def invalidate(domains: set[str]) -> None:
     with _lock:
         for domain in domains:
             _generations[domain] = _generations.get(domain, 0) + 1
+            _bump_stat("invalidations", domain)
 
 
 def generation(domain: str) -> int:
@@ -66,9 +94,15 @@ class TTLCache:
         current_generation = generation(domain)
         with self._lock:
             item = self._items.get(key)
-            if item is None or item[0] <= now or item[1] != current_generation:
-                self._items.pop(key, None)
+            if item is None:
+                _bump_stat("misses", domain)
                 return None
+            if item[0] <= now or item[1] != current_generation:
+                self._items.pop(key, None)
+                _bump_stat("expired", domain)
+                _bump_stat("misses", domain)
+                return None
+            _bump_stat("hits", domain)
             return deepcopy(item[2])
 
     def set(self, key: Any, value: Any, domain: str, ttl_seconds: Optional[float] = None) -> None:
@@ -86,19 +120,21 @@ class SQLReadCache(TTLCache):
     """Shared cache for explicitly approved low-churn SQL read domains."""
 
     TTL_BY_DOMAIN = {
-        "accounts": 10,
         "mappings": 60,
         "strategies": 60,
-        "deployments": 20,
         "configs": 180,
+        # Calendar/key-event feeds are refreshed periodically, but a request
+        # fan-out can read the same day many times. Keep this short enough for
+        # an upstream refresh to become visible without hitting MySQL per call.
+        "calendar": 120,
     }
 
     def get_sql(self, sql: str, params: Any, domain: str) -> Optional[Any]:
-        return self.get((str(sql), repr(params)), domain)
+        return self.get((_normalise_sql(sql), _normalise_params(params)), domain)
 
     def set_sql(self, sql: str, params: Any, domain: str, value: Any) -> None:
         self.set(
-            (str(sql), repr(params)), value, domain,
+            (_normalise_sql(sql), _normalise_params(params)), value, domain,
             self.TTL_BY_DOMAIN.get(domain, 15),
         )
 
@@ -106,13 +142,32 @@ class SQLReadCache(TTLCache):
 sql_read_cache = SQLReadCache(ttl_seconds=60, max_items=8192)
 
 
+def _normalise_sql(sql: str) -> str:
+    """Collapse harmless whitespace so equivalent hand-written SQL can share a key."""
+    return re.sub(r"\s+", " ", str(sql or "")).strip().lower()
+
+
+def _normalise_params(params: Any) -> Any:
+    if isinstance(params, (list, tuple)):
+        return tuple(_normalise_params(item) for item in params)
+    if isinstance(params, dict):
+        return tuple(sorted((str(key), _normalise_params(value)) for key, value in params.items()))
+    return params
+
+
 def cache_domain_for_sql(sql: str) -> Optional[str]:
     """Return a cache namespace only for low-churn, safe-to-cache reads."""
     text = str(sql or "").lower()
     if " from " not in f" {text} ":
         return None
-    if re.search(r"\b(trading_accounts|mt5_account_connections)\b", text):
-        return "accounts"
+    # Account state and deployment state directly gate order generation.  Do
+    # not serve these reads from a TTL cache: a just-enabled/disabled account
+    # or deployment must take effect on the very next execution cycle.
+    if re.search(r"\b(trading_accounts|mt5_account_connections|strategy_deployments)\b", text):
+        return None
+    # Locking reads must always hit the database and cannot be cached safely.
+    if re.search(r"\bfor\s+update\b", text):
+        return None
     if re.search(r"\b(platform_instrument_mappings|market_data_sources|market_data_symbol_policies)\b", text):
         return "mappings"
     if "user_strategy_configs" in text:
@@ -122,5 +177,10 @@ def cache_domain_for_sql(sql: str) -> Optional[str]:
     if re.search(r"\b(structure_default_configs|structure_symbol_period_configs|structure_setup_configs|position_management_policies)\b", text):
         return "configs"
     if "structure_trade_plans" in text:
-        return "plans"
+        # Plan rows participate in claiming/expiry and must not be cached by
+        # the generic SQL layer. Repositories use their own short-lived,
+        # explicitly scoped cache only for safe snapshots.
+        return None
+    if re.search(r"\b(market_calendar_events|market_key_events|market_flash_news)\b", text):
+        return "calendar"
     return None
