@@ -34,6 +34,26 @@ class PlanExecutionService:
             gate_trace=gate_trace, account_snapshot=account_snapshot,
         )
 
+    def already_consumed(self, *, user_id: int, account_id: int,
+                         deployment_id: str, plan_id: str,
+                         plan_stage: str = "", direction: str = "") -> bool:
+        """Check the account/deployment scoped execution state before claiming.
+
+        Public structure plans remain active so another account can consume the
+        same opportunity.  The current deployment must therefore filter its
+        own claimed/ordered/filled execution row before trying to claim again.
+        The repository keeps the exact status semantics and treats released
+        claims as available again.
+        """
+        checker = getattr(self.repository, "is_consumed", None)
+        if checker is None:
+            return False
+        return bool(checker(
+            int(user_id), int(account_id), str(deployment_id or ""),
+            str(plan_id or ""), str(plan_stage or "default"),
+            str(direction or "none").lower(),
+        ))
+
     def record_order(self, *, user_id: int, account_id: int, deployment_id: str,
                      strategy_id: str, plan: Dict, order_id: str, reason: str = "",
                      tick_id: str = "", execution_mode: str = "",

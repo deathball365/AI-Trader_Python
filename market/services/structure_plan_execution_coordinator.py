@@ -135,6 +135,24 @@ class StructurePlanExecutionCoordinator:
             **summary, "plan_id": plan_id, "plan_group_id": group_id,
             "plan_stage": stage, "direction": direction,
         }
+        # Filter already-consumed plans before attempting the atomic claim.
+        # The public plan remains active for other accounts, so checking only
+        # plan.status would repeatedly enter claim and produce noisy conflicts.
+        already_consumed = getattr(self.execution_service, "already_consumed", None)
+        if already_consumed and already_consumed(
+            user_id=int(user_id), account_id=int(account_id),
+            deployment_id=str(deployment["deployment_id"]), plan_id=plan_id,
+            plan_stage=stage, direction=direction,
+        ):
+            return {
+                "plan_id": plan_id, "group_id": group_id,
+                "deployment": deployment, "claimed": False,
+                "already_consumed": True, "plan": plan,
+                "tick_id": str(tick_id or ""),
+                "execution_mode": str(execution_mode or ""),
+                "gate_trace": list(gate_trace or []),
+                "account_snapshot": dict(account_snapshot or {}),
+            }
         claimed = self.execution_service.claim(
             user_id=int(user_id), account_id=int(account_id),
             deployment_id=str(deployment["deployment_id"]),
