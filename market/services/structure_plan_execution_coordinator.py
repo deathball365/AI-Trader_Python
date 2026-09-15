@@ -148,22 +148,42 @@ class StructurePlanExecutionCoordinator:
                 "plan_id": plan_id, "group_id": group_id,
                 "deployment": deployment, "claimed": False,
                 "already_consumed": True, "plan": plan,
+                "reason_code": "already_consumed",
+                "reason": "同一账户/部署已消费该结构计划阶段和方向",
+                "details": {
+                    "plan_id": plan_id, "plan_group_id": group_id,
+                    "plan_stage": stage, "direction": direction,
+                },
                 "tick_id": str(tick_id or ""),
                 "execution_mode": str(execution_mode or ""),
                 "gate_trace": list(gate_trace or []),
                 "account_snapshot": dict(account_snapshot or {}),
             }
-        claimed = self.execution_service.claim(
+        claim_result = getattr(self.execution_service, "claim_result", None)
+        if claim_result is not None:
+            claim = claim_result(
+                user_id=int(user_id), account_id=int(account_id),
+                deployment_id=str(deployment["deployment_id"]),
+                strategy_id=str(decision.strategy_id), plan=plan,
+                reason=str(decision.decision_reason or ""),
+                tick_id=str(tick_id or ""), execution_mode=str(execution_mode or ""),
+                gate_trace=gate_trace, account_snapshot=account_snapshot,
+            )
+        else:
+            claim = {"claimed": bool(self.execution_service.claim(
             user_id=int(user_id), account_id=int(account_id),
             deployment_id=str(deployment["deployment_id"]),
             strategy_id=str(decision.strategy_id), plan=plan,
             reason=str(decision.decision_reason or ""),
             tick_id=str(tick_id or ""), execution_mode=str(execution_mode or ""),
             gate_trace=gate_trace, account_snapshot=account_snapshot,
-        )
+            )), "reason_code": "claimed", "reason": "", "details": {}}
         return {
             "plan_id": plan_id, "group_id": group_id,
-            "deployment": deployment, "claimed": bool(claimed), "plan": plan,
+            "deployment": deployment, "claimed": bool(claim.get("claimed")), "plan": plan,
+            "reason_code": str(claim.get("reason_code") or ("claimed" if claim.get("claimed") else "claim_failed")),
+            "reason": str(claim.get("reason") or ""),
+            "details": dict(claim.get("details") or {}),
             "tick_id": str(tick_id or ""), "execution_mode": str(execution_mode or ""),
             "gate_trace": list(gate_trace or []),
             "account_snapshot": dict(account_snapshot or {}),

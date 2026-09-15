@@ -951,8 +951,11 @@ class PaperTradingService:
     ) -> int:
         """Use one signal snapshot per strategy, then apply account-level checks."""
         self._expire_deployments(user_id)
+        # 清理账户下所有品种的过期 Pending 订单。此前只按当前 Tick 的
+        # symbol 清理，某个品种停止上报后，其“等待模拟撮合”订单会永久挂着，
+        # 既污染运行台，也可能占用持仓/下单额度。
         self.matching_engine.expire_stale_pending_orders(
-            user_id, symbol, int(time.time())
+            user_id, None, int(time.time())
         )
         deployments = self.storage.fetchall(
             """
@@ -1185,7 +1188,8 @@ class PaperTradingService:
                     gate_trace=[{
                         "allowed": outcome.status == "ordered",
                         "reason_code": outcome.reason_code,
-                        "message": outcome.message, "details": {},
+                        "message": outcome.message,
+                        "details": dict(getattr(order_result, "details", None) or {}),
                     }],
                     account_snapshot={
                         "risk_check": decision.risk_check or {},
@@ -1337,6 +1341,14 @@ class PaperTradingService:
             "SELECT * FROM paper_positions WHERE account_id = ? AND status = 'open' ORDER BY opened_at DESC",
             (account_id,),
         )]
+        position_keys = [
+            str(position.get("position_id") or "")
+            for position in positions
+            if str(position.get("position_id") or "")
+        ]
+        events_by_position = self.position_events.list_for_positions(
+            user_id, account_id, position_keys, limit=100
+        )
         for position in positions:
             position["position_attribution"] = json.loads(
                 position.get("position_attribution_json") or "{}"
@@ -1347,8 +1359,8 @@ class PaperTradingService:
                 "setup_profile_name", ""
             )
             position["open_reason"] = attribution.get("entry_reason", "")
-            position["management_events"] = self.position_events.list_for_position(
-                user_id, account_id, position["position_id"]
+            position["management_events"] = events_by_position.get(
+                str(position.get("position_id") or ""), []
             )
         page = max(1, int(page)); page_size = max(1, min(int(page_size), 100))
         offset = (page - 1) * page_size

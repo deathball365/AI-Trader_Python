@@ -114,30 +114,27 @@ def build_paper_performance(storage, user_id: int, account_id: int) -> List[Dict
         "FROM paper_positions WHERE user_id = ? AND account_id = ?",
         (int(user_id), int(account_id)),
     )]
-    closed_ids = {
-        str(item["position_id"]) for item in positions if item.get("status") == "closed"
-    }
-    trades = [dict(row) for row in storage.fetchall(
-        "SELECT position_id, deployment_id, net_profit, commission, closed_at "
-        "FROM paper_trades WHERE user_id = ? AND account_id = ? ORDER BY closed_at",
-        (int(user_id), int(account_id)),
-    )]
-    grouped: Dict[tuple, List[Dict]] = {}
-    for trade in trades:
-        position_id = str(trade.get("position_id") or "")
-        if position_id not in closed_ids:
-            continue
-        grouped.setdefault(
-            (str(trade.get("deployment_id") or ""), position_id), []
-        ).append(trade)
-
     outcomes: Dict[str, List[Dict]] = {}
-    for (deployment_id, position_id), items in grouped.items():
+    # 分批成交先在数据库按持仓聚合，避免运行台打开时把账户全部历史成交
+    # 加载到 Python；输出字段与原有逐笔聚合保持一致。
+    aggregated_trades = storage.fetchall(
+        "SELECT t.position_id, t.deployment_id, SUM(t.net_profit) AS net_profit, "
+        "SUM(t.commission) AS commission, MAX(t.closed_at) AS closed_at "
+        "FROM paper_trades t "
+        "JOIN paper_positions p ON p.position_id = t.position_id "
+        " AND p.user_id = t.user_id AND p.account_id = t.account_id "
+        "WHERE t.user_id = ? AND t.account_id = ? AND p.status = 'closed' "
+        "GROUP BY t.position_id, t.deployment_id ORDER BY MAX(t.closed_at)",
+        (int(user_id), int(account_id)),
+    )
+    for trade in aggregated_trades:
+        item = dict(trade)
+        deployment_id = str(item.get("deployment_id") or "")
         outcomes.setdefault(deployment_id, []).append({
-            "position_id": position_id,
-            "net_profit": sum(float(item.get("net_profit") or 0) for item in items),
-            "commission": sum(float(item.get("commission") or 0) for item in items),
-            "closed_at": max(int(item.get("closed_at") or 0) for item in items),
+            "position_id": str(item.get("position_id") or ""),
+            "net_profit": float(item.get("net_profit") or 0),
+            "commission": float(item.get("commission") or 0),
+            "closed_at": int(item.get("closed_at") or 0),
         })
 
     order_counts = {

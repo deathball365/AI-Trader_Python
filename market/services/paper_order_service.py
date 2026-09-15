@@ -15,6 +15,7 @@ class PaperOrderCreationResult:
     reason_code: str
     message: str = ""
     order_id: str = ""
+    details: Dict = None
 
     def __bool__(self) -> bool:
         return self.created
@@ -181,11 +182,11 @@ class PaperOrderService:
             )
             claimed_structure_plan = bool(plan_context.get("claimed"))
             if not claimed_structure_plan:
-                # Another Tick/worker (or an earlier decision) has already
-                # consumed this public plan for the same deployment.
+                reason_code = str(plan_context.get("reason_code") or "claim_failed")
+                message = str(plan_context.get("reason") or "结构计划领取失败")
                 return PaperOrderCreationResult(
-                    False, "claim_conflict",
-                    "同一部署已消费该公共结构计划阶段和方向",
+                    False, reason_code, message,
+                    details=dict(plan_context.get("details") or {}),
                 )
         try:
             self.paper_service.storage.execute(

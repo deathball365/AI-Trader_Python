@@ -569,7 +569,9 @@ class TradingServer:
             "allowed": outcome.status == "ordered",
             "reason_code": outcome.reason_code,
             "message": outcome.message,
-            "details": {},
+            "details": {
+                "structure_plan_claim": (decision.risk_check or {}).get("structure_plan_claim")
+            },
         }]
         self.repositories.execution_gate_audits.record(
             user_id=int(self.user_id or 0), account_id=int(self.account_id or 0),
@@ -875,7 +877,17 @@ class TradingServer:
                 if plan_context.get("plan_id") and plan_context.get("deployment") \
                         and not plan_context.get("claimed"):
                     decision.status = "rejected"
-                    decision.decision_reason = "该公共结构计划已被当前实盘部署消费，不重复下单"
+                    decision.decision_reason = str(
+                        plan_context.get("reason")
+                        or "结构计划领取失败"
+                    )
+                    decision.risk_check = {
+                        **(decision.risk_check or {}),
+                        "structure_plan_claim": {
+                            "reason_code": str(plan_context.get("reason_code") or "claim_failed"),
+                            "details": dict(plan_context.get("details") or {}),
+                        },
+                    }
                 order_id = (
                     self.strategy_service.execute_decision(decision)
                     if decision.status != "rejected" else None

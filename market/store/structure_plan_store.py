@@ -422,6 +422,8 @@ class StructureTradePlanRepository:
                 "计划超过24小时未触发，自动取消"
                 if due_by_safety else "计划有效期已结束"
             )
+            payload["inactive_reason_code"] = "expired"
+            payload["inactive_at"] = now
             self.storage.execute(
                 "UPDATE structure_trade_plans SET status='invalidated', "
                 "payload_json=?, updated_at=? WHERE plan_id=? "
@@ -447,6 +449,8 @@ class StructureTradePlanRepository:
             payload = {}
         payload["status"] = "invalidated"
         payload["invalidated_reason"] = str(reason or "structure_event")
+        payload["inactive_reason_code"] = "invalidated"
+        payload["inactive_at"] = now
         self.storage.execute(
             "UPDATE structure_trade_plans SET status='invalidated', payload_json=?, updated_at=? WHERE plan_id=?",
             (json.dumps(payload, ensure_ascii=False), now, str(plan_id)),
@@ -502,7 +506,8 @@ class StructureTradePlanRepository:
         """Mark a live plan as replaced while preserving an explicit audit reason."""
         now = int(time.time())
         row = self.storage.fetchone(
-            "SELECT payload_json,status FROM structure_trade_plans WHERE plan_id=? LIMIT 1",
+            "SELECT payload_json,status,user_id,account_id,symbol,period "
+            "FROM structure_trade_plans WHERE plan_id=? LIMIT 1",
             (str(plan_id),),
         )
         if not row or str(row["status"] or "") not in {"active", "watching"}:
@@ -513,6 +518,8 @@ class StructureTradePlanRepository:
             payload = {}
         payload["status"] = "superseded"
         payload["invalidated_reason"] = str(reason or "superseded_by_new_plan")
+        payload["inactive_reason_code"] = "superseded"
+        payload["inactive_at"] = now
         self.storage.execute(
             "UPDATE structure_trade_plans SET status='superseded', payload_json=?, updated_at=? WHERE plan_id=?",
             (json.dumps(payload, ensure_ascii=False), now, str(plan_id)),
@@ -544,6 +551,8 @@ class StructureTradePlanRepository:
                     continue
                 related_payload["status"] = "superseded"
                 related_payload["invalidated_reason"] = f"关联结构计划已失效：{reason}"
+                related_payload["inactive_reason_code"] = "superseded"
+                related_payload["inactive_at"] = now
                 self.storage.execute(
                     "UPDATE structure_trade_plans SET status='superseded', "
                     "payload_json=?, updated_at=? WHERE plan_id=? "
@@ -612,7 +621,7 @@ class StructureTradePlanRepository:
             f"{user_id}:{account_id}:{deployment_id}:{claim_scope}",
         ).hex[:32]
 
-    def claim_execution(
+    def claim_execution_result(
         self, user_id: int, account_id: int, deployment_id: str,
         strategy_id: str, plan_id: str, plan_group_id: str = "",
         plan_stage: str = "", direction: str = "", tick_id: str = "",
@@ -620,7 +629,8 @@ class StructureTradePlanRepository:
         reason: str = "", payload: Optional[Dict] = None,
         gate_trace: Optional[List[Dict]] = None,
         account_snapshot: Optional[Dict] = None,
-    ) -> bool:
+        enforce_plan_status: bool = True,
+    ) -> Dict:
         """Atomically claim one public plan for one deployment.
 
         ``INSERT ... DO NOTHING`` is translated to ``INSERT IGNORE`` by the
@@ -638,14 +648,64 @@ class StructureTradePlanRepository:
         # A signal snapshot can outlive the structure plan that produced it.
         # Never claim a superseded, invalidated, or expired plan.
         live_plan = self.storage.fetchone(
-            "SELECT status,expires_at FROM structure_trade_plans "
+            "SELECT plan_id,status,expires_at,updated_at,created_at,"
+            "user_id,account_id,symbol,period,setup_type,direction,"
+            "plan_group_id,payload_json FROM structure_trade_plans "
             "WHERE plan_id=? AND user_id=? LIMIT 1",
             (str(plan_id), int(user_id)),
         )
-        if not live_plan or str(live_plan.get("status") or "") != "active":
-            return False
-        if int(live_plan.get("expires_at") or 0) <= now and int(live_plan.get("expires_at") or 0) > 0:
-            return False
+        if not live_plan and enforce_plan_status:
+            return {"claimed": False, "reason_code": "plan_inactive",
+                    "reason": "结构计划不存在或已被删除",
+                    "details": {"inactive_type": "missing", "plan_id": str(plan_id)}}
+        try:
+            live_payload = json.loads((live_plan or {}).get("payload_json") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            live_payload = {}
+        plan_status = str(live_plan.get("status") or "") if live_plan else "active"
+        expires_at = int((live_plan or {}).get("expires_at") or live_payload.get("expires_at") or 0)
+        inactive_reason = str(
+            live_payload.get("invalidated_reason")
+            or live_payload.get("inactive_reason")
+            or ""
+        )
+        inactive_type = ""
+        if plan_status == "superseded":
+            inactive_type = "superseded"
+        elif plan_status in {"invalidated", "expired"}:
+            inactive_type = "expired" if (
+                plan_status == "expired" or "过期" in inactive_reason or "有效期" in inactive_reason
+                or "24小时" in inactive_reason
+            ) else "invalidated"
+        elif plan_status != "active":
+            inactive_type = plan_status or "missing"
+        elif expires_at > 0 and expires_at <= now:
+            inactive_type = "expired"
+            inactive_reason = inactive_reason or "计划有效期已结束"
+        if inactive_type:
+            detail = {
+                "inactive_type": inactive_type,
+                "plan_status": plan_status,
+                "invalidated_reason": inactive_reason,
+                "plan_id": str(plan_id),
+                "plan_group_id": str((live_plan or {}).get("plan_group_id") or plan_group_id or ""),
+                "plan_stage": str(plan_stage or live_payload.get("plan_stage") or "default"),
+                "direction": direction,
+                "symbol": str((live_plan or {}).get("symbol") or live_payload.get("symbol") or ""),
+                "period": str((live_plan or {}).get("period") or live_payload.get("period") or ""),
+                "setup_type": str((live_plan or {}).get("setup_type") or live_payload.get("setup_type") or ""),
+                "opportunity_id": str(live_payload.get("opportunity_id") or ""),
+                "structure_segment_id": str(live_payload.get("structure_segment_id") or ""),
+                "structure_revision": live_payload.get("structure_revision"),
+                "generated_at": int(live_payload.get("generated_at") or (live_plan or {}).get("created_at") or 0),
+                "valid_from": int(live_payload.get("valid_from") or 0),
+                "expires_at": expires_at,
+                "updated_at": int((live_plan or {}).get("updated_at") or 0),
+                "checked_at": now,
+            }
+            return {"claimed": False, "reason_code": "plan_inactive",
+                    "reason": inactive_reason or f"结构计划已{inactive_type}",
+                    "details": detail}
         execution_id = self._execution_id(
             user_id, account_id, deployment_id, plan_id, plan_group_id,
             plan_stage, direction,
@@ -656,7 +716,12 @@ class StructureTradePlanRepository:
             (execution_id,),
         )
         if claimed_sibling and str(claimed_sibling["plan_id"] or "") != str(plan_id):
-            return False
+            return {"claimed": False, "reason_code": "claim_race",
+                    "reason": "同一计划组已有其他结构计划被并发领取",
+                    "details": {"plan_id": str(plan_id),
+                                "claimed_plan_id": str(claimed_sibling["plan_id"] or ""),
+                                "plan_group_id": str(plan_group_id or ""),
+                                "plan_stage": plan_stage, "direction": direction}}
         self.storage.execute(
             """
             INSERT INTO structure_plan_executions(
@@ -682,12 +747,25 @@ class StructureTradePlanRepository:
             (execution_id,),
         )
         if not row or str(row["plan_id"] or "") != str(plan_id):
-            return False
+            return {"claimed": False, "reason_code": "claim_failed",
+                    "reason": "结构计划领取写入失败", "details": {"plan_id": str(plan_id)}}
         try:
             stored_payload = json.loads(row["payload_json"] or "{}")
         except (TypeError, ValueError, json.JSONDecodeError):
             stored_payload = {}
-        return stored_payload.get("claim_token") == claim_token
+        if stored_payload.get("claim_token") != claim_token:
+            return {"claimed": False, "reason_code": "already_consumed",
+                    "reason": "同一部署已消费该结构计划阶段和方向",
+                    "details": {"plan_id": str(plan_id), "plan_stage": plan_stage,
+                                "direction": direction, "execution_id": execution_id}}
+        return {"claimed": True, "reason_code": "claimed", "reason": "结构计划领取成功",
+                "details": {"plan_id": str(plan_id), "execution_id": execution_id,
+                            "plan_stage": plan_stage, "direction": direction}}
+
+    def claim_execution(self, *args, **kwargs) -> bool:
+        """Backward-compatible boolean claim API."""
+        kwargs.setdefault("enforce_plan_status", False)
+        return bool(self.claim_execution_result(*args, **kwargs).get("claimed"))
 
     def release_claim(
         self, user_id: int, account_id: int, deployment_id: str, plan_id: str,

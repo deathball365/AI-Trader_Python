@@ -1032,6 +1032,49 @@ class MySQLStorage:
                         "idx_live_trade_deals_account_timestamp",
                         "account_id, deal_timestamp, received_at",
                     ),
+                    # Paper runtime is opened by account and then narrowed by
+                    # status/time.  These indexes keep the first screen and
+                    # paginated refreshes bounded as history grows.
+                    (
+                        "paper_positions",
+                        "idx_paper_positions_account_status_opened",
+                        "account_id, status, opened_at",
+                    ),
+                    (
+                        "paper_positions",
+                        "idx_paper_positions_user_account_position_status",
+                        "user_id, account_id, position_id, status",
+                    ),
+                    (
+                        "paper_orders",
+                        "idx_paper_orders_account_requested",
+                        "account_id, requested_at, order_id",
+                    ),
+                    (
+                        "paper_orders",
+                        "idx_paper_orders_user_status_requested",
+                        "user_id, status, requested_at",
+                    ),
+                    (
+                        "paper_trades",
+                        "idx_paper_trades_account_closed",
+                        "account_id, closed_at, trade_id",
+                    ),
+                    (
+                        "paper_trades",
+                        "idx_paper_trades_user_account_position_deployment",
+                        "user_id, account_id, position_id, deployment_id, closed_at",
+                    ),
+                    (
+                        "position_management_events",
+                        "idx_position_events_account_position_time",
+                        "user_id, account_id, position_key, event_time, created_at",
+                    ),
+                    (
+                        "runtime_entities",
+                        "idx_runtime_entities_account_type_created",
+                        "user_id, account_id, entity_type, created_at",
+                    ),
                 )
                 for table, index_name, columns in compatibility_indexes:
                     try:

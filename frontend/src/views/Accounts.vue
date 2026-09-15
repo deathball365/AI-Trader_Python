@@ -782,6 +782,7 @@ const liveDialog = ref(false)
 const liveDetail = ref(null)
 const paperContext = reactive({ strategies: [] })
 const paperContextLoaded = ref(false)
+let paperContextRequest = null
 const selectedStrategyId = ref('')
 const deploying = ref(false)
 const deploymentLoadingId = ref('')
@@ -1054,9 +1055,17 @@ function runtimeEventLabel(type) {
 
 async function loadPaperContext(force = false) {
   if (paperContextLoaded.value && !force) return
-  const contextData = await accountAPI.getPaperContext()
-  paperContext.strategies = contextData.strategies || []
-  paperContextLoaded.value = true
+  if (paperContextRequest && !force) return paperContextRequest
+  paperContextRequest = accountAPI.getPaperContext()
+    .then((contextData) => {
+      paperContext.strategies = contextData.strategies || []
+      paperContextLoaded.value = true
+      return contextData
+    })
+    .finally(() => {
+      paperContextRequest = null
+    })
+  return paperContextRequest
 }
 
 async function loadAccounts(includeContext = false) {
@@ -1278,10 +1287,9 @@ async function refreshSelectedAccount() {
 async function openPaperRuntime(account) {
   runtimeLoadingId.value = account.account_id
   try {
-    const [data] = await Promise.all([
-      accountAPI.getPaperDetail(account.account_id, 1, 30, ...equityRangeParams(paperEquityRange.value)),
-      loadPaperContext(),
-    ])
+    const data = await accountAPI.getPaperDetail(
+      account.account_id, 1, 30, ...equityRangeParams(paperEquityRange.value)
+    )
     paperDetail.value = data.detail
     expandedPaperPositions.value = new Set()
     selectedStrategyId.value = ''
@@ -1289,6 +1297,8 @@ async function openPaperRuntime(account) {
     reportStrategyId.value = ''
     paperDialog.value = true
     await nextTick()
+    // 策略上下文只服务于绑定/筛选，不阻塞运行台首屏；后台加载失败也不影响账户详情。
+    loadPaperContext().catch(() => {})
   } catch (error) {
     messageType.value = 'error'
     message.value = error.response?.data?.detail || '加载模拟账户失败'

@@ -24,7 +24,36 @@ class PlanExecutionService:
               tick_id: str = "", execution_mode: str = "",
               reason_code: str = "claimed", gate_trace=None,
               account_snapshot=None) -> bool:
-        return self.repository.claim_execution(
+        result = self.claim_result(
+            user_id=user_id, account_id=account_id, deployment_id=deployment_id,
+            strategy_id=strategy_id, plan=plan, reason=reason, tick_id=tick_id,
+            execution_mode=execution_mode, reason_code=reason_code,
+            gate_trace=gate_trace, account_snapshot=account_snapshot,
+        )
+        return bool(result.get("claimed"))
+
+    def claim_result(self, *, user_id: int, account_id: int, deployment_id: str,
+                     strategy_id: str, plan: Dict, reason: str = "",
+                     tick_id: str = "", execution_mode: str = "",
+                     reason_code: str = "claimed", gate_trace=None,
+                     account_snapshot=None) -> Dict:
+        """Claim a plan and preserve the exact reason when it is not claimable."""
+        claim = getattr(self.repository, "claim_execution_result", None)
+        if claim is None:
+            claimed = self.repository.claim_execution(
+                user_id, account_id, deployment_id, strategy_id,
+                str(plan.get("plan_id") or ""), str(plan.get("plan_group_id") or ""),
+                plan_stage=str(plan.get("plan_stage") or "default"),
+                direction=str(plan.get("direction") or "none"),
+                tick_id=tick_id, execution_mode=execution_mode,
+                reason_code=reason_code, reason=reason, payload=plan,
+                gate_trace=gate_trace, account_snapshot=account_snapshot,
+            )
+            return {"claimed": bool(claimed),
+                    "reason_code": "claimed" if claimed else "claim_conflict",
+                    "reason": "" if claimed else "结构计划已被其他执行线程领取",
+                    "details": {}}
+        return claim(
             user_id, account_id, deployment_id, strategy_id,
             str(plan.get("plan_id") or ""), str(plan.get("plan_group_id") or ""),
             plan_stage=str(plan.get("plan_stage") or "default"),

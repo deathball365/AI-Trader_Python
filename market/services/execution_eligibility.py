@@ -120,6 +120,7 @@ def classify_execution_outcome(
     summary = dict(_value(decision, "signal_summary", {}) or {})
     position_check = dict(_value(decision, "position_check", {}) or {})
     risk_check = dict(_value(decision, "risk_check", {}) or {})
+    structure_claim = dict(risk_check.get("structure_plan_claim") or {})
 
     if action == "none":
         guard = dict(summary.get("loss_streak_guard") or {})
@@ -134,6 +135,10 @@ def classify_execution_outcome(
         return ExecutionAuditOutcome("no_action", reason_code, message)
 
     if status == "rejected":
+        if structure_claim and structure_claim.get("reason_code"):
+            return ExecutionAuditOutcome(
+                "blocked", str(structure_claim.get("reason_code")), message,
+            )
         staged = dict(risk_check.get("staged_execution") or {})
         staged_reason = str(staged.get("reason") or "")
         if staged and not staged.get("allowed", True):

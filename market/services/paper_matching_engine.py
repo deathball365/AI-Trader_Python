@@ -327,17 +327,25 @@ class PaperMatchingEngine:
         return result
 
 
-    def expire_stale_pending_orders(self, user_id, symbol, now):
+    def expire_stale_pending_orders(self, user_id, symbol=None, now=None):
         service = self.paper_service
-        cutoff = int(now) - service.PENDING_ORDER_TIMEOUT_SECONDS
+        now = int(now or 0)
+        if now <= 0:
+            import time
+            now = int(time.time())
+        cutoff = now - service.PENDING_ORDER_TIMEOUT_SECONDS
+        symbol_clause = " AND symbol = ?" if symbol else ""
+        params = [int(user_id), cutoff]
+        if symbol:
+            params.insert(1, str(symbol))
         orders = service.storage.fetchall(
             "SELECT order_id,account_id,decision_id,deployment_id,strategy_id,"
             "position_attribution_json FROM paper_orders "
             # Keep the persistence boundary identical to TickExecutionCore:
             # the quote exactly 60 seconds after a request is still eligible;
             # only a later quote times out the Pending order.
-            "WHERE user_id=? AND symbol=? AND status='pending' AND requested_at<?",
-            (user_id, symbol, cutoff),
+            f"WHERE user_id=?{symbol_clause} AND status='pending' AND requested_at<?",
+            tuple(params),
         )
         reason = "等待下一次行情撮合超时，订单已自动取消"
         for order in orders:
