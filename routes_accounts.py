@@ -45,19 +45,23 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
     # 结构计划由行情/结构层按用户公共作用域生成（account_id=0），
     # 执行记录才按具体账户落库。漏斗需要把公共计划纳入当前账户的候选
     # 统计，否则实盘账户明明有计划，页面却会显示计划数=0。
-    plan_account_clause = "account_id = 0"
-    plan_params = (int(user_id), since)
-    if int(account_id or 0) == 0:
-        plan_account_clause = "account_id = 0"
+    plan_account_clause = (
+        "p.account_id = 0 AND EXISTS ("
+        "SELECT 1 FROM strategy_deployments d "
+        "WHERE d.user_id = p.user_id AND d.account_id = ? "
+        "AND d.strategy_id = p.strategy_id "
+        "AND d.status IN ('active','paused','pending'))"
+    )
+    plan_params = (int(account_id), int(user_id), since)
     plans = storage.fetchone(
-        "SELECT COUNT(DISTINCT plan_id) AS n FROM structure_trade_plans "
-        f"WHERE user_id=? AND {plan_account_clause} AND created_at>=? AND plan_id<>''",
+        "SELECT COUNT(DISTINCT p.plan_id) AS n FROM structure_trade_plans p "
+        f"WHERE p.user_id=? AND {plan_account_clause} AND p.created_at>=? AND p.plan_id<>''",
         plan_params,
     )
     directions = storage.fetchone(
-        "SELECT COUNT(DISTINCT plan_id) AS n FROM structure_trade_plans "
-        f"WHERE user_id=? AND {plan_account_clause} AND created_at>=? "
-        "AND direction IN ('buy','sell')", plan_params,
+        "SELECT COUNT(DISTINCT p.plan_id) AS n FROM structure_trade_plans p "
+        f"WHERE p.user_id=? AND {plan_account_clause} AND p.created_at>=? "
+        "AND p.direction IN ('buy','sell')", plan_params,
     )
     params = (int(user_id), int(account_id), since)
     trigger_rows = storage.fetchall(
@@ -80,7 +84,7 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
         "risk_limit": "账户风控",
         "position_limit": "持仓数量限制",
         "position_policy": "持仓策略限制",
-        "claim_conflict": "指令已被其他实例领取",
+        "claim_conflict": "结构计划重复消费（幂等保护）",
         "invalid_volume": "手数无效",
         "technical_failure": "技术错误",
     }
