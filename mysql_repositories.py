@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 from mysql_storage import MySQLStorage
 from infrastructure.storage_factory import get_mysql_storage
 from repositories.identity import MetaRepository, UserRecord, UserRepository
+from runtime_cache import TTLCache
 
 if TYPE_CHECKING:
     from market.models import LLMConfig, TradingStrategy
@@ -143,6 +144,8 @@ class TradingAccountRepository:
     def __init__(self, storage: Optional[MySQLStorage] = None):
         self.storage = storage or get_storage()
 
+    _account_cache = TTLCache(ttl_seconds=10, max_items=4096)
+
     def get_default(self, user_id: int) -> Optional[TradingAccountRecord]:
         row = self.storage.fetchone(
             self.ACCOUNT_SELECT + " WHERE a.user_id = ? AND a.account_key = ?",
@@ -152,6 +155,10 @@ class TradingAccountRepository:
 
     def get_primary_mt5(self, user_id: int) -> Optional[TradingAccountRecord]:
         """返回最近在线的已发现 MT5 账户，兼容历史默认账户。"""
+        key = ("primary_mt5", int(user_id))
+        cached = self._account_cache.get(key, "accounts")
+        if cached is not None:
+            return cached
         row = self.storage.fetchone(
             self.ACCOUNT_SELECT
             + """
@@ -165,20 +172,32 @@ class TradingAccountRepository:
               """,
             (user_id, self.DEFAULT_ACCOUNT_KEY),
         )
-        return self._row_to_account(row)
+        account = self._row_to_account(row)
+        self._account_cache.set(key, account, "accounts")
+        return account
 
     def get_by_id(
         self, user_id: int, account_id: int
     ) -> Optional[TradingAccountRecord]:
+        key = ("by_id", int(user_id), int(account_id))
+        cached = self._account_cache.get(key, "accounts")
+        if cached is not None:
+            return cached
         row = self.storage.fetchone(
             self.ACCOUNT_SELECT + " WHERE a.user_id = ? AND a.id = ?",
             (user_id, account_id),
         )
-        return self._row_to_account(row)
+        account = self._row_to_account(row)
+        self._account_cache.set(key, account, "accounts")
+        return account
 
     def list_for_user(
         self, user_id: int, include_backtest: bool = False
     ) -> List[TradingAccountRecord]:
+        key = ("list", int(user_id), bool(include_backtest))
+        cached = self._account_cache.get(key, "accounts")
+        if cached is not None:
+            return cached
         sql = self.ACCOUNT_SELECT + " WHERE a.user_id = ? AND a.status != 'closed'"
         params: tuple = (user_id,)
         if not include_backtest:
@@ -188,7 +207,9 @@ class TradingAccountRepository:
             "OR COALESCE(c.activated_at, a.activated_at) IS NOT NULL)"
         )
         sql += " ORDER BY CASE a.account_type WHEN 'mt5' THEN 0 WHEN 'ibkr' THEN 1 WHEN 'paper' THEN 2 ELSE 3 END, a.created_at"
-        return [self._row_to_account(row) for row in self.storage.fetchall(sql, params)]
+        accounts = [self._row_to_account(row) for row in self.storage.fetchall(sql, params)]
+        self._account_cache.set(key, accounts, "accounts")
+        return accounts
 
     def ensure_ibkr_account(
         self,
@@ -1053,9 +1074,15 @@ class StrategyDeploymentRepository:
     def __init__(self, storage: Optional[MySQLStorage] = None):
         self.storage = storage or get_storage()
 
+    _cache = TTLCache(ttl_seconds=20, max_items=4096)
+
     def list_active_strategy_ids(
         self, user_id: int, account_id: int, execution_mode: str
     ) -> List[str]:
+        key = ("active", int(user_id), int(account_id), str(execution_mode))
+        cached = self._cache.get(key, "deployments")
+        if cached is not None:
+            return cached
         rows = self.storage.fetchall(
             """
             SELECT strategy_id FROM strategy_deployments
@@ -1065,10 +1092,16 @@ class StrategyDeploymentRepository:
             """,
             (user_id, account_id, execution_mode),
         )
-        return [str(row["strategy_id"]) for row in rows]
+        result = [str(row["strategy_id"]) for row in rows]
+        self._cache.set(key, result, "deployments")
+        return result
 
     def list_for_strategy(self, user_id: int, strategy_id: str) -> List[Dict]:
         """Return a user's account deployments for navigation and audit views."""
+        key = ("strategy", int(user_id), str(strategy_id))
+        cached = self._cache.get(key, "deployments")
+        if cached is not None:
+            return cached
         rows = self.storage.fetchall(
             """
             SELECT deployment.deployment_id, deployment.account_id,
@@ -1085,7 +1118,9 @@ class StrategyDeploymentRepository:
             """,
             (int(user_id), str(strategy_id)),
         )
-        return [dict(row) for row in rows]
+        result = [dict(row) for row in rows]
+        self._cache.set(key, result, "deployments")
+        return result
 
 
 class TradeExecutionRepository:
@@ -3495,6 +3530,8 @@ class StrategyConfigRepository:
     def __init__(self, storage: Optional[MySQLStorage] = None):
         self.storage = storage or get_storage()
 
+    _cache = TTLCache(ttl_seconds=60, max_items=4096)
+
     def _raw_strategy_by_id(
         self, user_id: int, strategy_id: str
     ) -> Optional["TradingStrategy"]:
@@ -3608,6 +3645,11 @@ class StrategyConfigRepository:
     def get_all_strategies(self, user_id: int) -> List["TradingStrategy"]:
         from market.models.trading_strategy import TradingStrategy
 
+        key = ("all", int(user_id))
+        cached = self._cache.get(key, "strategies")
+        if cached is not None:
+            return cached
+
         rows = self.storage.fetchall(
             """
             SELECT strategy_id, symbol, config_json
@@ -3624,13 +3666,15 @@ class StrategyConfigRepository:
                 )
                 for row in rows
             ]
-            return sorted(
+            result = sorted(
                 strategies,
                 key=lambda strategy: (
                     strategy.created_at or datetime.min,
                     strategy.strategy_id,
                 ),
             )
+            self._cache.set(key, result, "strategies")
+            return result
 
         legacy_strategies = self._read_legacy_strategies()
         if legacy_strategies:
@@ -3750,12 +3794,23 @@ class StrategyConfigRepository:
     def get_strategy_by_id(
         self, user_id: int, strategy_id: str
     ) -> Optional["TradingStrategy"]:
-        return self._materialize_shared_reference(
+        key = ("id", int(user_id), str(strategy_id))
+        cached = self._cache.get(key, "strategies")
+        if cached is not None:
+            return cached
+        result = self._materialize_shared_reference(
             self._raw_strategy_by_id(user_id, strategy_id)
         )
+        self._cache.set(key, result, "strategies")
+        return result
 
     def get_strategies(self, user_id: int, symbol: str) -> List["TradingStrategy"]:
         from market.models.trading_strategy import TradingStrategy
+
+        key = ("symbol", int(user_id), str(symbol))
+        cached = self._cache.get(key, "strategies")
+        if cached is not None:
+            return cached
 
         rows = self.storage.fetchall(
             """
@@ -3766,12 +3821,14 @@ class StrategyConfigRepository:
             """,
             (user_id, symbol),
         )
-        return [
+        result = [
             self._materialize_shared_reference(
                 TradingStrategy.from_dict(json.loads(row["config_json"]))
             )
             for row in rows
         ]
+        self._cache.set(key, result, "strategies")
+        return result
 
     def save_strategy(self, user_id: int, strategy: "TradingStrategy") -> "TradingStrategy":
         if strategy.visibility == "shared":

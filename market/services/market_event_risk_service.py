@@ -11,6 +11,7 @@ from typing import Dict, Iterable, Optional
 from zoneinfo import ZoneInfo
 
 from market_event_repository import MarketEventRepository
+from runtime_cache import TTLCache
 
 
 REVERSAL_SETUPS = {
@@ -39,7 +40,7 @@ DEFAULT_EVENT_RISK_RULES = [
      "before_minutes": 30, "after_minutes": 45},
 ]
 
-_calendar_cache: Dict[str, object] = {"loaded_at": 0, "events": []}
+_calendar_cache = TTLCache(ttl_seconds=60, max_items=16)
 
 # Calendar providers do not always assign a consistent importance score.  These
 # two US releases therefore receive deterministic treatment even when a source
@@ -124,10 +125,12 @@ def _event_at(rule: Dict, now: int) -> Optional[int]:
 
 def _calendar_events(now: int) -> list[Dict]:
     """Load a narrow, shared calendar slice at most once a minute per worker."""
-    if now - int(_calendar_cache.get("loaded_at") or 0) < 60:
-        return list(_calendar_cache.get("events") or [])
     beijing = datetime.fromtimestamp(now, timezone.utc).astimezone(ZoneInfo("Asia/Shanghai"))
     dates = [(beijing + timedelta(days=offset)).date().isoformat() for offset in (-1, 0, 1)]
+    cache_key = tuple(dates)
+    cached = _calendar_cache.get(cache_key, "calendar")
+    if cached is not None:
+        return cached
     events: list[Dict] = []
     try:
         repository = MarketEventRepository()
@@ -138,8 +141,8 @@ def _calendar_events(now: int) -> list[Dict]:
         # Risk protection must never take down Tick execution if the calendar
         # source is temporarily unavailable; deterministic opening rules remain.
         print(f"[EventRisk] 财经日历读取失败，继续使用开盘窗口: {exc}")
-    _calendar_cache.update({"loaded_at": now, "events": events})
-    return list(events)
+    _calendar_cache.set(cache_key, events, "calendar")
+    return events
 
 
 def _calendar_timestamp(event: Dict) -> int:

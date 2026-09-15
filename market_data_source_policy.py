@@ -17,6 +17,7 @@ from mysql_repositories import (
     get_storage,
 )
 from repositories.platform import PlatformInstrumentMappingRepository
+from runtime_cache import TTLCache
 
 
 class MarketDataSourcePolicy:
@@ -28,9 +29,14 @@ class MarketDataSourcePolicy:
         self.mappings = PlatformInstrumentMappingRepository(self.storage)
         self._cache: Dict[tuple, tuple] = {}
         self._lock = threading.RLock()
+        self._mapping_cache = TTLCache(ttl_seconds=60, max_items=4096)
 
     def canonical_symbol(self, broker_name: str, symbol: str) -> str:
         native = self.mappings._normalize(symbol)
+        key = (str(broker_name or "").casefold(), native)
+        cached = self._mapping_cache.get(key, "mappings")
+        if cached is not None:
+            return str(cached)
         row = self.storage.fetchone(
             """
             SELECT mapping_group FROM platform_instrument_mappings
@@ -40,7 +46,9 @@ class MarketDataSourcePolicy:
             """,
             (native, broker_name),
         )
-        return str(row["mapping_group"] or native).upper() if row else native
+        canonical = str(row["mapping_group"] or native).upper() if row else native
+        self._mapping_cache.set(key, canonical, "mappings")
+        return canonical
 
     def resolve(self, user_id: int, account_id: int, symbol: str) -> Dict:
         account = self.accounts.get_by_id(int(user_id), int(account_id))

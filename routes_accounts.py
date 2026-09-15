@@ -49,10 +49,15 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
         "p.account_id = 0 AND EXISTS ("
         "SELECT 1 FROM strategy_deployments d "
         "WHERE d.user_id = p.user_id AND d.account_id = ? "
-        "AND d.strategy_id = p.strategy_id "
+        # 结构层公共计划可能没有 strategy_id；此时按精确品种匹配当前账户
+        # 的部署。若计划带有策略 ID，则继续要求部署策略一致。
+        "AND d.symbol = p.symbol "
+        "AND (p.strategy_id = '' OR d.strategy_id = p.strategy_id) "
         "AND d.status IN ('active','paused','pending'))"
     )
-    plan_params = (int(account_id), int(user_id), since)
+    # SQL 中第一个占位符是公共计划的 user_id，第二个才是当前账户的
+    # deployment.account_id。此前顺序反了，导致所有账户的计划数都被查成 0。
+    plan_params = (int(user_id), int(account_id), since)
     plans = storage.fetchone(
         "SELECT COUNT(DISTINCT p.plan_id) AS n FROM structure_trade_plans p "
         f"WHERE p.user_id=? AND {plan_account_clause} AND p.created_at>=? AND p.plan_id<>''",

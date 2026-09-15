@@ -6,16 +6,25 @@ import os
 import queue
 import re
 import threading
+import hashlib
+import time
 from typing import Any, Dict, List, Optional
+from runtime_cache import (
+    cache_domain_for_sql,
+    domains_for_sql,
+    invalidate,
+    sql_read_cache,
+)
 
 
 class MySQLConnection:
     """Expose the small DB-API connection surface used by repositories."""
 
-    def __init__(self, connection, release, discard):
+    def __init__(self, connection, release, discard, storage=None):
         self._connection = connection
         self._release = release
         self._discard = discard
+        self._storage = storage
 
     def __enter__(self):
         return self
@@ -38,12 +47,28 @@ class MySQLConnection:
 
     def execute(self, sql: str, params: tuple = ()):
         cursor = self._connection.cursor()
-        cursor.execute(MySQLStorage.translate_sql(sql), tuple(params or ()))
+        started = time.perf_counter()
+        try:
+            cursor.execute(MySQLStorage.translate_sql(sql), tuple(params or ()))
+        except Exception:
+            if self._storage is not None:
+                self._storage.record_sql_timing(sql, time.perf_counter() - started)
+            raise
+        if self._storage is not None:
+            self._storage.record_sql_timing(sql, time.perf_counter() - started)
         return cursor
 
     def executemany(self, sql: str, params: List[tuple]):
         cursor = self._connection.cursor()
-        cursor.executemany(MySQLStorage.translate_sql(sql), params)
+        started = time.perf_counter()
+        try:
+            cursor.executemany(MySQLStorage.translate_sql(sql), params)
+        except Exception:
+            if self._storage is not None:
+                self._storage.record_sql_timing(sql, time.perf_counter() - started)
+            raise
+        if self._storage is not None:
+            self._storage.record_sql_timing(sql, time.perf_counter() - started)
         return cursor
 
     def commit(self):
@@ -77,6 +102,12 @@ class MySQLStorage:
         self._pool: queue.LifoQueue = queue.LifoQueue(maxsize=self.pool_size)
         self._pool_created = 0
         self._initialized = False
+        self.sql_slow_threshold_ms = max(
+            1.0, float(os.getenv("AI_TRADER_SQL_SLOW_THRESHOLD_MS", "500"))
+        )
+        self._sql_stats_lock = threading.RLock()
+        self._sql_stats_pending: Dict[tuple, Dict[str, Any]] = {}
+        self._sql_stats_flush_running = False
 
     @staticmethod
     def _driver():
@@ -167,7 +198,120 @@ class MySQLStorage:
             connection,
             self._release_connection,
             self._discard_connection,
+            self,
         )
+
+    @staticmethod
+    def _sql_shape(sql: str) -> str:
+        """Normalize SQL without persisting bound parameter values."""
+        text = re.sub(r"\s+", " ", str(sql or "").strip())
+        text = re.sub(r"'([^']|'')*'", "?", text)
+        text = re.sub(r"\b\d+(?:\.\d+)?\b", "?", text)
+        return text[:4000]
+
+    def record_sql_timing(self, sql: str, elapsed_seconds: float) -> None:
+        """Aggregate SQL latency in memory and flush in batches.
+
+        This method is called from every DB-API operation, including failed
+        statements.  Aggregation is intentionally lock-light; only batches
+        are persisted so observability cannot become a per-query write.
+        """
+        shape = self._sql_shape(sql)
+        digest = hashlib.sha256(shape.encode("utf-8")).hexdigest()
+        elapsed_ms = max(0.0, float(elapsed_seconds) * 1000.0)
+        operation = (shape.split(" ", 1)[0] if shape else "UNKNOWN").upper()[:16]
+        now = int(time.time())
+        hour_bucket = now - (now % 3600)
+        pending_key = (digest, hour_bucket)
+        with self._sql_stats_lock:
+            item = self._sql_stats_pending.setdefault(pending_key, {
+                "sql_hash": digest, "hour_bucket": hour_bucket,
+                "operation": operation,
+                "sql_shape": shape, "count": 0, "total_ms": 0.0,
+                "max_ms": 0.0, "slow_count": 0,
+            })
+            item["count"] += 1
+            item["total_ms"] += elapsed_ms
+            item["max_ms"] = max(item["max_ms"], elapsed_ms)
+            if elapsed_ms >= self.sql_slow_threshold_ms:
+                item["slow_count"] += 1
+            item["last_ms"] = elapsed_ms
+            item["last_at"] = now
+            should_flush = len(self._sql_stats_pending) >= 50
+            if should_flush and not self._sql_stats_flush_running:
+                self._sql_stats_flush_running = True
+                threading.Thread(
+                    target=self._flush_sql_stats,
+                    name="sql-latency-flush",
+                    daemon=True,
+                ).start()
+
+    def _flush_sql_stats(self) -> None:
+        batch = []
+        connection = None
+        try:
+            with self._sql_stats_lock:
+                batch = list(self._sql_stats_pending.values())
+                self._sql_stats_pending.clear()
+            if not batch:
+                return
+            self.initialize()
+            connection = self._borrow_connection()
+            cursor = connection.cursor()
+            cursor.executemany(
+                self.translate_sql(
+                    """
+                    INSERT INTO sql_execution_stats(
+                        sql_hash, hour_bucket, operation, sql_shape, execution_count,
+                        total_duration_ms, max_duration_ms, slow_count,
+                        last_duration_ms, last_executed_at, updated_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE
+                        operation=VALUES(operation), sql_shape=VALUES(sql_shape),
+                        execution_count=execution_count + VALUES(execution_count),
+                        total_duration_ms=total_duration_ms + VALUES(total_duration_ms),
+                        max_duration_ms=GREATEST(max_duration_ms, VALUES(max_duration_ms)),
+                        slow_count=slow_count + VALUES(slow_count),
+                        last_duration_ms=VALUES(last_duration_ms),
+                        last_executed_at=VALUES(last_executed_at), updated_at=VALUES(updated_at)
+                    """
+                ),
+                [
+                    (
+                        item["sql_hash"], item["hour_bucket"], item["operation"], item["sql_shape"],
+                        item["count"], item["total_ms"], item["max_ms"],
+                        item["slow_count"], item.get("last_ms", 0.0),
+                        item.get("last_at", int(time.time())), int(time.time()),
+                    )
+                    for item in batch
+                ],
+            )
+            connection.commit()
+            self._release_connection(connection)
+            connection = None
+        except Exception as exc:
+            if connection is not None:
+                try:
+                    connection.rollback()
+                finally:
+                    self._discard_connection(connection)
+            if batch:
+                with self._sql_stats_lock:
+                    for item in batch:
+                        current = self._sql_stats_pending.get((item["sql_hash"], item["hour_bucket"]))
+                        if current is None:
+                            self._sql_stats_pending[(item["sql_hash"], item["hour_bucket"])] = item
+                        else:
+                            current["count"] += item["count"]
+                            current["total_ms"] += item["total_ms"]
+                            current["max_ms"] = max(current["max_ms"], item["max_ms"])
+                            current["slow_count"] += item["slow_count"]
+                            current["last_ms"] = item.get("last_ms", current.get("last_ms", 0.0))
+                            current["last_at"] = max(current.get("last_at", 0), item.get("last_at", 0))
+            print(f"[MySQLStorage] SQL 延时统计写入失败: {exc}")
+        finally:
+            with self._sql_stats_lock:
+                self._sql_stats_flush_running = False
 
     def initialize(self) -> None:
         if self._initialized:
@@ -219,6 +363,38 @@ class MySQLStorage:
                     KEY idx_background_task_status (status, updated_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """)
+                conn.execute("""
+                CREATE TABLE IF NOT EXISTS sql_execution_stats (
+                    sql_hash VARCHAR(64) NOT NULL,
+                    hour_bucket BIGINT NOT NULL DEFAULT 0,
+                    operation VARCHAR(16) NOT NULL,
+                    sql_shape TEXT NOT NULL,
+                    execution_count BIGINT NOT NULL DEFAULT 0,
+                    total_duration_ms DOUBLE NOT NULL DEFAULT 0,
+                    max_duration_ms DOUBLE NOT NULL DEFAULT 0,
+                    slow_count BIGINT NOT NULL DEFAULT 0,
+                    last_duration_ms DOUBLE NOT NULL DEFAULT 0,
+                    last_executed_at BIGINT NOT NULL DEFAULT 0,
+                    updated_at BIGINT NOT NULL DEFAULT 0,
+                    PRIMARY KEY (sql_hash, hour_bucket),
+                    KEY idx_sql_stats_slow (slow_count, max_duration_ms),
+                    KEY idx_sql_stats_updated (updated_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """)
+                # Migrate installations created before hourly buckets existed.
+                # Existing cumulative rows are assigned to the hour containing
+                # their last update; new rows are isolated by (hash, hour).
+                try:
+                    conn.execute("ALTER TABLE sql_execution_stats ADD COLUMN hour_bucket BIGINT NOT NULL DEFAULT 0 AFTER sql_hash")
+                except Exception:
+                    pass
+                try:
+                    conn.execute("UPDATE sql_execution_stats SET hour_bucket = updated_at - MOD(updated_at, 3600) WHERE hour_bucket = 0")
+                    conn.execute("ALTER TABLE sql_execution_stats DROP PRIMARY KEY, ADD PRIMARY KEY (sql_hash, hour_bucket)")
+                except Exception:
+                    # Fresh tables already have the composite key, so this is
+                    # expected to fail harmlessly on subsequent startups.
+                    pass
                 conn.execute(
                     """
                 CREATE TABLE IF NOT EXISTS platform_instrument_mappings (
@@ -818,6 +994,16 @@ class MySQLStorage:
                         raise
                 compatibility_indexes = (
                     (
+                        "strategy_deployments",
+                        "idx_strategy_deployments_expiry",
+                        "user_id, status, scheduled_end_at",
+                    ),
+                    (
+                        "strategy_deployments",
+                        "idx_strategy_deployments_account_created",
+                        "user_id, account_id, created_at",
+                    ),
+                    (
                         "historical_klines",
                         "idx_historical_klines_utc",
                         "user_id, account_id, symbol, period, timestamp_utc",
@@ -842,6 +1028,7 @@ class MySQLStorage:
         self.initialize()
         with self._connect() as conn:
             conn.execute(sql, params)
+        invalidate(domains_for_sql(sql))
 
     def executemany(self, sql: str, params: List[tuple]) -> None:
         """Execute one statement for a batch using the pooled transaction.
@@ -855,16 +1042,33 @@ class MySQLStorage:
         self.initialize()
         with self._connect() as conn:
             conn.executemany(sql, params)
+        invalidate(domains_for_sql(sql))
 
     def fetchone(self, sql: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
         self.initialize()
+        domain = cache_domain_for_sql(sql)
+        if domain:
+            cached = sql_read_cache.get_sql(sql, params, domain)
+            if cached is not None:
+                return cached
         with self._connect() as conn:
-            return conn.execute(sql, params).fetchone()
+            result = conn.execute(sql, params).fetchone()
+        if domain:
+            sql_read_cache.set_sql(sql, params, domain, result)
+        return result
 
     def fetchall(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
         self.initialize()
+        domain = cache_domain_for_sql(sql)
+        if domain:
+            cached = sql_read_cache.get_sql(sql, params, domain)
+            if cached is not None:
+                return cached
         with self._connect() as conn:
-            return list(conn.execute(sql, params).fetchall())
+            result = list(conn.execute(sql, params).fetchall())
+        if domain:
+            sql_read_cache.set_sql(sql, params, domain, result)
+        return result
 
     @staticmethod
     def translate_sql(sql: str) -> str:

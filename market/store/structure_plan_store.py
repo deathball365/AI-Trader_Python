@@ -5,10 +5,12 @@ import json
 import time
 import uuid
 import re
+import threading
 from typing import Dict, List, Optional
 
 from mysql_repositories import get_storage
 from system_event_log import SystemEventLogRepository
+from runtime_cache import TTLCache
 
 
 def opportunity_status_for_execution(stage: str, execution_status: str) -> str:
@@ -26,10 +28,45 @@ def opportunity_status_for_execution(stage: str, execution_status: str) -> str:
 
 
 class StructureTradePlanRepository:
+    _current_cache = TTLCache(ttl_seconds=3, max_items=8192)
+    # Multiple account engines can observe the same closed bar concurrently.
+    # Structure plans are canonical per user/source/symbol/period, so those
+    # refreshes must share one read-modify-write section.
+    _scope_locks = {}
+    _scope_locks_guard = threading.RLock()
+
     def __init__(self, storage=None):
         self.storage = storage or get_storage()
 
+    @classmethod
+    def _scope_lock(cls, key):
+        with cls._scope_locks_guard:
+            lock = cls._scope_locks.get(key)
+            if lock is None:
+                lock = threading.RLock()
+                cls._scope_locks[key] = lock
+            return lock
+
     def replace_scope(
+        self, user_id: int, account_id: int, strategy_id: str,
+        signal_source_id: str, symbol: str, period: str,
+        plans: List[Dict], structure_bar_time: int,
+    ) -> List[Dict]:
+        # account_id/strategy_id are retained in the storage API, but the
+        # market structure caller intentionally uses 0/"" for the canonical
+        # shared scope. Include all fields to avoid serializing unrelated
+        # repository uses if this method is reused later.
+        key = (
+            int(user_id), int(account_id), str(strategy_id),
+            str(signal_source_id), str(symbol).upper(), str(period).upper(),
+        )
+        with self._scope_lock(key):
+            return self._replace_scope_locked(
+                user_id, account_id, strategy_id, signal_source_id,
+                symbol, period, plans, structure_bar_time,
+            )
+
+    def _replace_scope_locked(
         self, user_id: int, account_id: int, strategy_id: str,
         signal_source_id: str, symbol: str, period: str,
         plans: List[Dict], structure_bar_time: int,
@@ -92,18 +129,116 @@ class StructureTradePlanRepository:
              symbol, period, now),
         )
         current = self.storage.fetchall(
-            "SELECT plan_id,status,direction,payload_json FROM structure_trade_plans "
+            "SELECT plan_id,status,setup_type,entry_mode,direction,payload_json "
+            "FROM structure_trade_plans "
             "WHERE user_id=? AND account_id=? "
             "AND strategy_id=? AND signal_source_id=? AND symbol=? AND period=? "
             "AND status IN ('active','watching','event_suppressed')",
             (user_id, account_id, strategy_id, signal_source_id, symbol, period),
         )
+        current_by_semantic = {}
+        current_by_opportunity = {}
+        for row in current:
+            semantic_key = (
+                str(row.get("setup_type") or ""),
+                str(row.get("direction") or "none"),
+                str(row.get("entry_mode") or "watch"),
+            )
+            current_by_semantic.setdefault(semantic_key, row)
+            try:
+                current_payload = json.loads(row.get("payload_json") or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                current_payload = {}
+            opportunity_id = str(current_payload.get("opportunity_id") or "")
+            if opportunity_id:
+                current_by_opportunity.setdefault(
+                    (opportunity_id, *semantic_key), row,
+                )
+        incoming_observation_keys = {
+            (
+                str(plan.get("setup_type") or ""),
+                str(plan.get("direction") or "none"),
+                str(plan.get("entry_mode") or "watch"),
+            )
+            for plan in plans
+            if str(plan.get("status") or "watching") in {"watching", "event_suppressed"}
+        }
+        incoming_active_keys = {
+            (
+                str(plan.get("opportunity_id") or ""),
+                str(plan.get("setup_type") or ""),
+                str(plan.get("direction") or "none"),
+                str(plan.get("entry_mode") or "watch"),
+            )
+            for plan in plans
+            if (
+                str(plan.get("status") or "") == "active"
+                and str(plan.get("opportunity_id") or "")
+            )
+        }
         for row in current:
             plan_id = str(row["plan_id"])
-            if plan_id not in keep:
+            semantic_key = (
+                str(row.get("setup_type") or ""),
+                str(row.get("direction") or "none"),
+                str(row.get("entry_mode") or "watch"),
+            )
+            try:
+                current_payload = json.loads(row.get("payload_json") or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                current_payload = {}
+            current_opportunity_key = (
+                str(current_payload.get("opportunity_id") or ""),
+                *semantic_key,
+            )
+            if (
+                plan_id not in keep
+                and semantic_key not in incoming_observation_keys
+                and current_opportunity_key not in incoming_active_keys
+            ):
                 # A new actionable opportunity supersedes the previous one.
                 self.supersede_plan(plan_id, "superseded_by_new_plan")
         for plan in plans:
+            # Active plans retain their identity across small price/boundary
+            # changes. The opportunity id is the structural identity; the
+            # setup/direction/mode guards prevent reusing a changed trade.
+            if str(plan.get("status") or "") == "active":
+                opportunity_key = (
+                    str(plan.get("opportunity_id") or ""),
+                    str(plan.get("setup_type") or ""),
+                    str(plan.get("direction") or "none"),
+                    str(plan.get("entry_mode") or "watch"),
+                )
+                retained = current_by_opportunity.get(opportunity_key)
+                if retained:
+                    plan["plan_id"] = str(retained["plan_id"])
+                    try:
+                        retained_payload = json.loads(retained["payload_json"] or "{}")
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        retained_payload = {}
+                    if retained_payload.get("plan_group_id"):
+                        plan["plan_group_id"] = retained_payload["plan_group_id"]
+            # A repeated non-active observation is a refreshed snapshot, not a
+            # new opportunity. Reuse the current row so one symbol/period does
+            # not create a superseded record on every closed candle. This also
+            # covers directional setup watchers such as triangle_breakout_watch.
+            if (
+                str(plan.get("status") or "watching") in {"watching", "event_suppressed"}
+            ):
+                semantic_key = (
+                    str(plan.get("setup_type") or ""),
+                    str(plan.get("direction") or "none"),
+                    str(plan.get("entry_mode") or "watch"),
+                )
+                retained = current_by_semantic.get(semantic_key)
+                if retained:
+                    plan["plan_id"] = str(retained["plan_id"])
+                    try:
+                        retained_payload = json.loads(retained["payload_json"] or "{}")
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        retained_payload = {}
+                    if retained_payload.get("plan_group_id"):
+                        plan["plan_group_id"] = retained_payload["plan_group_id"]
             payload = dict(plan)
             existing = self.storage.fetchone(
                 "SELECT payload_json,created_at,status,expires_at "
@@ -182,6 +317,11 @@ class StructureTradePlanRepository:
         self, user_id: int, account_id: int, strategy_id: str,
         signal_source_id: str, symbol: str, period: str,
     ) -> List[Dict]:
+        key = (int(user_id), int(account_id), str(strategy_id),
+               str(signal_source_id), str(symbol), str(period).upper())
+        cached = self._current_cache.get(key, "plans")
+        if cached is not None:
+            return cached
         self.expire_due_plans(
             user_id=user_id, account_id=account_id, strategy_id=strategy_id,
             signal_source_id=signal_source_id, symbol=symbol, period=period,
@@ -198,6 +338,7 @@ class StructureTradePlanRepository:
             payload = json.loads(row["payload_json"] or "{}")
             payload["status"] = row["status"]
             result.append(payload)
+        self._current_cache.set(key, result, "plans")
         return result
 
     def list_opportunity(
@@ -294,7 +435,8 @@ class StructureTradePlanRepository:
         """Persist an event-driven invalidation for a public structure plan."""
         now = int(time.time())
         row = self.storage.fetchone(
-            "SELECT payload_json,status FROM structure_trade_plans WHERE plan_id=? LIMIT 1",
+            "SELECT payload_json,status,user_id,account_id,symbol,period "
+            "FROM structure_trade_plans WHERE plan_id=? LIMIT 1",
             (str(plan_id),),
         )
         if not row or str(row["status"] or "") not in {"active", "watching", "event_suppressed"}:
@@ -375,6 +517,50 @@ class StructureTradePlanRepository:
             "UPDATE structure_trade_plans SET status='superseded', payload_json=?, updated_at=? WHERE plan_id=?",
             (json.dumps(payload, ensure_ascii=False), now, str(plan_id)),
         )
+        # Close sibling stages belonging to the same opportunity/group. Read
+        # JSON in Python for compatibility with the shared MySQL/SQLite SQL
+        # adapter and keep already-filled execution history untouched.
+        opportunity_id = str(payload.get("opportunity_id") or "")
+        plan_group_id = str(payload.get("plan_group_id") or "")
+        if opportunity_id or plan_group_id:
+            related = self.storage.fetchall(
+                "SELECT plan_id,payload_json FROM structure_trade_plans "
+                "WHERE user_id=? AND account_id=? AND symbol=? AND period=? "
+                "AND status IN ('active','watching','event_suppressed')",
+                (int(row.get("user_id") or 0), int(row.get("account_id") or 0),
+                 str(row.get("symbol") or ""), str(row.get("period") or "")),
+            )
+            related_ids = [str(plan_id)]
+            for related_row in related:
+                if str(related_row.get("plan_id") or "") == str(plan_id):
+                    continue
+                try:
+                    related_payload = json.loads(related_row.get("payload_json") or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    related_payload = {}
+                same_opportunity = opportunity_id and str(related_payload.get("opportunity_id") or "") == opportunity_id
+                same_group = plan_group_id and str(related_payload.get("plan_group_id") or "") == plan_group_id
+                if not (same_opportunity or same_group):
+                    continue
+                related_payload["status"] = "superseded"
+                related_payload["invalidated_reason"] = f"关联结构计划已失效：{reason}"
+                self.storage.execute(
+                    "UPDATE structure_trade_plans SET status='superseded', "
+                    "payload_json=?, updated_at=? WHERE plan_id=? "
+                    "AND status IN ('active','watching','event_suppressed')",
+                    (json.dumps(related_payload, ensure_ascii=False), now,
+                     str(related_row["plan_id"])),
+                )
+                related_ids.append(str(related_row["plan_id"]))
+            placeholders = ",".join("?" for _ in related_ids)
+            self.storage.execute(
+                "UPDATE structure_plan_executions SET status='released', "
+                "reason=?, reason_code='plan_superseded', updated_at=? "
+                f"WHERE user_id=? AND account_id=? AND status='claimed' "
+                f"AND plan_id IN ({placeholders})",
+                tuple([f"结构计划已失效：{reason}", now,
+                       int(row.get("user_id") or 0), int(row.get("account_id") or 0)] + related_ids),
+            )
 
     def update_payload(self, plan_id: str, changes: Dict) -> None:
         """Persist small runtime state changes without replacing the plan."""
@@ -449,6 +635,17 @@ class StructureTradePlanRepository:
         plan_stage = str(plan_stage or claim_payload.get("plan_stage")
                          or claim_payload.get("trade_opportunity_stage") or "default")
         direction = str(direction or claim_payload.get("direction") or "none").lower()
+        # A signal snapshot can outlive the structure plan that produced it.
+        # Never claim a superseded, invalidated, or expired plan.
+        live_plan = self.storage.fetchone(
+            "SELECT status,expires_at FROM structure_trade_plans "
+            "WHERE plan_id=? AND user_id=? LIMIT 1",
+            (str(plan_id), int(user_id)),
+        )
+        if not live_plan or str(live_plan.get("status") or "") != "active":
+            return False
+        if int(live_plan.get("expires_at") or 0) <= now and int(live_plan.get("expires_at") or 0) > 0:
+            return False
         execution_id = self._execution_id(
             user_id, account_id, deployment_id, plan_id, plan_group_id,
             plan_stage, direction,

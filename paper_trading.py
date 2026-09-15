@@ -712,7 +712,12 @@ class PaperTradingService:
         result: Dict[int, List[Dict]] = {account_id: [] for account_id in ids}
         if not ids:
             return result
-        self._expire_deployments(user_id)
+        # This is a read-path used by the accounts page.  Do not run the
+        # expiry UPDATE transaction here: it can contend with Tick processing
+        # and turn a page load into a slow write request.  Expired active
+        # deployments are filtered below; the maintenance path performs the
+        # state transition asynchronously.
+        now = int(time.time())
         placeholders = ",".join("?" for _ in ids)
         rows = self.storage.fetchall(
             f"""
@@ -730,9 +735,14 @@ class PaperTradingService:
             INNER JOIN user_strategy_configs s
               ON s.user_id = d.user_id AND s.strategy_id = d.strategy_id
             WHERE d.user_id = ? AND d.account_id IN ({placeholders})
+              AND (
+                d.status <> 'active'
+                OR d.scheduled_end_at IS NULL
+                OR d.scheduled_end_at > ?
+              )
             ORDER BY d.account_id, d.created_at DESC
             """,
-            (int(user_id), *ids),
+            (int(user_id), *ids, now),
         )
         for row in rows:
             item = dict(row)
@@ -1130,6 +1140,31 @@ class PaperTradingService:
                 if order_result.created:
                     strategy_service.activate_decision_cooldown(decision)
                     created += 1
+                else:
+                    # A paper decision is persisted before order creation so
+                    # the execution centre can audit it.  Every failed
+                    # creation path (claim conflict, position/risk guard,
+                    # invalid exits, etc.) must therefore close that audit
+                    # immediately; otherwise the UI keeps showing
+                    # "等待模拟撮合" forever although no paper order exists.
+                    decision.status = "rejected"
+                    failure_message = str(
+                        getattr(order_result, "message", "")
+                        or getattr(order_result, "reason_code", "")
+                        or "模拟订单创建失败"
+                    )
+                    decision.decision_reason = (
+                        f"{decision.decision_reason} | {failure_message}"
+                        if decision.decision_reason else failure_message
+                    )
+                    runtime = RuntimeStateRepository(
+                        user_id, account_id, self.storage,
+                    )
+                    runtime.upsert_entity(
+                        "strategy_decision", decision.decision_id,
+                        decision.to_dict(), symbol=decision.symbol,
+                        status="rejected",
+                    )
             if decision is not None:
                 summary = decision.signal_summary or {}
                 action = str(decision.action or "none").lower()

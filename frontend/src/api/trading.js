@@ -11,6 +11,10 @@ const api = axios.create({
   },
 })
 
+// Several account actions can refresh the page in quick succession. Reuse
+// the in-flight read instead of opening another identical database request.
+let accountListRequest = null
+
 // 请求拦截器
 api.interceptors.request.use(
   (config) => applyAuthToRequestConfig(config),
@@ -233,8 +237,17 @@ export const mt5API = {
 
 export const accountAPI = {
   async list() {
-    const response = await api.get('/accounts')
-    return response.data
+    // The account page combines account snapshots, deployment summaries and
+    // market-source status.  It is a heavier read than the small CRUD calls,
+    // so do not let the default 10-second timeout make a healthy but busy DB
+    // look like a page-load failure.
+    if (accountListRequest) return accountListRequest
+    accountListRequest = api.get('/accounts', { timeout: 30000 })
+      .then(response => response.data)
+      .finally(() => {
+        accountListRequest = null
+      })
+    return accountListRequest
   },
 
   async createPaper(data) {
