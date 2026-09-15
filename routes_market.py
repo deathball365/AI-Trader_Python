@@ -51,6 +51,7 @@ from repositories.llm_config import LLMConfigRepository
 from repositories.llm_access import LLMAccessRepository
 from repositories.trading import TradeExecutionRepository, PositionManagementEventRepository
 from market.models.trading_strategy import StrategyLifecycle
+from market.models import TradingDecision
 from trading_engine_manager import TradingEngineManager
 from strategy_admission import StrategyAdmissionService
 from web_account_context import resolve_web_engine
@@ -70,6 +71,7 @@ from routes_market_structure import create_market_structure_routes
 from routes_structure_plans import create_structure_plan_routes
 from routes_market_structure_read import create_structure_read_routes
 from market.services.kline_ingestion_coordinator import KlineIngestionCoordinator
+from market.services.strategy.transient_decision_store import transient_decision_store
 
 
 def _compact_market_structure_snapshot(result: Dict) -> Dict:
@@ -1788,6 +1790,62 @@ def create_market_routes(
         trade_config_enabled = bool(
             trade_config_repo.get_config(user.user_id).get("enabled", True)
         )
+        # 执行中心首屏原先按部署逐个调用 engine.get_decision_history()，
+        # 每个账户都会再次扫描/反序列化 runtime_entities，部署较多时形成
+        # N+1 查询并容易超过前端 10 秒超时。这里一次性批量读取所有部署
+        # 账户的持久化决策，再按 account_id 分组；只保留当前策略最近 10 条。
+        deployment_account_ids = list(dict.fromkeys(
+            int(item["account_id"]) for item in deployments
+            if item.get("account_id") is not None
+        ))
+        decisions_by_account: Dict[int, List[Dict]] = {
+            account_id: [] for account_id in deployment_account_ids
+        }
+        if deployment_account_ids:
+            placeholders = ",".join("?" for _ in deployment_account_ids)
+            batch_limit = min(2000, max(100, len(deployment_account_ids) * 50))
+            rows = get_storage().fetchall(
+                f"""
+                SELECT account_id, payload_json, created_at, entity_id
+                FROM runtime_entities
+                WHERE user_id = ?
+                  AND entity_type = 'strategy_decision'
+                  AND account_id IN ({placeholders})
+                ORDER BY created_at DESC, entity_id DESC
+                LIMIT ?
+                """,
+                (user.user_id, *deployment_account_ids, batch_limit),
+            )
+            for row in rows:
+                try:
+                    decision = TradingDecision.from_dict(
+                        json.loads(row.get("payload_json") or "{}")
+                    )
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    # 单条历史损坏不应拖垮整个执行中心。
+                    continue
+                if decision.strategy_id != strategy_id or (
+                    decision.action == "none"
+                    and decision.decision_type == "no_action"
+                ):
+                    continue
+                account_id = int(row.get("account_id") or 0)
+                bucket = decisions_by_account.setdefault(account_id, [])
+                if len(bucket) < 10:
+                    bucket.append(decision.to_dict())
+        # 保留尚未落库的当前等待态（这些记录本来就只存在进程内），
+        # 但不再为此初始化账户引擎；它们按策略过滤后补到各账户结果中。
+        for account_id in deployment_account_ids:
+            transient_items = []
+            for decision in transient_decision_store.list(user.user_id, account_id):
+                if decision.strategy_id != strategy_id:
+                    continue
+                transient_items.append(decision.to_dict())
+            if transient_items:
+                persisted_items = decisions_by_account.get(account_id, [])
+                decisions_by_account[account_id] = (
+                    transient_items + persisted_items
+                )[:10]
         account_views = []
         for deployment in deployments:
             account_id = int(deployment["account_id"])
@@ -1797,12 +1855,9 @@ def create_market_routes(
             )
             if not runtime_active and not include_inactive:
                 continue
-            engine = engine_manager.get_engine(user.user_id, account_id)
             # 执行中心首屏只展示最近 10 条决策；历史回放按时间范围另行加载，
             # 避免把账户全部运行态、上千根 K 线和成交事件一次性拼进响应。
-            decisions = engine.get_decision_history(
-                strategy_id=strategy_id, count=10,
-            )
+            decisions = decisions_by_account.get(account_id, [])
             symbol = str(deployment.get("symbol") or strategy.symbol or "")
             strategy_sources = getattr(strategy, "signal_sources", None) or []
             structure_sources = [
@@ -1835,6 +1890,9 @@ def create_market_routes(
                     "decisions": decisions,
                 })
                 continue
+            # 只有显式请求图表回放时才解析账户引擎；首屏不会触发账户级
+            # 运行态、K 线和成交数据加载。
+            engine = engine_manager.get_engine(user.user_id, account_id)
             configured_symbol = symbol
             strategy_config = getattr(strategy, "config", None) or {}
             def load_chart_bars(
