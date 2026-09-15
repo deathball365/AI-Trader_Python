@@ -1043,7 +1043,10 @@ class MySQLStorage:
                     (
                         "paper_positions",
                         "idx_paper_positions_user_account_position_status",
-                        "user_id, account_id, position_id, status",
+                        # position_id is TEXT on older installations; use a
+                        # bounded prefix so MySQL can create the index on
+                        # both legacy and fresh schemas.
+                        "user_id, account_id, position_id(128), status",
                     ),
                     (
                         "paper_orders",
@@ -1063,7 +1066,7 @@ class MySQLStorage:
                     (
                         "paper_trades",
                         "idx_paper_trades_user_account_position_deployment",
-                        "user_id, account_id, position_id, deployment_id, closed_at",
+                        "user_id, account_id, position_id(128), deployment_id(128), closed_at",
                     ),
                     (
                         "position_management_events",
