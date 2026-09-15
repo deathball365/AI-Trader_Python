@@ -593,14 +593,34 @@ class StructureTradePlanRepository:
         self, user_id: int, account_id: int, deployment_id: str, plan_id: str,
         plan_stage: str = "", direction: str = "",
     ) -> bool:
-        return self.storage.fetchone(
-            "SELECT execution_id FROM structure_plan_executions "
-            "WHERE user_id=? AND account_id=? AND deployment_id=? AND plan_id=? "
-            "AND plan_stage=? AND direction=? "
-            "AND status<>'released' LIMIT 1",
-            (user_id, account_id, deployment_id, plan_id,
-             str(plan_stage or "default"), str(direction or "none")),
+        return self.find_consumed(
+            user_id, account_id, deployment_id, plan_id, plan_stage, direction
         ) is not None
+
+    def find_consumed(
+        self, user_id: int, account_id: int, deployment_id: str, plan_id: str,
+        plan_stage: str = "", direction: str = "",
+    ) -> Optional[Dict]:
+        """Return the active execution receipt that blocks a new claim.
+
+        Rejected/failed/timeout/canceled/released receipts are terminal
+        failures and must not poison a later opportunity.  Only states that
+        represent an accepted or in-flight/filled execution are idempotent.
+        """
+        row = self.storage.fetchone(
+            "SELECT execution_id,user_id,account_id,deployment_id,strategy_id,"
+            "plan_id,plan_group_id,plan_stage,direction,status,order_id,"
+            "reason_code,reason,tick_id,execution_mode,created_at,updated_at "
+            "FROM structure_plan_executions WHERE user_id=? AND account_id=? "
+            "AND deployment_id=? AND plan_id=? AND plan_stage=? AND direction=? "
+            "AND status IN ('claimed','accepted','ordered','pending','filled',"
+            "'partially_filled') ORDER BY updated_at DESC LIMIT 1",
+            (int(user_id), int(account_id), str(deployment_id or ""), str(plan_id or ""),
+             str(plan_stage or "default"), str(direction or "none").lower()),
+        )
+        if not row:
+            return None
+        return dict(row)
 
     @staticmethod
     def _execution_id(
@@ -711,7 +731,8 @@ class StructureTradePlanRepository:
             plan_stage, direction,
         )
         claimed_sibling = self.storage.fetchone(
-            "SELECT plan_id FROM structure_plan_executions "
+            "SELECT plan_id,status,order_id,reason_code,created_at,updated_at "
+            "FROM structure_plan_executions "
             "WHERE execution_id=? LIMIT 1",
             (execution_id,),
         )
@@ -721,7 +742,26 @@ class StructureTradePlanRepository:
                     "details": {"plan_id": str(plan_id),
                                 "claimed_plan_id": str(claimed_sibling["plan_id"] or ""),
                                 "plan_group_id": str(plan_group_id or ""),
-                                "plan_stage": plan_stage, "direction": direction}}
+                                "plan_stage": plan_stage, "direction": direction,
+                                "existing_execution": dict(claimed_sibling)}}
+        # Re-open a prior terminal failure for the same deterministic claim
+        # identity.  Keeping the row (instead of deleting audit history) lets
+        # a later Tick retry rejected/timeout/canceled executions while the
+        # unique execution_id still protects concurrent active claims.
+        if claimed_sibling and str(claimed_sibling.get("status") or "") in {
+            "released", "rejected", "failed", "timeout", "canceled",
+        }:
+            self.storage.execute(
+                "UPDATE structure_plan_executions SET status='claimed', order_id='', "
+                "reason_code=?, reason=?, tick_id=?, execution_mode=?, payload_json=?, "
+                "gate_trace_json=?, account_snapshot_json=?, updated_at=? "
+                "WHERE execution_id=? AND status IN ('released','rejected','failed',"
+                "'timeout','canceled')",
+                (str(reason_code or "claimed"), reason, str(tick_id or ""),
+                 str(execution_mode or ""), json.dumps(claim_payload, ensure_ascii=False),
+                 json.dumps(gate_trace or [], ensure_ascii=False),
+                 json.dumps(account_snapshot or {}, ensure_ascii=False), now, execution_id),
+            )
         self.storage.execute(
             """
             INSERT INTO structure_plan_executions(
@@ -742,7 +782,11 @@ class StructureTradePlanRepository:
             ),
         )
         row = self.storage.fetchone(
-            "SELECT plan_id,payload_json FROM structure_plan_executions "
+            "SELECT execution_id,user_id,account_id,deployment_id,strategy_id,"
+            "plan_id,plan_group_id,plan_stage,direction,status,order_id,"
+            "reason_code,reason,tick_id,execution_mode,payload_json,"
+            "gate_trace_json,account_snapshot_json,created_at,updated_at "
+            "FROM structure_plan_executions "
             "WHERE execution_id=? LIMIT 1",
             (execution_id,),
         )
@@ -757,7 +801,11 @@ class StructureTradePlanRepository:
             return {"claimed": False, "reason_code": "already_consumed",
                     "reason": "同一部署已消费该结构计划阶段和方向",
                     "details": {"plan_id": str(plan_id), "plan_stage": plan_stage,
-                                "direction": direction, "execution_id": execution_id}}
+                                "direction": direction, "execution_id": execution_id,
+                                "existing_execution": {
+                                    key: value for key, value in dict(row).items()
+                                    if key not in {"payload_json", "gate_trace_json", "account_snapshot_json"}
+                                }}}
         return {"claimed": True, "reason_code": "claimed", "reason": "结构计划领取成功",
                 "details": {"plan_id": str(plan_id), "execution_id": execution_id,
                             "plan_stage": plan_stage, "direction": direction}}

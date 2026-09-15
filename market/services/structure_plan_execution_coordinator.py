@@ -135,30 +135,10 @@ class StructurePlanExecutionCoordinator:
             **summary, "plan_id": plan_id, "plan_group_id": group_id,
             "plan_stage": stage, "direction": direction,
         }
-        # Filter already-consumed plans before attempting the atomic claim.
-        # The public plan remains active for other accounts, so checking only
-        # plan.status would repeatedly enter claim and produce noisy conflicts.
-        already_consumed = getattr(self.execution_service, "already_consumed", None)
-        if already_consumed and already_consumed(
-            user_id=int(user_id), account_id=int(account_id),
-            deployment_id=str(deployment["deployment_id"]), plan_id=plan_id,
-            plan_stage=stage, direction=direction,
-        ):
-            return {
-                "plan_id": plan_id, "group_id": group_id,
-                "deployment": deployment, "claimed": False,
-                "already_consumed": True, "plan": plan,
-                "reason_code": "already_consumed",
-                "reason": "同一账户/部署已消费该结构计划阶段和方向",
-                "details": {
-                    "plan_id": plan_id, "plan_group_id": group_id,
-                    "plan_stage": stage, "direction": direction,
-                },
-                "tick_id": str(tick_id or ""),
-                "execution_mode": str(execution_mode or ""),
-                "gate_trace": list(gate_trace or []),
-                "account_snapshot": dict(account_snapshot or {}),
-            }
+        # The repository performs plan-status validation and the atomic
+        # account/deployment/stage/direction claim in one operation.  Avoid a
+        # stale pre-check here: an old signal may reference a superseded plan
+        # and must return plan_inactive rather than a misleading conflict.
         claim_result = getattr(self.execution_service, "claim_result", None)
         if claim_result is not None:
             claim = claim_result(

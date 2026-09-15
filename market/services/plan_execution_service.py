@@ -83,6 +83,18 @@ class PlanExecutionService:
             str(direction or "none").lower(),
         ))
 
+    def consumed_details(self, *, user_id: int, account_id: int,
+                         deployment_id: str, plan_id: str,
+                         plan_stage: str = "", direction: str = "") -> Dict:
+        finder = getattr(self.repository, "find_consumed", None)
+        if finder is None:
+            return {}
+        return dict(finder(
+            int(user_id), int(account_id), str(deployment_id or ""),
+            str(plan_id or ""), str(plan_stage or "default"),
+            str(direction or "none").lower(),
+        ) or {})
+
     def record_order(self, *, user_id: int, account_id: int, deployment_id: str,
                      strategy_id: str, plan: Dict, order_id: str, reason: str = "",
                      tick_id: str = "", execution_mode: str = "",
