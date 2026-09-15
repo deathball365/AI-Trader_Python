@@ -1006,7 +1006,11 @@ class MySQLStorage:
                     (
                         "strategy_deployments",
                         "idx_strategy_deployments_funnel_match",
-                        "user_id, account_id, symbol, strategy_id, status",
+                        # These columns are VARCHAR(255) on older production
+                        # schemas.  A full utf8mb4 composite index exceeds
+                        # MySQL's 3072-byte InnoDB key limit, so use bounded
+                        # prefixes while retaining the lookup selectivity.
+                        "user_id, account_id, symbol(64), strategy_id(64), status(32)",
                     ),
                     (
                         "structure_trade_plans",
