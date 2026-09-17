@@ -530,10 +530,14 @@ class StructurePlanBuilder:
         # execution scopes; otherwise a same-bar event would let the initial
         # claim suppress the breakout-stage claim.
         group_scope = setup_type if str(setup_type).startswith("pressure_") else "group"
-        group = _hash(source_id, symbol, period, anchor, group_scope)
+        identity_anchor = snapshot.get("structure_segment_id") or anchor
+        cycle = 1
+        family_id = ""
+        group = _hash(source_id, symbol, period, identity_anchor, group_scope, cycle)
         plan_id = _hash(
-            source_id, symbol, period, anchor, setup_type, direction,
+            source_id, symbol, period, identity_anchor, setup_type, direction,
             zone_revision if str(setup_type).startswith("pressure_") else "",
+            cycle,
         )
         risk = abs(entry - stop_loss) if entry and stop_loss else 0.0
         reward = abs(take_profit - entry) if entry and take_profit else 0.0
@@ -566,32 +570,48 @@ class StructurePlanBuilder:
             "structure_snapshot": structure_snapshot or {},
             "price_discovery": bool(price_discovery),
             "validation_evidence": evidence,
+            "opportunity_family_id": family_id,
+            "opportunity_cycle": cycle,
         }
         setup_family = self._setup_family(setup_type)
+        box = snapshot.get("range") or {}
+        pattern_type = box.get("pattern") or snapshot.get("current_pattern") or ""
+        # The rolling closed-bar window moves ``anchor`` forward every candle.
+        # Identity must follow the structural segment, not that window start,
+        # otherwise the same breakout/retest is rewritten as a new plan.
+        segment_id = snapshot.get("structure_segment_id") or _hash(
+            symbol, period, snapshot.get("major_state"), pattern_type,
+            round(_number(box.get("top")), 2), round(_number(box.get("bottom")), 2),
+        )
         # A trade opportunity belongs to one structural segment, one zone,
         # one direction and one setup family.  The event's old zone-only ID is
         # deliberately ignored here: the same density bucket can reappear in
         # a later segment and must then be treated as a fresh opportunity.
-        opportunity_segment = str(snapshot.get("structure_segment_id") or "")
+        opportunity_segment = str(segment_id or "")
         opportunity_zone = str(evidence.get("zone_id") or "")
         if opportunity_segment and opportunity_zone and setup_type.startswith("pressure_"):
-            payload["opportunity_id"] = _hash(
+            family_id = _hash(
                 "opportunity", opportunity_segment, opportunity_zone,
                 direction, setup_family,
             )
         else:
-            payload["opportunity_id"] = str(
-                evidence.get("opportunity_id")
-                or _hash(source_id, symbol, period, anchor, setup_type, direction)
+            family_id = _hash(
+                source_id, symbol, period, opportunity_segment or identity_anchor,
+                setup_type, direction, entry_mode,
             )
+        payload["opportunity_family_id"] = family_id
+        payload["opportunity_cycle"] = cycle
+        payload["opportunity_id"] = str(
+            evidence.get("opportunity_id") or _hash(family_id, cycle)
+        )
+        payload["plan_group_id"] = _hash("group", family_id, cycle)
+        payload["plan_id"] = _hash(
+            "plan", family_id, cycle,
+            zone_revision if str(setup_type).startswith("pressure_") else "",
+        )
         payload["opportunity_stage"] = (
             "breakout" if setup_type == "pressure_zone_breakout" else
             "initial" if setup_type == "pressure_reversal" else "single"
-        )
-        box = snapshot.get("range") or {}
-        pattern_type = box.get("pattern") or snapshot.get("current_pattern") or ""
-        segment_id = snapshot.get("structure_segment_id") or _hash(
-            symbol, period, anchor, snapshot.get("major_state"), pattern_type,
         )
         plan_phase = {
             "close_breakout": "watching_breakout",
@@ -1909,10 +1929,10 @@ class StructurePlanSignalGenerator:
             )
             plans = self._resolve_plan_conflicts(plans)
             plans = self._apply_event_risk(plans, resolved_config, symbol, period, int(time.time()))
-            self.repository.replace_scope(
+            plans = self.repository.replace_scope(
                 self.user_id, 0, "",
                 source_id, symbol, period, plans, bar_time,
-            )
+            ) or plans
             self._cache[key] = plans
             self._last_bar[key] = bar_time
             all_plans.extend(plans)
@@ -2077,7 +2097,13 @@ class StructurePlanSignalGenerator:
         for plan in plans:
             event = active_event(config, symbol, period, str(plan.get("setup_type") or ""), now)
             if not event:
+                if plan.get("status") == "event_suppressed":
+                    restored = str(plan.get("status_before_event") or "active")
+                    plan["status"] = restored if restored in {"active", "watching"} else "active"
+                    plan.pop("event_risk", None)
                 continue
+            if plan.get("status") in {"active", "watching"}:
+                plan["status_before_event"] = plan.get("status")
             plan["status"] = "event_suppressed"
             plan["plan_stage"] = "event_suppressed"
             plan["event_risk"] = event
@@ -2176,10 +2202,21 @@ class StructurePlanSignalGenerator:
                         suppress_plan = getattr(self.repository, "suppress_plan", None)
                         if suppress_plan:
                             suppress_plan(plan_id, event)
+                        if plan.get("status") in {"active", "watching"}:
+                            plan["status_before_event"] = plan.get("status")
                         plan["status"] = "event_suppressed"
                         plan["event_risk"] = event
                         waiting.append(plan)
                         continue
+                    if plan.get("status") == "event_suppressed":
+                        resume_plan = getattr(self.repository, "resume_plan", None)
+                        restored = "active"
+                        if resume_plan:
+                            restored = resume_plan(plan_id) or "active"
+                        else:
+                            restored = str(plan.get("status_before_event") or "active")
+                        plan["status"] = restored if restored in {"active", "watching"} else "active"
+                        plan.pop("event_risk", None)
                 if direction in {"buy", "sell"} and direction not in allowed_directions:
                     continue
                 valid_from = int(plan.get("valid_from") or 0)

@@ -196,6 +196,38 @@ class ExecutionEligibilityTests(unittest.TestCase):
         self.assertEqual(outcome.status, "blocked")
         self.assertEqual(outcome.reason_code, "claim_conflict")
 
+    def test_already_consumed_is_reported_as_claim_conflict(self):
+        outcome = classify_execution_outcome({
+            "action": "sell",
+            "status": "rejected",
+            "decision_reason": "同一部署已消费该结构计划阶段和方向",
+            "risk_check": {
+                "structure_plan_claim": {
+                    "reason_code": "already_consumed",
+                    "details": {"plan_id": "plan-1"},
+                }
+            },
+        })
+
+        self.assertEqual(outcome.status, "blocked")
+        self.assertEqual(outcome.reason_code, "claim_conflict")
+
+    def test_plan_inactive_is_not_reported_as_claim_conflict(self):
+        outcome = classify_execution_outcome({
+            "action": "sell",
+            "status": "rejected",
+            "decision_reason": "superseded_by_new_plan",
+            "risk_check": {
+                "structure_plan_claim": {
+                    "reason_code": "plan_inactive",
+                    "details": {"inactive_type": "superseded", "plan_id": "plan-1"},
+                }
+            },
+        })
+
+        self.assertEqual(outcome.status, "blocked")
+        self.assertEqual(outcome.reason_code, "plan_inactive")
+
 
 if __name__ == "__main__":
     unittest.main()

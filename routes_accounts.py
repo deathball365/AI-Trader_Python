@@ -67,29 +67,51 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
         plan_params,
     ) or {}
     params = (int(user_id), int(account_id), since)
-    trigger_rows = storage.fetchall(
-        "SELECT status, COUNT(*) AS n FROM structure_plan_executions "
-        "WHERE user_id=? AND account_id=? AND created_at>=? "
-        "GROUP BY status", params,
+    # Trigger/order counts come from execution_gate_audits, not
+    # structure_plan_executions.  Live/Paper persist every actionable Tick
+    # outcome there, including ordered, blocked, and no_action entry-guard
+    # cases.  The execution table is only a claim/order receipt and can lag
+    # or stay empty after a claim-path change.
+    audit_rows = storage.fetchall(
+        "SELECT status, reason_code, COUNT(*) AS n, "
+        "COALESCE(SUM(occurrence_count), 0) AS occurrences "
+        "FROM execution_gate_audits "
+        "WHERE user_id=? AND account_id=? AND last_seen_at>=? "
+        "GROUP BY status, reason_code",
+        params,
     )
-    status_counts = {str(row['status'] or '').lower(): int(row['n'] or 0) for row in trigger_rows}
-    triggered_statuses = {'triggered', 'claimed', 'pending', 'ordered', 'filled', 'rejected', 'timeout', 'canceled'}
-    order_statuses = {'ordered', 'filled'}
-    triggered = sum(status_counts.get(key, 0) for key in triggered_statuses)
-    risk_passed = sum(status_counts.get(key, 0) for key in {'pending', 'ordered', 'filled'})
-    ordered = sum(status_counts.get(key, 0) for key in order_statuses)
-    blocks = storage.fetchall(
-        "SELECT reason_code, SUM(occurrence_count) AS n "
-        "FROM execution_gate_audits WHERE user_id=? AND account_id=? AND last_seen_at>=? "
-        "AND status='blocked' GROUP BY reason_code ORDER BY n DESC LIMIT 8", params,
-    )
+    triggered = 0
+    risk_passed = 0
+    ordered = 0
+    blocks = []
+    for row in audit_rows:
+        status = str(row.get('status') or '').lower()
+        reason = str(row.get('reason_code') or '').lower()
+        count = int(row.get('n') or 0)
+        occurrences = int(row.get('occurrences') or count or 0)
+        if status in {'ordered', 'blocked'} or (
+            status == 'no_action' and reason not in {'no_direction', 'no_new_trigger'}
+        ):
+            triggered += count
+        if status == 'ordered':
+            risk_passed += count
+            ordered += count
+        if status == 'blocked':
+            blocks.append({
+                'reason_code': reason,
+                'n': occurrences,
+            })
+    blocks.sort(key=lambda item: int(item.get('n') or 0), reverse=True)
+    blocks = blocks[:8]
     reason_labels = {
         "risk_limit": "账户风控",
         "position_limit": "持仓数量限制",
         "position_policy": "持仓策略限制",
         "claim_conflict": "结构计划重复消费（幂等保护）",
+        "already_consumed": "结构计划重复消费（幂等保护）",
         "invalid_volume": "手数无效",
         "technical_failure": "技术错误",
+        "entry_guard": "入场门禁拦截",
     }
     return {
         "window_start": f"{today_beijing.isoformat()} 00:00",

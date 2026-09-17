@@ -4,6 +4,7 @@ import unittest
 
 from market.store.structure_plan_store import (
     StructureTradePlanRepository, opportunity_status_for_execution,
+    should_supersede_live_plan,
 )
 
 
@@ -12,6 +13,9 @@ class _ExecutionStorage:
 
     def __init__(self):
         self.rows = {}
+        self.plans = []
+        self.executions = []
+        self.open_positions = []
         self.lock = threading.Lock()
 
     def execute(self, sql, params=()):
@@ -54,6 +58,16 @@ class _ExecutionStorage:
 
     def fetchone(self, sql, params=()):
         normalized = " ".join(sql.split())
+        if "FROM paper_positions" in normalized:
+            return dict(self.open_positions[0]) if self.open_positions else None
+        if "FROM trade_execution_reports" in normalized:
+            return []
+        if "FROM live_trade_deals" in normalized:
+            return None
+        if "FROM structure_trade_plans" in normalized and "ORDER BY updated_at DESC" in normalized:
+            return list(self.plans)
+        if "FROM structure_plan_executions" in normalized and "SELECT account_id,status,order_id" in normalized:
+            return list(self.executions)
         if "FROM structure_plan_executions" in normalized:
             with self.lock:
                 rows = list(self.rows.values())
@@ -79,7 +93,14 @@ class _ExecutionStorage:
         raise AssertionError(normalized)
 
     def fetchall(self, sql, params=()):
-        raise AssertionError("fetchall not expected")
+        normalized = " ".join(sql.split())
+        if "FROM structure_trade_plans" in normalized and "ORDER BY updated_at DESC" in normalized:
+            return list(self.plans)
+        if "FROM structure_plan_executions" in normalized and "SELECT account_id,status,order_id" in normalized:
+            return list(self.executions)
+        if "FROM trade_execution_reports" in normalized:
+            return []
+        raise AssertionError("fetchall not expected: " + normalized)
 
 
 class StructurePlanExecutionIdentityTests(unittest.TestCase):
@@ -175,6 +196,93 @@ class StructurePlanExecutionIdentityTests(unittest.TestCase):
             }),
             "breakout_filled",
         )
+
+
+    def test_completed_round_opens_a_new_plan_identity(self):
+        first = {
+            "plan_id": "plan-cycle-1", "plan_group_id": "group-1",
+            "opportunity_family_id": "family-1", "opportunity_id": "opp-1",
+            "opportunity_cycle": 1, "structure_segment_id": "seg-1",
+            "setup_type": "range_lower_reversal", "direction": "buy",
+            "entry_mode": "touch_or_near", "status": "active",
+        }
+        self.storage.plans = [{
+            **first, "payload_json": __import__("json").dumps(first),
+            "updated_at": 1,
+        }]
+        self.storage.executions = [{
+            "plan_id": "plan-cycle-1", "status": "closed", "order_id": "ord-1",
+            "account_id": 22,
+        }]
+        bound = self.repository._bind_opportunity_cycles(7, "BTCUSD#", "M5", [dict(first)])
+        self.assertEqual(bound[0]["opportunity_cycle"], 2)
+        self.assertNotEqual(bound[0]["plan_id"], "plan-cycle-1")
+
+    def test_open_round_reuses_the_same_plan_identity(self):
+        first = {
+            "plan_id": "plan-cycle-1", "plan_group_id": "group-1",
+            "opportunity_family_id": "family-1", "opportunity_id": "opp-1",
+            "opportunity_cycle": 1, "structure_segment_id": "seg-1",
+            "setup_type": "range_lower_reversal", "direction": "buy",
+            "entry_mode": "touch_or_near", "status": "active",
+        }
+        self.storage.plans = [{
+            **first, "payload_json": __import__("json").dumps(first),
+            "updated_at": 1,
+        }]
+        self.storage.executions = [{
+            "plan_id": "plan-cycle-1", "status": "filled", "order_id": "ord-1",
+            "account_id": 22,
+        }]
+        self.storage.open_positions = [{"position_id": "pos-1"}]
+        bound = self.repository._bind_opportunity_cycles(7, "BTCUSD#", "M5", [dict(first)])
+        self.assertEqual(bound[0]["plan_id"], "plan-cycle-1")
+        self.assertEqual(bound[0]["opportunity_cycle"], 1)
+
+
+    def test_no_trade_snapshot_does_not_supersede_active_plan(self):
+        self.assertFalse(should_supersede_live_plan(
+            current_status="active",
+            plan_id="choch-1",
+            keep_ids=set(),
+            semantic_key=("choch_reversal", "buy", "breakout_retest"),
+            opportunity_key=("opp-1", "choch_reversal", "buy", "breakout_retest"),
+            incoming_observation_keys={("no_trade", "none", "watch")},
+            incoming_active_keys=set(),
+        ))
+
+    def test_new_active_opportunity_does_supersede_previous_plan(self):
+        self.assertTrue(should_supersede_live_plan(
+            current_status="active",
+            plan_id="choch-1",
+            keep_ids=set(),
+            semantic_key=("choch_reversal", "buy", "breakout_retest"),
+            opportunity_key=("opp-1", "choch_reversal", "buy", "breakout_retest"),
+            incoming_observation_keys=set(),
+            incoming_active_keys={("opp-2", "range_breakout", "buy", "breakout_retest")},
+        ))
+
+
+class StructurePlanExpirySweepTests(unittest.TestCase):
+    def test_global_expiry_sweep_is_bounded_to_due_rows(self):
+        captured = {}
+
+        class _Storage:
+            def fetchall(self, sql, params=()):
+                captured["sql"] = " ".join(sql.split())
+                captured["params"] = params
+                return []
+
+            def fetchone(self, sql, params=()):
+                raise AssertionError(sql)
+
+            def execute(self, sql, params=()):
+                raise AssertionError(sql)
+
+        StructureTradePlanRepository(_Storage()).expire_due_plans(now=1_700_000_000)
+        self.assertIn("expires_at>0 AND expires_at<=?", captured["sql"])
+        self.assertEqual(captured["params"][-1], 1_700_000_000)
+
 
 
 if __name__ == "__main__":

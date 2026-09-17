@@ -1465,6 +1465,33 @@ class LiveTradeDealRepository:
                     exit_reason,
                     realized_r,
                 )
+                plan_id = str(attribution.get("trade_plan_id") or "")
+                if plan_id:
+                    from market.store.structure_plan_store import StructureTradePlanRepository
+                    repo = StructureTradePlanRepository(self.storage)
+                    deployment_id = str(attribution.get("deployment_id") or "")
+                    if not deployment_id:
+                        existing = self.storage.fetchone(
+                            "SELECT deployment_id FROM structure_plan_executions "
+                            "WHERE user_id=? AND account_id=? AND plan_id=? "
+                            "ORDER BY updated_at DESC LIMIT 1",
+                            (int(user_id), int(account_id), plan_id),
+                        ) or {}
+                        deployment_id = str(existing.get("deployment_id") or "")
+                    if deployment_id:
+                        repo.update_execution_status(
+                            int(user_id), int(account_id), deployment_id,
+                            plan_id, "closed",
+                            order_id=str(attribution.get("order_id") or mt5_order or ""),
+                            reason=exit_reason,
+                            payload=attribution,
+                            plan_stage=str(
+                                attribution.get("plan_stage")
+                                or attribution.get("trade_opportunity_stage") or "default"
+                            ),
+                            direction=str(attribution.get("direction") or "none"),
+                            reason_code="closed",
+                        )
             payload_json = json.dumps(
                 canonical_deal, ensure_ascii=False, sort_keys=True,
                 separators=(",", ":"),
@@ -2792,14 +2819,22 @@ class PlatformInstrumentMappingRepository:
             return False
         rows = self.storage.fetchall(
             """
-            SELECT mapping_group FROM platform_instrument_mappings
-            WHERE enabled = 1
-              AND (COALESCE(NULLIF(broker_name, ''), broker_server) = ? AND native_symbol = ?
-                   OR COALESCE(NULLIF(broker_name, ''), broker_server) = ? AND native_symbol = ?)
+            SELECT mapping_group, broker_name, broker_server, native_symbol
+            FROM platform_instrument_mappings
+            WHERE enabled = 1 AND native_symbol IN (?, ?)
             """,
-            (source_broker, source_symbol, target_broker, target_symbol),
+            (source_symbol, target_symbol),
         )
-        return len({str(row["mapping_group"]) for row in rows}) == 1 and len(rows) == 2
+        matched = []
+        for row in rows:
+            broker = str(row.get("broker_name") or row.get("broker_server") or "").strip()
+            symbol = self._normalize(row.get("native_symbol"))
+            if (broker, symbol) in {
+                (source_broker, source_symbol),
+                (target_broker, target_symbol),
+            }:
+                matched.append(str(row.get("mapping_group") or ""))
+        return len(set(matched)) == 1 and len(matched) == 2
 
     def target_options(self, source_owner_user_id: int, source_symbol: str,
                        target_user_id: int) -> List[Dict]:

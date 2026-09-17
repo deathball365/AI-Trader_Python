@@ -31,25 +31,21 @@ def resolve(
             default_row = storage.fetchone(
                 "SELECT config_json FROM structure_default_configs WHERE user_id=0 AND status='active'"
             )
-            symbol_row = storage.fetchone(
-                "SELECT config_json FROM structure_symbol_period_configs WHERE user_id=0 AND symbol=? AND period=? AND status='active'",
+            symbol_rows = storage.fetchall(
+                "SELECT period, config_json FROM structure_symbol_period_configs WHERE user_id=0 AND symbol=? AND period IN (?, '*') AND status='active'",
                 (wanted_symbol, wanted_period),
             )
-            symbol_default_row = storage.fetchone(
-                "SELECT config_json FROM structure_symbol_period_configs WHERE user_id=0 AND symbol=? AND period='*' AND status='active'",
-                (wanted_symbol,),
-            )
+            symbol_row = next((row for row in symbol_rows if str(row.get("period") or "").upper() == wanted_period), None)
+            symbol_default_row = next((row for row in symbol_rows if str(row.get("period") or "") == "*"), None)
             setup_row = None
             setup_symbol_row = None
             if wanted_setup and wanted_setup != "__builder__":
-                setup_row = storage.fetchone(
-                    "SELECT config_json FROM structure_setup_configs WHERE user_id=0 AND symbol=? AND period=? AND setup_type=? AND status='active'",
+                setup_rows = storage.fetchall(
+                    "SELECT period, config_json FROM structure_setup_configs WHERE user_id=0 AND symbol=? AND period IN (?, '*') AND setup_type=? AND status='active'",
                     (wanted_symbol, wanted_period, wanted_setup),
                 )
-                setup_symbol_row = storage.fetchone(
-                    "SELECT config_json FROM structure_setup_configs WHERE user_id=0 AND symbol=? AND period='*' AND setup_type=? AND status='active'",
-                    (wanted_symbol, wanted_setup),
-                )
+                setup_row = next((row for row in setup_rows if str(row.get("period") or "").upper() == wanted_period), None)
+                setup_symbol_row = next((row for row in setup_rows if str(row.get("period") or "") == "*"), None)
             def decode(row):
                 if not row:
                     return {}

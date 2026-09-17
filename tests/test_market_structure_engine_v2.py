@@ -209,6 +209,7 @@ class MarketStructureEngineTests(unittest.TestCase):
         events, _, state = _event_stream(rows, pivots, _atr_series(rows), {
             "break_confirm_bars": 1, "break_buffer_atr": 0,
             "retest_bars": 2, "displacement_atr": 99,
+            "trend_retest_required": True,
         }, "major")
         bullish = [event for event in events if event["type"] == "choch" and event["direction"] == "up"]
         self.assertEqual(state, "up")
@@ -338,6 +339,26 @@ class MarketStructureEngineTests(unittest.TestCase):
         locked_after = [(s.get("start_time"), s.get("end_time"), s["type"])
                         for s in long["segment_history"] if s.get("locked")]
         self.assertEqual(locked_before, locked_after[:len(locked_before)])
+
+
+
+    def test_live_segment_id_ignores_rolling_end_time(self):
+        from market.services.market_structure_engine_v2 import analyze
+
+        def rows(count):
+            return [{
+                "timestamp": index * 300,
+                "open": 100, "high": 101, "low": 99, "close": 100,
+            } for index in range(count)]
+
+        first = analyze("BTCUSD#", "M5", rows(40), {"pivot_legs": 2, "medium_pivot_legs": 3})
+        second = analyze("BTCUSD#", "M5", rows(41), {"pivot_legs": 2, "medium_pivot_legs": 3})
+        self.assertEqual(first["structure_segment_id"], second["structure_segment_id"])
+        self.assertNotEqual(first["structure_revision"], second["structure_revision"])
+        self.assertNotEqual(
+            (first.get("active_segment") or {}).get("end_time"),
+            (second.get("active_segment") or {}).get("end_time"),
+        )
 
 
 if __name__ == "__main__":

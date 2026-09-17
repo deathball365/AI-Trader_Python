@@ -19,6 +19,8 @@ def test_safe_and_unsafe_sql_domains():
     assert cache_domain_for_sql("SELECT * FROM market_calendar_events WHERE event_date=?") == "calendar"
     assert cache_domain_for_sql("SELECT * FROM structure_trade_plans WHERE status='active'") is None
     assert cache_domain_for_sql("SELECT * FROM trading_accounts WHERE id=?") is None
+    assert cache_domain_for_sql("SELECT COALESCE(c.mt5_server, a.mt5_server, '') AS mt5_server FROM trading_accounts a LEFT JOIN mt5_account_connections c ON c.account_id=a.id WHERE a.user_id=?") == "accounts"
+    assert cache_domain_for_sql("SELECT id, role, membership_level, live_trading_enabled FROM users WHERE id = ?") == "users"
     assert cache_domain_for_sql("SELECT * FROM strategy_deployments WHERE status='active'") is None
     assert cache_domain_for_sql("SELECT * FROM structure_symbol_period_configs FOR UPDATE") is None
 

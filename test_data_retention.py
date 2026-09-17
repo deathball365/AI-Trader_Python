@@ -2,6 +2,7 @@
 """Retention rules for short-lived operational detail."""
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,10 +11,14 @@ from data_retention import DataRetentionService
 from mysql_repositories import MySQLStorage, UserRepository
 
 
+@unittest.skipUnless(
+    os.getenv("AI_TRADER_TEST_MYSQL") == "1",
+    "requires an isolated MySQL integration database",
+)
 class DataRetentionServiceTestCase(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.storage = MySQLStorage(str(Path(self.temp_dir.name) / "retention.db"))
+        self.storage = MySQLStorage()
         self.storage.initialize()
         self.user = UserRepository(self.storage).create_user(
             "retention-user", "hash", "salt"
@@ -162,6 +167,12 @@ class MySQLRetentionPolicyTestCase(unittest.TestCase):
             ("strategy_pivot_points", "valid_until < ?", (2_000_000_000,)),
             calls,
         )
+        self.assertIn("inactive_structure_trade_plans", result)
+        self.assertIn("stale_outbox_events", result)
+        self.assertIn("live_equity_points", result)
+        self.assertTrue(any(item[0] == "structure_trade_plans" for item in calls))
+        self.assertTrue(any(item[0] == "outbox_events" for item in calls))
+        self.assertTrue(any(item[0] == "live_equity_points" for item in calls))
 
 
 if __name__ == "__main__":

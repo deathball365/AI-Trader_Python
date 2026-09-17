@@ -58,6 +58,22 @@ class _Repository:
             if plan.get("plan_id") == plan_id:
                 plan.update({"status": "invalidated", "invalidated_reason": reason})
 
+    def suppress_plan(self, plan_id, event_risk):
+        for plan in self.plans:
+            if plan.get("plan_id") == plan_id:
+                if plan.get("status") in {"active", "watching"}:
+                    plan["status_before_event"] = plan.get("status")
+                plan.update({"status": "event_suppressed", "event_risk": dict(event_risk or {})})
+
+    def resume_plan(self, plan_id):
+        for plan in self.plans:
+            if plan.get("plan_id") == plan_id:
+                restored = plan.get("status_before_event") or "active"
+                plan["status"] = restored
+                plan.pop("event_risk", None)
+                return restored
+        return ""
+
 
 def _range_structure(status="confirmed", direction=""):
     return {
@@ -331,6 +347,53 @@ class StructurePlanTests(unittest.TestCase):
         self.assertTrue(signal.state_ready)
         self.assertEqual(signal.action, "buy")
         self.assertTrue(signal.trade_plan_id)
+
+    def test_event_window_end_resumes_suppressed_plan_for_tick(self):
+        repository = _Repository()
+        generator = StructurePlanSignalGenerator(self.store, repository, 1, 2)
+        strategy = _Strategy()
+        repository.plans = [{
+            "plan_id": "plan-1", "plan_group_id": "group-1",
+            "status": "event_suppressed", "status_before_event": "active",
+            "direction": "buy", "setup_type": "range_lower_reversal",
+            "setup_family": "range", "entry_mode": "touch_or_near",
+            "entry_zone": {"lower": 99.0, "upper": 101.0},
+            "entry_price": 100.0, "stop_loss": 98.0, "take_profit": 104.0,
+            "reason": "箱体下沿", "valid_from": 1, "expires_at": 0,
+            "event_risk": {"id": "new_york_open", "reason": "纽约开盘"},
+        }]
+        generator._cache[("market-structure", "BTCUSD", "M5")] = list(repository.plans)
+        with patch(
+            "market.services.signal.structure_plan_signal.active_event",
+            return_value=None,
+        ):
+            signal = generator.generate_signals_for_strategy(
+                "BTCUSD", 99.8, strategy,
+            )[0]
+        self.assertTrue(signal.state_ready)
+        self.assertEqual(signal.action, "buy")
+        self.assertEqual(repository.plans[0]["status"], "active")
+
+    def test_refresh_keeps_repository_retained_plans_in_tick_cache(self):
+        class _RetainingRepo(_Repository):
+            def replace_scope(self, *args):
+                self.replace_calls.append(args)
+                incoming = list(args[-2])
+                retained = {
+                    "plan_id": "retained-choch", "status": "active",
+                    "direction": "buy", "setup_type": "choch_reversal",
+                    "entry_mode": "breakout_retest",
+                    "entry_zone": {"lower": 99.0, "upper": 101.0},
+                    "entry_price": 100.0, "stop_loss": 97.0,
+                }
+                self.plans = incoming + [retained]
+                return list(self.plans)
+
+        repository = _RetainingRepo()
+        generator = StructurePlanSignalGenerator(self.store, repository, 1, 2)
+        generator.refresh_plans("BTCUSD", "M5", _Strategy(), _range_structure())
+        cached_ids = [item.get("plan_id") for item in next(iter(generator._cache.values()))]
+        self.assertIn("retained-choch", cached_ids)
 
     def test_multiple_strategy_instances_share_one_canonical_plan_scope(self):
         repository = _Repository()

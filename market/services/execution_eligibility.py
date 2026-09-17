@@ -136,8 +136,11 @@ def classify_execution_outcome(
 
     if status == "rejected":
         if structure_claim and structure_claim.get("reason_code"):
+            reason_code = str(structure_claim.get("reason_code") or "")
+            if reason_code in {"already_consumed", "claim_failed", "claim_race"}:
+                reason_code = "claim_conflict"
             return ExecutionAuditOutcome(
-                "blocked", str(structure_claim.get("reason_code")), message,
+                "blocked", reason_code, message,
             )
         staged = dict(risk_check.get("staged_execution") or {})
         staged_reason = str(staged.get("reason") or "")

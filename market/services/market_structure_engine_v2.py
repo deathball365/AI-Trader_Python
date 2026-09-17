@@ -907,9 +907,13 @@ def analyze(symbol: str, period: str, rows: List[Dict], config: Dict = None) -> 
         symbol, period, rows, pressure_config, pivot_levels=levels
     )
     active_segment = segments[-1] if segments else {}
+    # The live segment grows with each closed bar.  Identity follows the
+    # structural start and type; the moving end belongs in revision so the
+    # same range/breakout is not rewritten as a new segment every candle.
+    event = active_segment.get("event") or {}
     segment_id = hashlib.sha1("|".join(str(item) for item in (
         symbol.upper(), period.upper(), active_segment.get("start_time"),
-        active_segment.get("end_time"), active_segment.get("type"),
+        active_segment.get("type"),
     )).encode()).hexdigest()[:16]
     structure_revision = hashlib.sha1(json.dumps({
         "segment_id": segment_id,

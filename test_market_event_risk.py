@@ -50,8 +50,8 @@ class MarketEventRiskTests(unittest.TestCase):
         self.assertIsNotNone(event)
         self.assertEqual(event["id"], "shanghai_futures_afternoon_open")
         self.assertEqual(event["label"], "上海期货午盘")
-        self.assertEqual(event["suppress_from"], event_time - 10 * 60)
-        self.assertEqual(event["resume_after"], event_time + 20 * 60 + 5 * 60)
+        self.assertEqual(event["suppress_from"], event_time - 5 * 60)
+        self.assertEqual(event["resume_after"], event_time + 10 * 60 + 5 * 60)
         self.assertEqual(event["resume_confirmation_bars"], 1)
 
     @patch("market.services.market_event_risk_service._calendar_events", return_value=[])

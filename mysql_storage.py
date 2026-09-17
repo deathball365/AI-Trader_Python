@@ -1069,6 +1069,31 @@ class MySQLStorage:
                         "user_id, account_id, position_id(128), deployment_id(128), closed_at",
                     ),
                     (
+                        "paper_trades",
+                        "idx_paper_trades_user_closed",
+                        "user_id, closed_at, trade_id",
+                    ),
+                    (
+                        "live_trade_deals",
+                        "idx_live_trade_deals_user_position",
+                        "user_id, mt5_position_id, deal_timestamp",
+                    ),
+                    (
+                        "structure_trade_plans",
+                        "idx_structure_plans_status_expiry",
+                        "status, expires_at, user_id, symbol, period",
+                    ),
+                    (
+                        "platform_instrument_mappings",
+                        "idx_platform_instrument_symbol_enabled",
+                        "native_symbol, enabled, mapping_group",
+                    ),
+                    (
+                        "mt5_account_connections",
+                        "idx_mt5_connections_account_seen",
+                        "account_id, last_seen_at",
+                    ),
+                    (
                         "position_management_events",
                         "idx_position_events_account_position_time",
                         "user_id, account_id, position_key, event_time, created_at",

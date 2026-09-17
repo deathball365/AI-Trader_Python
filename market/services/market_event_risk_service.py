@@ -25,19 +25,19 @@ REVERSAL_SETUPS = {
 DEFAULT_EVENT_RISK_RULES = [
     {"id": "tokyo_open", "label": "东京开盘", "event_type": "market_open", "level": "L1",
      "timezone": "Asia/Tokyo", "time": "09:00", "weekdays": [0, 1, 2, 3, 4],
-     "before_minutes": 10, "after_minutes": 20},
+     "before_minutes": 5, "after_minutes": 10},
     {"id": "shanghai_open", "label": "上海开盘", "event_type": "market_open", "level": "L1",
      "timezone": "Asia/Shanghai", "time": "09:30", "weekdays": [0, 1, 2, 3, 4],
-     "before_minutes": 10, "after_minutes": 20},
+     "before_minutes": 5, "after_minutes": 10},
     {"id": "shanghai_futures_afternoon_open", "label": "上海期货午盘", "event_type": "market_open", "level": "L1",
      "timezone": "Asia/Shanghai", "time": "13:30", "weekdays": [0, 1, 2, 3, 4],
-     "before_minutes": 10, "after_minutes": 20},
+     "before_minutes": 5, "after_minutes": 10},
     {"id": "london_open", "label": "伦敦开盘", "event_type": "market_open", "level": "L2",
      "timezone": "Europe/London", "time": "08:00", "weekdays": [0, 1, 2, 3, 4],
-     "before_minutes": 20, "after_minutes": 30},
+     "before_minutes": 5, "after_minutes": 10},
     {"id": "new_york_open", "label": "纽约开盘", "event_type": "market_open", "level": "L2",
      "timezone": "America/New_York", "time": "09:30", "weekdays": [0, 1, 2, 3, 4],
-     "before_minutes": 30, "after_minutes": 45},
+     "before_minutes": 5, "after_minutes": 10},
 ]
 
 _calendar_cache = TTLCache(ttl_seconds=60, max_items=16)

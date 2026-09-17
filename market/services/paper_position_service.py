@@ -281,5 +281,27 @@ class PaperPositionService:
                     ),
                 )
                 result["closed"] += 1
+                try:
+                    attribution = json.loads(position.get("position_attribution_json") or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    attribution = {}
+                plan_id = str(attribution.get("trade_plan_id") or "")
+                if plan_id:
+                    self.paper_service.structure_plans.update_execution_status(
+                        int(user_id), int(account_id),
+                        str(position.get("deployment_id") or ""),
+                        plan_id, "closed",
+                        order_id=str(position.get("order_id") or ""),
+                        reason=str(reason or "position_closed"),
+                        payload=attribution,
+                        plan_stage=str(
+                            attribution.get("plan_stage")
+                            or attribution.get("trade_opportunity_stage") or "default"
+                        ),
+                        direction=str(
+                            attribution.get("direction") or position.get("direction") or "none"
+                        ),
+                        reason_code="closed",
+                    )
 
         return balance

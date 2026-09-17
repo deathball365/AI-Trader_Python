@@ -1,6 +1,7 @@
 """MySQL-backed structure trade plans and per-deployment executions."""
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import uuid
@@ -13,6 +14,36 @@ from system_event_log import SystemEventLogRepository
 from runtime_cache import TTLCache
 
 
+def should_supersede_live_plan(
+    *,
+    current_status: str,
+    plan_id: str,
+    keep_ids: set[str],
+    semantic_key: tuple,
+    opportunity_key: tuple,
+    incoming_observation_keys: set,
+    incoming_active_keys: set,
+) -> bool:
+    """Keep untriggered live plans until a new actionable opportunity appears.
+
+    A closed-bar refresh often emits only ``no_trade`` / watch snapshots. Those
+    observations must not cancel an active retest or reclaim plan before its
+    expiry, or M1 STRUCTURE PLAN never gets a Tick in the entry zone.
+    """
+    if str(plan_id) in keep_ids:
+        return False
+    live = str(current_status or "") in {"active", "event_suppressed"}
+    if live:
+        if opportunity_key in incoming_active_keys:
+            return False
+        return bool(incoming_active_keys)
+    if semantic_key in incoming_observation_keys:
+        return False
+    if opportunity_key in incoming_active_keys:
+        return False
+    return True
+
+
 def opportunity_status_for_execution(stage: str, execution_status: str) -> str:
     """Normalize broker/Paper receipts into a stage-scoped opportunity state."""
     stage_prefix = "initial" if str(stage or "") == "initial" else (
@@ -22,7 +53,7 @@ def opportunity_status_for_execution(stage: str, execution_status: str) -> str:
         "filled": "filled", "partially_filled": "partially_filled",
         "accepted": "ordered", "pending": "ordered", "ordered": "ordered",
         "rejected": "failed", "failed": "failed", "timeout": "failed",
-        "canceled": "failed", "released": "failed",
+        "canceled": "failed", "released": "failed", "closed": "closed",
     }.get(str(execution_status or "").lower())
     return f"{stage_prefix}_{normalized}" if normalized else ""
 
@@ -77,6 +108,7 @@ class StructureTradePlanRepository:
             signal_source_id=signal_source_id, symbol=symbol, period=period,
             now=now,
         )
+        plans = self._bind_opportunity_cycles(user_id, symbol, period, plans)
         keep = {str(plan["plan_id"]) for plan in plans}
         new_actionable = {
             str(plan["plan_id"])
@@ -191,10 +223,14 @@ class StructureTradePlanRepository:
                 str(current_payload.get("opportunity_id") or ""),
                 *semantic_key,
             )
-            if (
-                plan_id not in keep
-                and semantic_key not in incoming_observation_keys
-                and current_opportunity_key not in incoming_active_keys
+            if should_supersede_live_plan(
+                current_status=str(row.get("status") or ""),
+                plan_id=plan_id,
+                keep_ids=keep,
+                semantic_key=semantic_key,
+                opportunity_key=current_opportunity_key,
+                incoming_observation_keys=incoming_observation_keys,
+                incoming_active_keys=incoming_active_keys,
             ):
                 # A new actionable opportunity supersedes the previous one.
                 self.supersede_plan(plan_id, "superseded_by_new_plan")
@@ -305,6 +341,14 @@ class StructureTradePlanRepository:
                     json.dumps(payload, ensure_ascii=False), now, now,
                 ),
             )
+        # Drop the short-lived read cache so Tick evaluation sees retained
+        # actionable plans immediately, not a stale no_trade snapshot.
+        cache_key = (
+            int(user_id), int(account_id), str(strategy_id),
+            str(signal_source_id), str(symbol), str(period).upper(),
+        )
+        with self._current_cache._lock:
+            self._current_cache._items.pop(cache_key, None)
         # The generator cache must include retained actionable plans as well as
         # the latest observation rows; returning only ``plans`` would keep the
         # database correct but make Tick evaluation forget the retained plan.
@@ -372,6 +416,130 @@ class StructureTradePlanRepository:
             result.append(payload)
         return result
 
+    @staticmethod
+    def _id_hash(*parts, length=32) -> str:
+        raw = ":".join(str(part) for part in parts)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:length]
+
+    @staticmethod
+    def _family_key(plan: Dict) -> tuple:
+        return (
+            str(plan.get("opportunity_family_id") or ""),
+            str(plan.get("structure_segment_id") or ""),
+            str(plan.get("setup_type") or ""),
+            str(plan.get("direction") or "none"),
+            str(plan.get("entry_mode") or "watch"),
+        )
+
+    def _rewrite_cycle_identity(self, plan: Dict, cycle: int) -> Dict:
+        cycle = max(1, int(cycle or 1))
+        family = str(plan.get("opportunity_family_id") or "")
+        plan["opportunity_cycle"] = cycle
+        if family:
+            plan["opportunity_id"] = self._id_hash(family, cycle)
+            plan["plan_group_id"] = self._id_hash("group", family, cycle)
+            zone_revision = str((plan.get("validation_evidence") or {}).get("zone_revision") or "")
+            plan["plan_id"] = self._id_hash("plan", family, cycle, zone_revision)
+        return plan
+
+    def _round_state(self, user_id: int, plan_id: str) -> str:
+        rows = self.storage.fetchall(
+            "SELECT account_id,status,order_id FROM structure_plan_executions "
+            "WHERE user_id=? AND plan_id=?",
+            (int(user_id), str(plan_id)),
+        ) or []
+        if not rows:
+            return "idle"
+        statuses = {str(row.get("status") or "").lower() for row in rows}
+        if statuses & {"claimed", "accepted", "ordered", "pending"}:
+            return "in_flight"
+        filled = [row for row in rows if str(row.get("status") or "").lower() in {"filled", "partially_filled"}]
+        if filled:
+            return "in_flight" if self._plan_has_open_position(user_id, filled) else "completed"
+        if statuses <= {"closed", "rejected", "failed", "timeout", "canceled", "released"}:
+            return "completed"
+        return "idle"
+
+    def _plan_has_open_position(self, user_id: int, executions: List[Dict]) -> bool:
+        order_ids = [str(row.get("order_id") or "") for row in executions if str(row.get("order_id") or "")]
+        if not order_ids:
+            return True
+        placeholders = ",".join("?" for _ in order_ids)
+        if self.storage.fetchone(
+            "SELECT position_id FROM paper_positions "
+            f"WHERE user_id=? AND status='open' AND order_id IN ({placeholders}) LIMIT 1",
+            (int(user_id), *order_ids),
+        ):
+            return True
+        live_positions = self.storage.fetchall(
+            "SELECT DISTINCT mt5_position_id FROM trade_execution_reports "
+            f"WHERE user_id=? AND success=1 AND mt5_position_id>0 AND order_id IN ({placeholders})",
+            (int(user_id), *order_ids),
+        ) or []
+        for item in live_positions:
+            position_id = int(item.get("mt5_position_id") or 0)
+            if position_id <= 0:
+                continue
+            opening = self.storage.fetchone(
+                "SELECT volume FROM live_trade_deals WHERE user_id=? AND mt5_position_id=? AND entry_type=0 "
+                "ORDER BY deal_timestamp, ticket LIMIT 1",
+                (int(user_id), position_id),
+            )
+            if not opening:
+                return True
+            closed = self.storage.fetchone(
+                "SELECT SUM(volume) AS closed_volume FROM live_trade_deals "
+                "WHERE user_id=? AND mt5_position_id=? AND entry_type<>0",
+                (int(user_id), position_id),
+            ) or {}
+            if float(closed.get("closed_volume") or 0) + 1e-9 < float(opening.get("volume") or 0):
+                return True
+        return False
+
+    def _bind_opportunity_cycles(self, user_id: int, symbol: str, period: str, plans: List[Dict]) -> List[Dict]:
+        """Reuse the current round until its orders are fully closed."""
+        rows = self.storage.fetchall(
+            "SELECT plan_id,status,setup_type,direction,entry_mode,payload_json,updated_at "
+            "FROM structure_trade_plans WHERE user_id=? AND symbol=? AND period=? "
+            "AND status IN ('active','watching','event_suppressed','superseded','invalidated') "
+            "ORDER BY updated_at DESC",
+            (int(user_id), str(symbol or ""), str(period or "")),
+        ) or []
+        latest = {}
+        for row in rows:
+            try:
+                payload = json.loads(row.get("payload_json") or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            merged = {**payload, **dict(row)}
+            key = self._family_key(merged)
+            if not any(key):
+                continue
+            latest.setdefault(key, merged)
+        bound = []
+        for plan in plans:
+            if str(plan.get("direction") or "") not in {"buy", "sell"}:
+                bound.append(plan)
+                continue
+            previous = latest.get(self._family_key(plan))
+            if not previous:
+                bound.append(self._rewrite_cycle_identity(plan, int(plan.get("opportunity_cycle") or 1)))
+                continue
+            previous_id = str(previous.get("plan_id") or "")
+            previous_cycle = int(previous.get("opportunity_cycle") or 1)
+            state = self._round_state(user_id, previous_id) if previous_id else "idle"
+            if state == "completed":
+                bound.append(self._rewrite_cycle_identity(plan, previous_cycle + 1))
+                continue
+            plan["plan_id"] = previous_id
+            if previous.get("plan_group_id"):
+                plan["plan_group_id"] = previous.get("plan_group_id")
+            plan["opportunity_id"] = previous.get("opportunity_id") or plan.get("opportunity_id")
+            plan["opportunity_family_id"] = previous.get("opportunity_family_id") or plan.get("opportunity_family_id")
+            plan["opportunity_cycle"] = previous_cycle
+            bound.append(plan)
+        return bound
+
     def expire_due_plans(
         self, user_id: int = None, account_id: int = None,
         strategy_id: str = None, signal_source_id: str = None,
@@ -400,6 +568,12 @@ class StructureTradePlanRepository:
             if value is not None:
                 clauses.append(f"{column}=?")
                 params.append(value)
+        if user_id is None and symbol is None:
+            # A global sweep is only a safety net for disconnected symbols.
+            # Bound it to rows that are already due, instead of loading every
+            # live plan in the table on each minute.
+            clauses.append("(expires_at>0 AND expires_at<=?)")
+            params.append(now)
         rows = self.storage.fetchall(
             "SELECT plan_id,status,payload_json,created_at,expires_at "
             "FROM structure_trade_plans WHERE " + " AND ".join(clauses),
@@ -473,6 +647,10 @@ class StructureTradePlanRepository:
         previous_event = (payload.get("event_risk") or {}).get("id")
         if previous_status == "event_suppressed" and previous_event == (event_risk or {}).get("id"):
             return
+        if previous_status in {"active", "watching"}:
+            payload["status_before_event"] = previous_status
+        elif not payload.get("status_before_event"):
+            payload["status_before_event"] = "active"
         payload["status"] = "event_suppressed"
         payload["plan_stage"] = "event_suppressed"
         payload["event_risk"] = dict(event_risk or {})
@@ -501,6 +679,31 @@ class StructureTradePlanRepository:
         except Exception as exc:
             # Audit failure must not block the risk decision itself.
             print(f"[StructurePlan] 风险暂停审计写入失败: {exc}")
+
+    def resume_plan(self, plan_id: str) -> str:
+        """Restore a paused plan after its event window has ended."""
+        row = self.storage.fetchone(
+            "SELECT payload_json,status FROM structure_trade_plans WHERE plan_id=? LIMIT 1",
+            (str(plan_id),),
+        )
+        if not row or str(row["status"] or "") != "event_suppressed":
+            return str((row or {}).get("status") or "")
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = {}
+        restored = str(payload.get("status_before_event") or "active")
+        if restored not in {"active", "watching"}:
+            restored = "active"
+        payload["status"] = restored
+        payload["plan_stage"] = restored
+        payload.pop("event_risk", None)
+        now = int(time.time())
+        self.storage.execute(
+            "UPDATE structure_trade_plans SET status=?, payload_json=?, updated_at=? WHERE plan_id=?",
+            (restored, json.dumps(payload, ensure_ascii=False), now, str(plan_id)),
+        )
+        return restored
 
     def supersede_plan(self, plan_id: str, reason: str = "superseded_by_new_plan") -> None:
         """Mark a live plan as replaced while preserving an explicit audit reason."""
@@ -1072,7 +1275,7 @@ class StructureTradePlanRepository:
     ) -> bool:
         allowed = {"claimed", "ordered", "accepted", "pending", "filled",
                    "partially_filled", "rejected", "failed", "timeout",
-                   "canceled", "released"}
+                   "canceled", "released", "closed"}
         status = str(status or "").lower()
         if status not in allowed:
             raise ValueError(f"不支持的计划执行状态: {status}")

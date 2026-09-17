@@ -82,15 +82,25 @@ class PlatformInstrumentMappingRepository:
             return False
         if source_symbol == target_symbol:
             return True
+        source_broker = self.broker_name_from_server(source_server)
+        target_broker = self.broker_name_from_server(target_server)
         rows = self.storage.fetchall(
-            """SELECT mapping_group FROM platform_instrument_mappings WHERE enabled=1
-               AND ((COALESCE(NULLIF(broker_name,''),broker_server)=? AND native_symbol=?)
-                 OR (COALESCE(NULLIF(broker_name,''),broker_server)=? AND native_symbol=?))""",
-            (self.broker_name_from_server(source_server), source_symbol,
-             self.broker_name_from_server(target_server), target_symbol),
+            """SELECT mapping_group, broker_name, broker_server, native_symbol
+               FROM platform_instrument_mappings
+               WHERE enabled=1 AND native_symbol IN (?, ?)""",
+            (source_symbol, target_symbol),
         )
-        groups = {str(row["mapping_group"]) for row in rows}
-        return len(rows) == 2 and len(groups) == 1
+        matched = []
+        for row in rows:
+            broker = str(row.get("broker_name") or row.get("broker_server") or "").strip()
+            symbol = self._normalize(row.get("native_symbol"))
+            if (broker, symbol) in {
+                (source_broker, source_symbol),
+                (target_broker, target_symbol),
+            }:
+                matched.append(str(row.get("mapping_group") or ""))
+        groups = set(matched)
+        return len(matched) == 2 and len(groups) == 1
 
     def target_options(self, source_owner_user_id: int, source_symbol: str,
                        target_user_id: int) -> List[Dict]:

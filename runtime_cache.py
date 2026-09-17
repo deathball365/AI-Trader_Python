@@ -12,7 +12,7 @@ from typing import Any, Optional
 _lock = threading.RLock()
 _generations = {
     "accounts": 0, "mappings": 0, "strategies": 0, "deployments": 0,
-    "configs": 0, "plans": 0, "calendar": 0,
+    "configs": 0, "plans": 0, "calendar": 0, "users": 0,
 }
 _stats = {
     "hits": {},
@@ -123,6 +123,11 @@ class SQLReadCache(TTLCache):
         "mappings": 60,
         "strategies": 60,
         "configs": 180,
+        # Broker/server identity and membership flags are stable across Ticks.
+        # Keep this shorter than config cache so a reconnect still shows up
+        # quickly, but long enough to collapse the per-Tick fan-out.
+        "accounts": 15,
+        "users": 30,
         # Calendar/key-event feeds are refreshed periodically, but a request
         # fan-out can read the same day many times. Keep this short enough for
         # an upstream refresh to become visible without hitting MySQL per call.
@@ -160,11 +165,19 @@ def cache_domain_for_sql(sql: str) -> Optional[str]:
     text = str(sql or "").lower()
     if " from " not in f" {text} ":
         return None
-    # Account state and deployment state directly gate order generation.  Do
-    # not serve these reads from a TTL cache: a just-enabled/disabled account
-    # or deployment must take effect on the very next execution cycle.
-    if re.search(r"\b(trading_accounts|mt5_account_connections|strategy_deployments)\b", text):
+    # Account enablement, balances and deployments directly gate order
+    # generation.  Only cache the stable broker/server identity lookups.
+    if re.search(r"\bstrategy_deployments\b", text):
         return None
+    if re.search(r"\b(trading_accounts|mt5_account_connections)\b", text):
+        if "mt5_server" in text and not re.search(
+            r"\b(enabled|status|trading_enabled|auto_trading_enabled|balance|equity)\b",
+            text,
+        ):
+            return "accounts"
+        return None
+    if re.search(r"\busers\b", text) and "membership_level" in text:
+        return "users"
     # Locking reads must always hit the database and cannot be cached safely.
     if re.search(r"\bfor\s+update\b", text):
         return None

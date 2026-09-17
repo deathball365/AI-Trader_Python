@@ -15,6 +15,13 @@ class DataRetentionService:
     PAPER_HEARTBEAT_DAYS = 3
     BACKTEST_DETAIL_DAYS = 7
     ALPHA_SIGNAL_DAYS = 7
+    STRUCTURE_PLAN_DAYS = 3
+    STRUCTURE_PLAN_LOG_DAYS = 3
+    PAPER_RUNTIME_LOG_DAYS = 7
+    POSITION_EVENT_DAYS = 7
+    STRATEGY_DECISION_DAYS = 7
+    OUTBOX_PENDING_DAYS = 1
+    EQUITY_POINT_KEEP_SECONDS = 60
     BATCH_SIZE = 5000
 
     def __init__(self, storage: Optional[MySQLStorage] = None):
@@ -51,6 +58,42 @@ class DataRetentionService:
             ),
             "strategy_pivot_points": self._delete_in_batches(
                 "strategy_pivot_points", "valid_until < ?", (current,)
+            ),
+            "inactive_structure_trade_plans": self._delete_in_batches(
+                "structure_trade_plans",
+                "status IN ('superseded','invalidated','expired') AND created_at < ?",
+                (current - self.STRUCTURE_PLAN_DAYS * 86400,),
+            ),
+            "structure_plan_created_logs": self._delete_in_batches(
+                "system_event_logs",
+                "event_type = 'structure_plan_created' AND created_at < ?",
+                (current - self.STRUCTURE_PLAN_LOG_DAYS * 86400,),
+            ),
+            "stale_outbox_events": self._delete_in_batches(
+                "outbox_events",
+                "status = 'pending' AND created_at < ?",
+                (current - self.OUTBOX_PENDING_DAYS * 86400,),
+            ),
+            "paper_runtime_logs": self._delete_in_batches(
+                "paper_runtime_logs",
+                "created_at < ?",
+                (current - self.PAPER_RUNTIME_LOG_DAYS * 86400,),
+            ),
+            "position_management_events": self._delete_in_batches(
+                "position_management_events",
+                "created_at < ?",
+                (current - self.POSITION_EVENT_DAYS * 86400,),
+            ),
+            "old_strategy_decisions": self._delete_in_batches(
+                "runtime_entities",
+                "entity_type = 'strategy_decision' AND created_at < ?",
+                (current - self.STRATEGY_DECISION_DAYS * 86400,),
+            ),
+            "live_equity_points": self._downsample_equity_points(
+                "live_equity_points", current
+            ),
+            "paper_equity_points": self._downsample_equity_points(
+                "paper_equity_points", current
             ),
         }
         return results
@@ -113,6 +156,9 @@ class DataRetentionService:
                 "paper_heartbeat_days": self.PAPER_HEARTBEAT_DAYS,
                 "backtest_detail_days": self.BACKTEST_DETAIL_DAYS,
                 "alpha_signal_days": self.ALPHA_SIGNAL_DAYS,
+                "structure_plan_days": self.STRUCTURE_PLAN_DAYS,
+                "outbox_pending_days": self.OUTBOX_PENDING_DAYS,
+                "equity_point_keep_seconds": self.EQUITY_POINT_KEEP_SECONDS,
                 "vacuum_interval_days": None,
                 "vacuum_free_ratio": None,
                 "vacuum_min_reclaim_bytes": None,
@@ -191,6 +237,14 @@ class DataRetentionService:
                 WHERE status IN ({placeholders}) AND completed_at < ?
             )""",
             (*terminal, cutoff),
+        )
+
+    def _downsample_equity_points(self, table: str, now: int) -> int:
+        """Keep one equity point per minute and drop intra-minute duplicates."""
+        return self._delete_in_batches(
+            table,
+            "point_time < ? AND MOD(point_time, ?) <> 0",
+            (int(now), int(self.EQUITY_POINT_KEEP_SECONDS)),
         )
 
     def _delete_in_batches(
