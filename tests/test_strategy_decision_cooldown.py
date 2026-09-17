@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime
 
 from market.models import TradingSignal, TradingStrategy
-from market.services.strategy.strategy_service import StrategyService
+from market.services.strategy.strategy_service import StrategyService, _round_market_price
 
 
 class _StrategyStore:
@@ -153,6 +153,13 @@ class StrategyDecisionCooldownTests(unittest.TestCase):
         self.assertEqual("buy", different_stage.action)
         self.assertEqual("buy", different_deployment.action)
         self.assertEqual("sell", different_direction.action)
+
+    def test_fx_stop_price_keeps_broker_precision(self):
+        self.assertEqual(1.14547, _round_market_price(1.14547161, 1.14847))
+        self.assertLess(_round_market_price(1.14547161, 1.14847), 1.14847)
+
+    def test_two_decimal_instruments_remain_two_decimal_prices(self):
+        self.assertEqual(4361.27, _round_market_price(4361.271234, 4363.55))
 
 
 if __name__ == "__main__":

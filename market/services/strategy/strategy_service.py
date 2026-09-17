@@ -23,6 +23,25 @@ from ..position_manager import PositionManager
 from .risk_manager import RiskManager
 
 
+def _round_market_price(value: float, reference_price: float) -> float:
+    """Round a price without destroying FX/metal broker precision.
+
+    The old decision serializer rounded every instrument to two decimals.  For
+    EURUSD that can move a valid buy stop from 1.14547 to 1.15, placing it above
+    the entry and causing MT5 ``invalid stops``.  The incoming quote already
+    carries the broker's useful precision, so retain at least that precision
+    with conservative floors for common FX/metal price ranges.
+    """
+    number = float(value or 0)
+    if not number:
+        return 0.0
+    reference = abs(float(reference_price or number))
+    rendered = format(reference, ".8f").rstrip("0").rstrip(".")
+    observed_digits = len(rendered.partition(".")[2])
+    minimum_digits = 5 if reference < 10 else 3 if reference < 100 else 2
+    return round(number, min(8, max(minimum_digits, observed_digits)))
+
+
 class StrategyService:
     """策略决策服务"""
 
@@ -686,8 +705,8 @@ class StrategyService:
                 signals=[s.to_dict() for s in enabled_signals],
                 signal_summary=analysis,
                 entry_price=entry_price,
-                sl=round(sl, 2),
-                tp=round(tp, 2),
+                sl=_round_market_price(sl, entry_price),
+                tp=_round_market_price(tp, entry_price),
                 volume=volume,
                 risk_points=round(risk_points, 2),
                 reward_points=round(reward_points, 2),
@@ -721,8 +740,8 @@ class StrategyService:
             signals=[s.to_dict() for s in enabled_signals],
             signal_summary=analysis,
             entry_price=entry_price,
-            sl=round(sl, 2),
-            tp=round(tp, 2),
+            sl=_round_market_price(sl, entry_price),
+            tp=_round_market_price(tp, entry_price),
             volume=volume,
             risk_points=round(risk_points, 2),
             reward_points=round(reward_points, 2),
@@ -764,8 +783,8 @@ class StrategyService:
             signals=[s.to_dict() for s in signals],
             signal_summary=analysis,
             entry_price=entry_price,
-            sl=round(sl, 2) if sl else 0,
-            tp=round(tp, 2) if tp else 0,
+            sl=_round_market_price(sl, entry_price),
+            tp=_round_market_price(tp, entry_price),
             risk_points=round(risk_points, 2),
             reward_points=round(reward_points, 2),
             risk_reward_ratio=round(rr_ratio, 2),
