@@ -580,6 +580,40 @@ class PositionManagerTests(unittest.TestCase):
         self.assertEqual(action.action, "modify_sl")
         self.assertEqual(action.stop_loss, 103)
 
+    def test_trailing_stop_does_not_repeat_when_candidate_is_not_tighter(self):
+        manager = PositionManager()
+        config = {"management_rules": [{
+            "type": "trailing_stop", "activation_r": 1.0,
+            "distance_r": 0.8,
+        }]}
+        position = {
+            "direction": "buy", "entry_price": 4359.98,
+            "stop_loss": 4361.674, "initial_risk": 4.97,
+            "favorable_price": 4365.65,
+        }
+
+        action = manager.evaluate(config, position, {"price": 4363.0})
+
+        self.assertEqual(action.action, "none")
+        self.assertFalse(any(
+            event.get("rule_type") == "trailing_stop"
+            and event.get("status") == "triggered"
+            for event in action.events
+        ))
+
+    def test_trailing_stop_never_places_stop_beyond_current_price(self):
+        action = PositionManager().evaluate({"management_rules": [{
+            "type": "trailing_stop", "activation_r": 1.0,
+            "distance_r": 0.8,
+        }]}, {
+            "direction": "buy", "entry_price": 100,
+            "stop_loss": 95, "initial_risk": 5,
+            "favorable_price": 110,
+        }, {"price": 105})
+
+        self.assertEqual(action.action, "none")
+        self.assertFalse(any(event.get("status") == "triggered" for event in action.events))
+
     def test_partial_take_profit_can_move_stop_to_break_even(self):
         manager = PositionManager()
         action = manager.evaluate({

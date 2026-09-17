@@ -14,6 +14,9 @@ class _Request:
             "max_volume": 100,
             "volume_digits": 2,
             "contract_size": 100,
+            "price_digits": 2,
+            "tick_size": 0.01,
+            "point_size": 0.01,
             "source": "mt5",
         }
 
@@ -44,6 +47,8 @@ class EAInstrumentSpecTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["account_id"], 42)
         self.assertEqual(fake.calls[0][0:2], (42, "GOLD#"))
+        self.assertEqual(fake.calls[0][2]["price_digits"], 2)
+        self.assertEqual(fake.calls[0][2]["tick_size"], 0.01)
 
 
 if __name__ == "__main__":

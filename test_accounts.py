@@ -167,6 +167,39 @@ class TradingAccountRepositoryTests(unittest.TestCase):
         self.assertEqual(updated.daily_risk_limit, 12.5)
         self.assertIsNotNone(self.repository.authenticate(self.user.user_id, token))
 
+    def test_single_position_loss_limit_defaults_and_updates(self):
+        account = self.repository.create_paper_account(
+            self.user.user_id, "Loss Guard Paper", 10000
+        )
+
+        self.assertTrue(account.single_position_loss_limit_enabled)
+        self.assertEqual(account.single_position_loss_limit_amount, 30.0)
+
+        updated = self.repository.update_controls(
+            self.user.user_id,
+            account.account_id,
+            single_position_loss_limit_enabled=False,
+            single_position_loss_limit_amount=45.5,
+        )
+
+        self.assertFalse(updated.single_position_loss_limit_enabled)
+        self.assertEqual(updated.single_position_loss_limit_amount, 45.5)
+        payload = _account_payload(updated, [])
+        self.assertFalse(payload["single_position_loss_limit_enabled"])
+        self.assertEqual(payload["single_position_loss_limit_amount"], 45.5)
+
+    def test_single_position_loss_limit_rejects_invalid_amount(self):
+        account = self.repository.create_paper_account(
+            self.user.user_id, "Invalid Guard Paper", 10000
+        )
+
+        with self.assertRaisesRegex(ValueError, "单笔持仓最大亏损金额"):
+            self.repository.update_controls(
+                self.user.user_id,
+                account.account_id,
+                single_position_loss_limit_amount=0,
+            )
+
     def test_online_mt5_cannot_be_archived_and_offline_account_can_restore(self):
         account, token = self.repository.create_or_rotate_default(self.user.user_id)
         self.repository.authenticate(self.user.user_id, token)

@@ -42,7 +42,9 @@ from mysql_repositories import (
     TradingAccountRepository,
 )
 from repositories.platform import PlatformInstrumentMappingRepository
-from repositories.instrument_specs import InstrumentSpecRepository, normalize_volume
+from repositories.instrument_specs import (
+    InstrumentSpecRepository, normalize_price, normalize_volume,
+)
 from repositories.ai import AISignalSourceRepository, SharedAIRuntimeRepository
 from repositories.strategy import StrategyDeploymentRepository
 from repositories.trading import PositionManagementEventRepository, TradeExecutionRepository
@@ -96,6 +98,7 @@ class TradingServer:
         self.strategy_deployments = self.repositories.deployments
         self.account_repository = self.repositories.accounts
         self.instrument_mappings = PlatformInstrumentMappingRepository()
+        self.instrument_specs = InstrumentSpecRepository(self.repositories.storage)
         self._ai_signal_source_repository = self.repositories.ai_sources
         self.memberships = MembershipService()
         self.event_bus = EventBus()
@@ -264,9 +267,29 @@ class TradingServer:
                 "close_instruction",
                 statuses=["pending", "sent", "delivered"],
             ):
-                self._close_position_instructions[item["symbol"]].append(
-                    int(item["ticket"])
-                )
+                ticket = int(item.get("ticket") or 0)
+                symbol = str(item.get("symbol") or "")
+                if ticket <= 0 or not symbol:
+                    continue
+                self._close_position_instructions[symbol].append({
+                    "symbol": symbol,
+                    "ticket": ticket,
+                    "instruction_id": str(
+                        item.get("instruction_id")
+                        or item.get("entity_id")
+                        or f"position-close-{ticket}"
+                    ),
+                    "run_id": str(item.get("run_id") or ""),
+                })
+            for item in self._runtime_repository.list_entities(
+                "position_update_instruction",
+                statuses=["pending", "delivered"],
+            ):
+                ticket = int(item.get("ticket") or 0)
+                symbol = str(item.get("symbol") or "")
+                if ticket <= 0 or not symbol:
+                    continue
+                self._position_update_instructions[symbol][ticket] = dict(item)
 
         # 服务层
         self.pending_order_service = PendingOrderService(self.pending_order_store)
@@ -1190,6 +1213,11 @@ class TradingServer:
                 partial_instructions=self._position_partial_instructions,
                 close_callback=self.add_close_position_instruction,
             )
+            if applied.get("stop_update"):
+                instruction = self._queue_position_update_instruction(
+                    symbol, applied["stop_update"], events=action.events,
+                )
+                state["pending_stop_instruction_id"] = instruction["instruction_id"]
             if applied["close"]:
                 self._managed_position_state.pop(ticket, None)
 
@@ -1251,14 +1279,25 @@ class TradingServer:
         for event in events:
             if event.get("status") not in {"triggered"}:
                 continue
+            is_stop_request = bool(event.get("candidate_stop_loss")) and str(
+                event.get("rule_type") or ""
+            ) in {"break_even", "trailing_stop", "pivot_trailing"}
+            status = "requested" if is_stop_request else str(event.get("status") or "")
+            event_type = (
+                "stop_loss_update_requested"
+                if is_stop_request else event.get("rule_type") or "position_management"
+            )
+            message = str(event.get("message") or "")
+            if is_stop_request:
+                message += "，已生成修改请求，等待MT5执行回执"
             self._position_event_repository.record(
                 int(user_id), int(account_id), str(ticket),
-                event.get("rule_type") or "position_management",
-                event.get("message", ""),
+                event_type,
+                message,
                 symbol=symbol,
                 ticket=ticket,
                 rule_type=event.get("rule_type", ""),
-                status=event.get("status", ""),
+                status=status,
                 price=event.get("price", 0),
                 stop_loss=(
                     event.get("new_stop_loss")
@@ -1267,13 +1306,214 @@ class TradingServer:
                 ),
                 take_profit=state.get("take_profit", 0),
                 volume=state.get("remaining_volume") or state.get("volume", 0),
-                payload=event,
+                payload={**event, "status": status},
             )
             self.event_bus.publish(ApplicationEvent(
                 "position_event_recorded",
                 {**event, "ticket": ticket, "symbol": symbol},
                 int(user_id), int(account_id), str(symbol or ""),
             ))
+
+    @staticmethod
+    def _position_update_instruction_id(
+        account_id: int, ticket: int, stop_loss: float, take_profit: float,
+    ) -> str:
+        """Return a stable id for one exact broker-side SL/TP mutation."""
+        return (
+            f"position-sl-{int(account_id or 0)}-{int(ticket)}-"
+            f"{float(stop_loss):.8f}-{float(take_profit):.8f}"
+        )
+
+    def _queue_position_update_instruction(
+        self, symbol: str, update: Dict, *, events: Optional[List[Dict]] = None,
+    ) -> Dict:
+        """Persist an SL/TP update until MT5 confirms it was executed.
+
+        The previous implementation kept this command only in memory and
+        removed it as soon as it appeared in one HTTP response.  A network
+        interruption or an older EA parser therefore lost the protection
+        permanently.  The stable instruction id also makes retries idempotent.
+        """
+        ticket = int(update.get("ticket") or 0)
+        stop_loss = float(update.get("sl") or 0)
+        take_profit = float(update.get("tp") or 0)
+        state = self._managed_position_state.get(ticket) or {}
+        direction = str(state.get("direction") or "").lower()
+        try:
+            spec = self.instrument_specs.get(
+                int(self.account_id or 0), str(symbol or ""),
+            )
+        except Exception:
+            # Price specifications were added after volume specifications.
+            # Keep legacy accounts operational until their EA uploads them.
+            spec = {}
+        stop_rounding = "up" if direction == "buy" else (
+            "down" if direction == "sell" else "nearest"
+        )
+        stop_loss = normalize_price(stop_loss, spec, direction=stop_rounding)
+        take_profit = normalize_price(take_profit, spec)
+        instruction_id = self._position_update_instruction_id(
+            int(self.account_id or 0), ticket, stop_loss, take_profit,
+        )
+        existing = (
+            self._runtime_repository.get_entity(
+                "position_update_instruction", instruction_id,
+            )
+            if self._runtime_repository else None
+        ) or {}
+        now_ts = int(time.time())
+        source_event = next((
+            item for item in (events or [])
+            if item.get("status") == "triggered"
+            and item.get("candidate_stop_loss") is not None
+        ), {})
+        payload = {
+            **existing,
+            **dict(update),
+            "instruction_id": instruction_id,
+            "ticket": ticket,
+            "symbol": str(symbol or ""),
+            "sl": stop_loss,
+            "tp": take_profit,
+            "price_digits": int(spec.get("price_digits") or 0),
+            "tick_size": float(spec.get("tick_size") or 0),
+            "point_size": float(spec.get("point_size") or 0),
+            "reason": str(update.get("reason") or "position_management"),
+            "source_rule": str(source_event.get("rule_type") or "position_management"),
+            "status": str(existing.get("status") or "pending"),
+            "attempts": int(existing.get("attempts") or 0),
+            "created_at": int(existing.get("created_at") or now_ts),
+            "last_delivered_at": int(existing.get("last_delivered_at") or 0),
+        }
+
+        # A tighter stop supersedes an older unacknowledged target for the same
+        # ticket.  Never let a delayed retry loosen protection again.
+        if self._runtime_repository:
+            for old in self._runtime_repository.list_entities(
+                "position_update_instruction",
+                statuses=["pending", "delivered"],
+            ):
+                old_id = str(old.get("instruction_id") or "")
+                if int(old.get("ticket") or 0) != ticket or old_id == instruction_id:
+                    continue
+                old = {**old, "status": "superseded", "superseded_by": instruction_id,
+                       "updated_at": now_ts}
+                self._runtime_repository.upsert_entity(
+                    "position_update_instruction", old_id, old,
+                    symbol=str(old.get("symbol") or symbol), status="superseded",
+                )
+            self._runtime_repository.upsert_entity(
+                "position_update_instruction", instruction_id, payload,
+                symbol=str(symbol or ""), status=payload["status"],
+            )
+        self._position_update_instructions[str(symbol or "")][ticket] = payload
+        return payload
+
+    def _deliver_position_update_instructions(self, symbol: str) -> List[Dict]:
+        """Return due SL/TP commands without deleting unacknowledged work."""
+        now_ts = int(time.time())
+        retry_seconds = 3
+        queued = self._position_update_instructions.get(symbol, {})
+        if not self._runtime_repository:
+            return list(self._position_update_instructions.pop(symbol, {}).values())
+        result = []
+        for ticket, raw in list(queued.items()):
+            item = dict(raw)
+            if item.get("status") not in {"pending", "delivered"}:
+                continue
+            last_delivered_at = int(item.get("last_delivered_at") or 0)
+            if last_delivered_at and now_ts - last_delivered_at < retry_seconds:
+                continue
+            item["status"] = "delivered"
+            item["attempts"] = int(item.get("attempts") or 0) + 1
+            item["last_delivered_at"] = now_ts
+            self._runtime_repository.upsert_entity(
+                "position_update_instruction", item["instruction_id"], item,
+                symbol=symbol, status="delivered",
+            )
+            queued[int(ticket)] = item
+            result.append({
+                "instruction_id": item["instruction_id"],
+                "ticket": int(item["ticket"]),
+                "sl": float(item.get("sl") or 0),
+                "tp": float(item.get("tp") or 0),
+                "reason": str(item.get("reason") or "position_management"),
+            })
+        return result
+
+    def apply_position_update_execution_report(self, report: Dict) -> Optional[Dict]:
+        """Close the durable SL/TP delivery loop from an MT5 receipt."""
+        instruction_id = str(report.get("instruction_id") or "")
+        if not instruction_id or not self._runtime_repository:
+            return None
+        item = self._runtime_repository.get_entity(
+            "position_update_instruction", instruction_id,
+        )
+        if not item:
+            return None
+        success = bool(report.get("success"))
+        if success and str(item.get("status") or "") == "executed":
+            return item
+        retcode = int(report.get("retcode") or 0)
+        # INVALID_STOPS can be temporary: a correctly normalized trailing stop
+        # may still be inside the broker's freeze/stops level at this Tick and
+        # become valid as price moves. Keep that instruction durable as well.
+        transient_retcodes = {10004, 10012, 10016, 10020, 10021, 10031}
+        status = "executed" if success else (
+            "pending" if retcode in transient_retcodes else "failed"
+        )
+        actual_sl = float(report.get("executed_price") or 0)
+        now_ts = int(time.time())
+        item.update({
+            "status": status,
+            "reported_at": now_ts,
+            "actual_sl": actual_sl,
+            "retcode": retcode,
+            "error_message": str(report.get("error_message") or ""),
+        })
+        if status == "pending":
+            item["last_delivered_at"] = 0
+        self._runtime_repository.upsert_entity(
+            "position_update_instruction", instruction_id, item,
+            symbol=str(item.get("symbol") or report.get("symbol") or ""),
+            status=status,
+        )
+        ticket = int(item.get("ticket") or report.get("mt5_position_id") or 0)
+        symbol = str(item.get("symbol") or report.get("symbol") or "")
+        state = self._managed_position_state.get(ticket) or {}
+        if success:
+            if actual_sl > 0:
+                state["stop_loss"] = actual_sl
+            state["pending_stop_loss"] = 0.0
+            state["pending_stop_instruction_id"] = ""
+            queued = self._position_update_instructions.get(symbol, {})
+            if str((queued.get(ticket) or {}).get("instruction_id") or "") == instruction_id:
+                queued.pop(ticket, None)
+        elif status == "failed":
+            if actual_sl > 0:
+                state["stop_loss"] = actual_sl
+            state["pending_stop_loss"] = 0.0
+            state["pending_stop_instruction_id"] = ""
+            self._position_update_instructions.get(symbol, {}).pop(ticket, None)
+        else:
+            self._position_update_instructions[symbol][ticket] = item
+
+        self._position_event_repository.record(
+            int(self.user_id or 0), int(self.account_id or 0), str(ticket),
+            "stop_loss_update_execution",
+            (
+                f"MT5已执行止损调整，实际SL {actual_sl:g}"
+                if success else
+                f"MT5止损调整失败：{item['error_message'] or retcode}"
+            ),
+            symbol=symbol, ticket=ticket,
+            rule_type=str(item.get("source_rule") or "position_management"),
+            status="executed" if success else status,
+            stop_loss=actual_sl or float(item.get("sl") or 0),
+            take_profit=float(item.get("tp") or 0),
+            payload={**item, "instruction_id": instruction_id},
+        )
+        return item
 
     # ==================== 订单确认回调 ====================
 
@@ -1314,9 +1554,7 @@ class TradingServer:
         # 获取平仓指令
         close_details = self.get_close_position_instruction_details(symbol)
         close_tickets = [int(item.get("ticket")) for item in close_details]
-        position_updates = list(
-            self._position_update_instructions.pop(symbol, {}).values()
-        )
+        position_updates = self._deliver_position_update_instructions(symbol)
         position_partials = list(
             self._position_partial_instructions.pop(symbol, {}).values()
         )
@@ -1324,7 +1562,7 @@ class TradingServer:
         return {
             "trades": trades,
             "pending_orders": pending_orders,
-            "close_tickets": [int(item.get("ticket")) for item in close_tickets],
+            "close_tickets": close_tickets,
             "close_instructions": close_details,
             "position_updates": position_updates,
             "position_partials": position_partials,
@@ -1421,15 +1659,40 @@ class TradingServer:
     def get_close_position_instruction_details(self, symbol: str) -> List[Dict]:
         """获取并清空带关联 ID 的平仓指令。"""
         with self.lock:
-            tickets = self._close_position_instructions.get(symbol, [])
+            raw_items = self._close_position_instructions.get(symbol, [])
             self._close_position_instructions[symbol] = []
+            tickets = []
+            for raw_item in raw_items:
+                if isinstance(raw_item, dict):
+                    ticket = int(raw_item.get("ticket") or 0)
+                    item = {
+                        **raw_item,
+                        "symbol": str(raw_item.get("symbol") or symbol),
+                        "ticket": ticket,
+                        "instruction_id": str(
+                            raw_item.get("instruction_id")
+                            or f"position-close-{ticket}"
+                        ),
+                        "run_id": str(raw_item.get("run_id") or ""),
+                    }
+                else:
+                    # 兼容修复前已加载到内存中的旧 ticket 整数格式。
+                    ticket = int(raw_item or 0)
+                    item = {
+                        "symbol": symbol,
+                        "ticket": ticket,
+                        "instruction_id": f"position-close-{ticket}",
+                        "run_id": "",
+                    }
+                if ticket > 0:
+                    tickets.append(item)
             if self._runtime_repository:
                 now_ts = int(__import__("time").time())
                 for item in tickets:
                     self._runtime_repository.upsert_entity(
                         "close_instruction",
-                    str(item.get("instruction_id") or f"position-close-{item['ticket']}"),
-                    dict(item, status="sent"),
+                        str(item.get("instruction_id") or f"position-close-{item['ticket']}"),
+                        dict(item, status="sent"),
                         symbol=symbol,
                         status="sent",
                     )

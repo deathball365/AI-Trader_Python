@@ -377,6 +377,12 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 daily_order_limit=payload.get("daily_order_limit"),
                 auto_flatten_enabled=payload.get("auto_flatten_enabled"),
                 auto_flatten_time=payload.get("auto_flatten_time"),
+                single_position_loss_limit_enabled=payload.get(
+                    "single_position_loss_limit_enabled"
+                ),
+                single_position_loss_limit_amount=payload.get(
+                    "single_position_loss_limit_amount"
+                ),
             )
             return {
                 "status": "ok",
@@ -1071,6 +1077,8 @@ def _account_payload(
         "daily_order_limit": account.daily_order_limit,
         "auto_flatten_enabled": account.auto_flatten_enabled,
         "auto_flatten_time": account.auto_flatten_time,
+        "single_position_loss_limit_enabled": account.single_position_loss_limit_enabled,
+        "single_position_loss_limit_amount": account.single_position_loss_limit_amount,
         "archived_at": account.archived_at,
         "is_default": (
             account.account_key == TradingAccountRepository.DEFAULT_ACCOUNT_KEY

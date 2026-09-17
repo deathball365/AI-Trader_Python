@@ -460,6 +460,9 @@ class MySQLStorage:
                     max_volume DECIMAL(20,8) NOT NULL DEFAULT 100.0,
                     volume_digits INT NOT NULL DEFAULT 2,
                     contract_size DECIMAL(24,8) NOT NULL DEFAULT 1.0,
+                    price_digits INT NOT NULL DEFAULT 0,
+                    tick_size DECIMAL(24,10) NOT NULL DEFAULT 0,
+                    point_size DECIMAL(24,10) NOT NULL DEFAULT 0,
                     source VARCHAR(32) NOT NULL DEFAULT 'default',
                     updated_at BIGINT NOT NULL,
                     PRIMARY KEY (account_id, symbol),
@@ -919,6 +922,13 @@ class MySQLStorage:
                         ("auto_flatten_enabled", "TINYINT NOT NULL DEFAULT 0"),
                         ("auto_flatten_time", "VARCHAR(5) NULL"),
                         ("daily_risk_limit", "DOUBLE NOT NULL DEFAULT 5.0"),
+                        ("single_position_loss_limit_enabled", "TINYINT NOT NULL DEFAULT 1"),
+                        ("single_position_loss_limit_amount", "DOUBLE NOT NULL DEFAULT 30.0"),
+                    ),
+                    "account_instrument_specs": (
+                        ("price_digits", "INT NOT NULL DEFAULT 0"),
+                        ("tick_size", "DECIMAL(24,10) NOT NULL DEFAULT 0"),
+                        ("point_size", "DECIMAL(24,10) NOT NULL DEFAULT 0"),
                     ),
                     "structure_plan_executions": (
                         ("plan_stage", "VARCHAR(32) NOT NULL DEFAULT 'default'"),

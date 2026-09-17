@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright "wwananggxxxx"
 #property link      "https://www.mql5.com"
-#property version   "2.07"
-#define EA_API_VERSION "2.0.8"
+#property version   "2.09"
+#define EA_API_VERSION "2.0.9"
 #property strict
 
 //--- 需要访问Web请求权限
@@ -31,6 +31,7 @@ string g_activationCode = "";
 string g_credentialsFile = "AITrader_credentials.dat";
 uint g_lastPythonRequestTime = 0;
 uint g_pythonRequestInterval = 300;  // 毫秒；Tick驱动但避免请求过密
+const uint TRADE_POLL_FALLBACK_INTERVAL_MS = 3000; // 无Tick时仍领取已生成指令
 uint g_lastHistoryTaskPollTime = 0;
 uint g_historyTaskPollInterval = 5000;  // 历史数据任务每5秒处理一个分片
 bool g_historyTaskActive = false;
@@ -400,6 +401,28 @@ double NormalizeTradeVolume(string symbol, double requested, bool closing=false,
    return NormalizeDouble(normalized, VolumeDigits(step));
   }
 
+double NormalizeTradePrice(string symbol, double requested, int roundingMode=0)
+  {
+   if(requested <= 0)
+      return 0.0;
+   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(tickSize <= 0)
+      tickSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   if(tickSize > 0)
+     {
+      double units = requested / tickSize;
+      if(roundingMode > 0)
+         units = MathCeil(units - 0.000000001);
+      else if(roundingMode < 0)
+         units = MathFloor(units + 0.000000001);
+      else
+         units = MathRound(units);
+      requested = units * tickSize;
+     }
+   return NormalizeDouble(requested, digits);
+  }
+
 bool SendInstrumentSpec()
   {
    if(StringLen(g_eaToken) == 0 || StringLen(_Symbol) == 0)
@@ -408,6 +431,9 @@ bool SendInstrumentSpec()
    double maxVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    double stepVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   int priceDigits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double pointSize = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    if(minVolume <= 0) minVolume = 0.01;
    if(stepVolume <= 0) stepVolume = minVolume;
    if(maxVolume <= 0) maxVolume = 100.0;
@@ -419,6 +445,9 @@ bool SendInstrumentSpec()
    jsonBody += "\"max_volume\":" + DoubleToString(maxVolume, 8) + ",";
    jsonBody += "\"volume_digits\":" + IntegerToString(VolumeDigits(stepVolume)) + ",";
    jsonBody += "\"contract_size\":" + DoubleToString(contractSize, 8) + ",";
+   jsonBody += "\"price_digits\":" + IntegerToString(priceDigits) + ",";
+   jsonBody += "\"tick_size\":" + DoubleToString(tickSize, 10) + ",";
+   jsonBody += "\"point_size\":" + DoubleToString(pointSize, 10) + ",";
    jsonBody += "\"source\":\"mt5\"}";
    uchar postData[];
    uchar responseData[];
@@ -436,7 +465,8 @@ bool SendInstrumentSpec()
       return false;
      }
    Print("[品种规格上报] ", _Symbol, " min=", DoubleToString(minVolume, 8),
-         " step=", DoubleToString(stepVolume, 8));
+         " step=", DoubleToString(stepVolume, 8), " digits=", priceDigits,
+         " tick=", DoubleToString(tickSize, 10));
    return true;
   }
 
@@ -705,7 +735,7 @@ void CheckAndCloseRiskyPositions()
 //+------------------------------------------------------------------+
 //| 请求Python服务获取交易指令                                       |
 //+------------------------------------------------------------------+
-void RequestTradesFromPython()
+void RequestTradesFromPython(bool pollOnly)
   {
    string headers = BuildAuthenticatedHeaders();
    uchar responseData[];
@@ -717,18 +747,21 @@ void RequestTradesFromPython()
    string currentPrice = DoubleToString((g_bidPrice + g_askPrice) / 2, _Digits);
    string encodedSymbol = URLEncode(_Symbol);
    string url = g_pythonServer + "/get_trades?symbol=" + encodedSymbol + "&price=" + currentPrice;
+   if(pollOnly)
+      url += "&poll_only=true";
    
    // 建立HTTP请求到Python服务。网络瞬断或服务端刚好繁忙时，不能把
    // 本次机会直接丢掉；服务端会保留同一个 instruction_id 供后续拉取。
    uchar emptyData[];
-   for(int attempt = 0; attempt < 3; attempt++)
+   int maxAttempts = pollOnly ? 1 : 3;
+   for(int attempt = 0; attempt < maxAttempts; attempt++)
      {
       ArrayFree(responseData);
       outheaders = "";
       responseCode = WebRequest("GET", url, headers, 3000, emptyData, responseData, outheaders);
       if(responseCode == 200)
          break;
-      if(attempt < 2)
+      if(attempt < maxAttempts - 1)
          Sleep(500 * (attempt + 1));
      }
 
@@ -869,13 +902,35 @@ void ParseAndExecuteTrades(string jsonData)
             if(objectStart == -1 || objectEnd == -1) break;
             string updateJson = StringSubstr(updatesJson, objectStart, objectEnd - objectStart + 1);
                long ticket = (long)ExtractJsonDouble(updateJson, "ticket");
+               string instructionId = ExtractJsonString(updateJson, "instruction_id");
                double sl = ExtractJsonDouble(updateJson, "sl");
                double tp = ExtractJsonDouble(updateJson, "tp");
                if(ticket > 0 && PositionSelectByTicket(ticket))
                  {
                   string updateSymbol = PositionGetString(POSITION_SYMBOL);
-               bool modifyOk = trade.PositionModify(ticket, sl, tp);
-               long modifyRetcode = (long)trade.ResultRetcode();
+               ENUM_POSITION_TYPE positionType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+               int stopRounding = positionType == POSITION_TYPE_BUY ? 1 : -1;
+               sl = NormalizeTradePrice(updateSymbol, sl, stopRounding);
+               tp = NormalizeTradePrice(updateSymbol, tp, 0);
+               double bidPrice = SymbolInfoDouble(updateSymbol, SYMBOL_BID);
+               double askPrice = SymbolInfoDouble(updateSymbol, SYMBOL_ASK);
+               double pointSize = SymbolInfoDouble(updateSymbol, SYMBOL_POINT);
+               long stopsLevel = SymbolInfoInteger(updateSymbol, SYMBOL_TRADE_STOPS_LEVEL);
+               double minimumDistance = MathMax(0.0, (double)stopsLevel * pointSize);
+               bool stopIsValid = sl <= 0 || (
+                  positionType == POSITION_TYPE_BUY ?
+                     sl < bidPrice - minimumDistance + pointSize * 0.1 :
+                     sl > askPrice + minimumDistance - pointSize * 0.1
+               );
+               bool modifyOk = false;
+               long modifyRetcode = TRADE_RETCODE_INVALID_STOPS;
+               string modifyError = "止损不符合当前品种报价精度、最小跳动或最小距离";
+               if(stopIsValid)
+                 {
+                  modifyOk = trade.PositionModify(ticket, sl, tp);
+                  modifyRetcode = (long)trade.ResultRetcode();
+                  modifyError = modifyOk ? "" : trade.ResultRetcodeDescription();
+                 }
                // PositionModify 返回 true 只表示请求已被交易类接受；以 retcode
                // 作为最终结果依据，并把结果回报后端，供审计链显示。
                bool modifySuccess = modifyOk && (
@@ -895,14 +950,16 @@ void ParseAndExecuteTrades(string jsonData)
                         " Retcode: ", modifyRetcode);
                else
                   Print("[持仓更新失败] Ticket: ", ticket, " Retcode: ",
-                        trade.ResultRetcodeDescription());
+                        modifyRetcode, " ", modifyError, " normalized SL=", sl);
                SendTradeExecutionReport(
-                  "position-sl-" + IntegerToString(ticket) + "-" + IntegerToString((long)TimeCurrent()),
+                  instructionId == "" ?
+                     "position-sl-" + IntegerToString(ticket) + "-" + IntegerToString((long)TimeCurrent()) :
+                     instructionId,
                   "position-" + IntegerToString(ticket), updateSymbol, "position_modify_sl",
                   modifySuccess, sl, actualSl, 0, 0,
                   (long)trade.ResultOrder(), (long)trade.ResultDeal(), ticket,
                   modifyRetcode,
-                  modifySuccess ? "" : trade.ResultRetcodeDescription()
+                  modifySuccess ? "" : modifyError
                );
               }
            cursor = objectEnd + 1;
@@ -1606,7 +1663,7 @@ void OnTick()
    uint currentTime = GetTickCount();
    if((currentTime - g_lastPythonRequestTime) >= g_pythonRequestInterval)
      {
-      RequestTradesFromPython();
+      RequestTradesFromPython(false);
       g_lastPythonRequestTime = currentTime;
      }
   }
@@ -1617,6 +1674,16 @@ void OnTick()
 void OnTimer()
   {
    datetime now = TimeCurrent();
+
+//--- 行情稀疏或当前图表没有新Tick时，仍需定时领取服务端已生成的指令。
+//--- poll_only不会用旧报价再次驱动策略，只读取已有指令，避免重复信号。
+   uint requestClock = GetTickCount();
+   if((requestClock - g_lastPythonRequestTime) >= TRADE_POLL_FALLBACK_INTERVAL_MS)
+     {
+      UpdateStatistics();
+      RequestTradesFromPython(true);
+      g_lastPythonRequestTime = requestClock;
+     }
 
 //--- 历史任务是低优先级，不能阻断成交、持仓和心跳任务
    CheckHistoricalDataTask();

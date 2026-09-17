@@ -1942,12 +1942,18 @@ class StructurePlanSignalGenerator:
         period = str(config.get("period") or "M5").upper()
         source_id = MARKET_STRUCTURE_PLAN_SOURCE_ID
         key = (source_id, str(symbol).upper(), period)
-        if key not in self._cache:
-            self._cache[key] = self.repository.list_current(
-                self.user_id, 0, "",
-                source_id, symbol, period,
-            )
-        return self._cache.get(key, [])
+        # Every account/deployment owns a generator instance, while structure
+        # plans are canonical for the user/source/symbol/period.  An instance
+        # cache therefore cannot be authoritative: another account may refresh
+        # the shared scope and supersede a plan that this generator previously
+        # loaded.  Always pass through the repository's shared short TTL cache
+        # so all engines converge on the same current plan set within seconds.
+        plans = self.repository.list_current(
+            self.user_id, 0, "",
+            source_id, symbol, period,
+        )
+        self._cache[key] = plans
+        return plans
 
     def _triggered(self, plan: Dict, price: float) -> bool:
         setup_type = str(plan.get("setup_type") or "")

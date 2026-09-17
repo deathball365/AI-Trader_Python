@@ -53,24 +53,17 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
     router = APIRouter()
     market_source_policy = MarketDataSourcePolicy()
 
-    def process_tick_after_response(
+    def process_paper_tick_after_response(
         identity: EAIdentity, symbol: str, price: float,
     ) -> None:
-        """Evaluate the tick after the EA has received pending commands."""
+        """Run Paper matching after the live EA response has been assembled.
+
+        The live account is evaluated synchronously in ``get_trades`` so an
+        instruction triggered by the request's own Tick can be returned in the
+        same response.  Paper matching does not affect that response and stays
+        off the latency-sensitive EA polling path.
+        """
         try:
-            market_policy = market_source_policy.resolve(
-                identity.user_id, identity.account_id, symbol,
-            )
-            if not market_policy.get("is_market_primary"):
-                return
-            engine_manager.process_user_market_tick(
-                identity.user_id,
-                market_source_policy.execution_account_ids(
-                    identity.user_id, market_policy.get("broker_name", ""),
-                    symbol,
-                ),
-                symbol, float(price), source_account_id=identity.account_id,
-            )
             server = engine_manager.get_engine_for_ea(identity)
             tick_context = engine_manager.get_tick_execution_context(
                 identity.user_id, identity.account_id, symbol,
@@ -91,8 +84,7 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 execution_context=tick_context,
             )
         except Exception as exc:
-            # A slow/failing evaluation must not break the EA polling channel.
-            print(f"[EA] 后台Tick处理失败: {exc}")
+            print(f"[EA] 后台模拟Tick处理失败: {exc}")
 
     @router.post("/ea/activate")
     async def activate_ea(request: Request) -> Dict:
@@ -169,6 +161,9 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
                     "max_volume": payload.get("max_volume"),
                     "volume_digits": payload.get("volume_digits"),
                     "contract_size": payload.get("contract_size"),
+                    "price_digits": payload.get("price_digits"),
+                    "tick_size": payload.get("tick_size"),
+                    "point_size": payload.get("point_size"),
                     "source": payload.get("source") or "mt5",
                 },
             )
@@ -193,6 +188,10 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
         price: Optional[float] = Query(None, description="当前中间价"),
         bid: Optional[float] = Query(None, description="买价（可选，优先于 price）"),
         ask: Optional[float] = Query(None, description="卖价（可选，优先于 price）"),
+        poll_only: bool = Query(
+            False,
+            description="仅领取已生成指令，不用当前报价重复驱动策略",
+        ),
         identity: EAIdentity = Depends(require_ea_auth),
     ) -> Dict:
         """
@@ -249,6 +248,30 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
         market_policy = market_source_policy.resolve(
             identity.user_id, identity.account_id, symbol,
         )
+        should_process_tick = (
+            not poll_only
+            and price is not None and float(price) > 0
+            and market_policy.get("is_market_primary")
+        )
+        if should_process_tick:
+            # Evaluate live deployments before reading the instruction store.
+            # Previously this ran as a response background task: the request
+            # that triggered a signal had already returned empty, so a quiet
+            # symbol could wait minutes for the next EA poll and miss the
+            # trade while Paper filled immediately from the same Tick.
+            try:
+                engine_manager.process_user_market_tick(
+                    identity.user_id,
+                    market_source_policy.execution_account_ids(
+                        identity.user_id, market_policy.get("broker_name", ""),
+                        symbol,
+                    ),
+                    symbol, float(price), source_account_id=identity.account_id,
+                )
+            except Exception as exc:
+                # Existing queued instructions must remain deliverable even if
+                # the current Tick evaluation fails.
+                print(f"[EA] 实盘Tick同步处理失败: {exc}")
         result = server.get_trades_by_symbol(
             symbol, price, evaluate_price=False,
         )
@@ -258,12 +281,9 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
             server.pending_order_service.clear_all()
             result["trades"] = []
             result["pending_orders"] = []
-        if (
-            price is not None and float(price) > 0
-            and market_policy.get("is_market_primary")
-        ):
+        if should_process_tick:
             background_tasks.add_task(
-                process_tick_after_response,
+                process_paper_tick_after_response,
                 identity, symbol, float(price),
             )
         result["paper_orders_created"] = 0
@@ -366,6 +386,9 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 server.trading_instruction_service.mark_execution_report(
                     instruction_id, bool(report.get("success"))
                 )
+            report_action = str(report.get("action") or "").lower()
+            if report_action == "position_modify_sl":
+                server.apply_position_update_execution_report(report)
             if report.get("duplicate"):
                 return {"status": "ok", "duplicate": True, "report": report}
             # Scheduled account flattening is correlated by deterministic
@@ -420,7 +443,7 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
                         reason=str(report.get("error_message") or ""),
                         payload=attribution,
                     )
-            action = str(report.get("action") or "").lower()
+            action = report_action
             if action == "partial_close":
                 instruction_id = str(report.get("instruction_id") or "")
                 parts = instruction_id.split("-")
@@ -729,13 +752,36 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
                     "persisted": {"inserted": 0, "updated": 0, "unchanged": 0, "invalid": 0},
                 }
 
+            # 多个图表 EA 会重复上报同一账户的完整历史。先使用持久化表中
+            # 最新成交时间作为游标，只让真正新增的成交进入运行态和逐条落库。
+            # 同一秒可能存在多笔成交，仓储层会再按 ticket 精确去重。
+            repository = LiveTradeDealRepository()
+            incremental = repository.filter_new_deals(
+                identity.user_id, identity.account_id, deals
+            )
+            new_deals = incremental["deals"]
+            if not new_deals:
+                return {
+                    "status": "ok",
+                    "message": "没有新增交易历史",
+                    "count": 0,
+                    "persisted_count": 0,
+                    "latest_timestamp": incremental["latest_timestamp"],
+                    "persisted": {
+                        "inserted": 0,
+                        "updated": 0,
+                        "unchanged": incremental["skipped_existing"],
+                        "invalid": incremental["invalid"],
+                    },
+                }
+
             # 使用新的交易历史服务
             server = engine_manager.get_engine_for_ea(identity)
-            new_count = server.trade_history_service.process_deals(deals)
+            new_count = server.trade_history_service.process_deals(new_deals)
             # 成交历史不能只依赖运行时 24 小时缓存；账户页和策略回放需要
             # 在服务重启后仍可读取，因此同步写入 MySQL 持久化表。
-            persisted = LiveTradeDealRepository().record_many(
-                identity.user_id, identity.account_id, deals
+            persisted = repository.record_many(
+                identity.user_id, identity.account_id, new_deals
             )
 
             changed_count = persisted["inserted"] + persisted["updated"]
@@ -744,6 +790,8 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
                     "trade_history_update",
                     {
                         "deals_received": len(deals),
+                        "deals_incremental": len(new_deals),
+                        "deals_skipped_existing": incremental["skipped_existing"],
                         "deals_new_runtime": new_count,
                         "deals_inserted": persisted["inserted"],
                         "deals_updated": persisted["updated"],
@@ -761,6 +809,7 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 "message": "交易历史已更新",
                 "count": new_count,
                 "persisted_count": changed_count,
+                "latest_timestamp": incremental["latest_timestamp"],
                 "persisted": persisted,
             }
 

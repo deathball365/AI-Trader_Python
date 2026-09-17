@@ -83,6 +83,22 @@ class _DealStorage:
         }
 
 
+class _IncrementalDealStorage:
+    def __init__(self, latest_timestamp=0, tickets=()):
+        self.latest_timestamp = latest_timestamp
+        self.tickets = list(tickets)
+
+    def fetchone(self, sql, params=()):
+        if "MAX(deal_timestamp)" in sql:
+            return {"latest_timestamp": self.latest_timestamp}
+        return None
+
+    def fetchall(self, sql, params=()):
+        if "deal_timestamp = ?" in sql:
+            return [{"ticket": ticket} for ticket in self.tickets]
+        return []
+
+
 class _LossGuardStorage:
     def __init__(self):
         self.query = ""
@@ -100,6 +116,45 @@ class _LossGuardStorage:
 
 
 class TradeHistoryFixesTest(unittest.TestCase):
+    @staticmethod
+    def _deal(ticket, timestamp):
+        return {
+            "ticket": ticket, "order": ticket + 1000, "position_id": ticket + 2000,
+            "symbol": "GOLD#", "type": 0, "entry": 0,
+            "volume": 0.01, "price": 4360, "profit": 0,
+            "swap": 0, "commission": 0,
+            "deal_timestamp": timestamp, "comment": "AIT",
+        }
+
+    def test_incremental_filter_skips_old_history_and_keeps_newer_deals(self):
+        repository = LiveTradeDealRepository(
+            _IncrementalDealStorage(latest_timestamp=200, tickets=(2,))
+        )
+
+        result = repository.filter_new_deals(1, 4, [
+            self._deal(1, 100),
+            self._deal(2, 200),
+            self._deal(3, 201),
+        ])
+
+        self.assertEqual([deal["ticket"] for deal in result["deals"]], [3])
+        self.assertEqual(result["skipped_existing"], 2)
+        self.assertEqual(result["latest_timestamp"], 200)
+
+    def test_incremental_filter_keeps_late_deal_from_same_second(self):
+        repository = LiveTradeDealRepository(
+            _IncrementalDealStorage(latest_timestamp=200, tickets=(2,))
+        )
+
+        result = repository.filter_new_deals(1, 4, [
+            self._deal(2, 200),
+            self._deal(4, 200),
+            self._deal(4, 200),
+        ])
+
+        self.assertEqual([deal["ticket"] for deal in result["deals"]], [4])
+        self.assertEqual(result["skipped_existing"], 2)
+
     def test_adaptive_tuner_merges_partial_live_exits_and_ignores_open_position(self):
         storage = _AdaptiveStorage()
         tuner = AdaptiveSignalTuner(storage=storage, source_repository=object())

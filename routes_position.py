@@ -12,11 +12,79 @@ from auth import AuthUser, require_auth
 from ea_auth import EAIdentity, require_ea_auth
 from trading_engine_manager import TradingEngineManager
 from web_account_context import resolve_web_engine
+from repositories.accounts import TradingAccountRepository
 from repositories.trading import PositionManagementEventRepository
 from repositories.instrument_specs import InstrumentSpecRepository
 from market.store.structure_plan_store import StructureTradePlanRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_single_position_loss_limit(
+    trading_server,
+    *,
+    user_id: int,
+    account_id: int,
+    symbol: str,
+    positions,
+    account_repository: TradingAccountRepository,
+    event_repository: PositionManagementEventRepository,
+) -> list[int]:
+    """Queue server-side close commands for positions beyond the account limit.
+
+    MT5's reported ``profit`` is already expressed in the account currency.  A
+    deterministic instruction id plus the server's ticket-level queue
+    de-duplication makes repeated position heartbeats safe while still allowing
+    a failed/delayed close to be delivered again on the next poll cycle.
+    """
+    account = account_repository.get_by_id(int(user_id), int(account_id))
+    if account is None or not account.single_position_loss_limit_enabled:
+        return []
+    limit = float(account.single_position_loss_limit_amount or 0)
+    if limit <= 0:
+        return []
+
+    triggered: list[int] = []
+    for position in positions or []:
+        try:
+            ticket = int(position.get("ticket") or position.get("position_id") or 0)
+            profit = float(position.get("profit") or 0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if ticket <= 0 or profit > -limit:
+            continue
+        instruction_id = f"position-loss-limit-{account_id}-{ticket}"
+        prior = None
+        runtime = getattr(trading_server, "_runtime_repository", None)
+        if runtime is not None:
+            prior = runtime.get_entity("close_instruction", instruction_id)
+        trading_server.add_close_position_instruction(
+            symbol, ticket, instruction_id=instruction_id,
+        )
+        triggered.append(ticket)
+        if prior is None:
+            event_repository.record(
+                int(user_id), int(account_id), str(ticket),
+                "single_position_loss_limit",
+                (
+                    f"单笔持仓浮亏 {profit:.2f} {account.currency} 已达到上限 "
+                    f"{limit:.2f} {account.currency}，已生成平仓指令"
+                ),
+                symbol=str(symbol), ticket=ticket,
+                rule_type="single_position_loss_limit", status="triggered",
+                price=float(position.get("priceCurrent") or 0),
+                stop_loss=float(position.get("sl") or 0),
+                take_profit=float(position.get("tp") or 0),
+                volume=float(position.get("volume") or 0),
+                payload={
+                    "source": "server_position_snapshot",
+                    "profit": profit,
+                    "limit": limit,
+                    "currency": account.currency,
+                    "instruction_id": instruction_id,
+                },
+            )
+    return triggered
 
 
 def create_position_routes(engine_manager: TradingEngineManager) -> APIRouter:
@@ -87,6 +155,18 @@ def create_position_routes(engine_manager: TradingEngineManager) -> APIRouter:
             # 使用新的持仓服务
             trading_server = engine_manager.get_engine_for_ea(identity)
             result = trading_server.position_service.update_positions(symbol, positions)
+            loss_limit_tickets = _apply_single_position_loss_limit(
+                trading_server,
+                user_id=identity.user_id,
+                account_id=identity.account_id,
+                symbol=symbol,
+                positions=positions,
+                account_repository=TradingAccountRepository(repositories.storage),
+                event_repository=repositories.position_events,
+            )
+            if isinstance(result, dict):
+                result["loss_limit_close_count"] = len(loss_limit_tickets)
+                result["loss_limit_close_tickets"] = loss_limit_tickets
             try:
                 StructureTradePlanRepository().confirm_protection_for_account(
                     identity.user_id, identity.account_id, symbol, positions,

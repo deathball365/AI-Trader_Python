@@ -22,6 +22,30 @@ class PaperPositionService:
             """,
             (account_id, symbol),
         ).fetchall()
+        if not positions:
+            return balance
+        account_control = conn.execute(
+            """
+            SELECT COALESCE(single_position_loss_limit_enabled, 1)
+                       AS single_position_loss_limit_enabled,
+                   COALESCE(single_position_loss_limit_amount, 30.0)
+                       AS single_position_loss_limit_amount,
+                   currency
+            FROM trading_accounts WHERE id = ? AND user_id = ?
+            """,
+            (account_id, user_id),
+        ).fetchone()
+        loss_limit_enabled = bool(
+            account_control
+            and account_control["single_position_loss_limit_enabled"]
+        )
+        loss_limit_amount = float(
+            account_control["single_position_loss_limit_amount"]
+            if account_control else 30.0
+        )
+        account_currency = str(
+            account_control["currency"] if account_control else "USD"
+        )
         quote = TickQuote.create(bid, ask, now)
         for position in positions:
             mark = quote.close_price(position["direction"])
@@ -46,6 +70,51 @@ class PaperPositionService:
                     and "signal_take_profit" not in partial_done
                     else "take_profit"
                 )
+            if not reason and loss_limit_enabled and loss_limit_amount > 0:
+                exit_price = (
+                    bid - slippage
+                    if position["direction"] == "buy"
+                    else ask + slippage
+                )
+                multiplier = 1 if position["direction"] == "buy" else -1
+                close_volume = float(
+                    position["remaining_volume"] or position["volume"]
+                )
+                estimated_gross = (
+                    exit_price - float(position["entry_price"])
+                ) * multiplier * close_volume * contract_size
+                estimated_close_commission = (
+                    close_volume * settings["commission_per_lot"]
+                )
+                estimated_net = (
+                    estimated_gross
+                    - float(position["open_commission"] or 0)
+                    - estimated_close_commission
+                )
+                if estimated_net <= -loss_limit_amount:
+                    reason = "single_position_loss_limit"
+                    self.paper_service.position_events.record(
+                        user_id, account_id, position["position_id"],
+                        "single_position_loss_limit",
+                        (
+                            f"单笔持仓预计净亏损 {estimated_net:.2f} "
+                            f"{account_currency} 已达到上限 "
+                            f"{loss_limit_amount:.2f} {account_currency}，模拟盘立即平仓"
+                        ),
+                        symbol=symbol, position_id=position["position_id"],
+                        rule_type="single_position_loss_limit",
+                        status="triggered", price=exit_price,
+                        stop_loss=float(position["stop_loss"] or 0),
+                        take_profit=float(position["take_profit"] or 0),
+                        volume=close_volume,
+                        payload={
+                            "source": "paper_tick_matching",
+                            "estimated_net_profit": estimated_net,
+                            "limit": loss_limit_amount,
+                            "currency": account_currency,
+                        },
+                        event_time=now,
+                    )
             if not reason and position["exit_mode"] == "trailing_reverse":
                 initial_risk = float(position["initial_risk"])
                 favorable = float(position["favorable_price"])

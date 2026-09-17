@@ -689,6 +689,15 @@
           </div>
           <v-switch v-model="accountForm.autoFlattenEnabled" color="warning" inset label="开启定时全清仓" />
           <v-text-field v-model="accountForm.autoFlattenTime" label="北京时间全清仓时间" type="time" variant="outlined" :disabled="!accountForm.autoFlattenEnabled" hint="到达该时间后的 5 分钟内执行，每天最多一次" persistent-hint />
+          <v-switch v-model="accountForm.singlePositionLossLimitEnabled" color="error" inset label="开启单笔持仓最大浮亏保护" />
+          <v-text-field
+            v-model.number="accountForm.singlePositionLossLimitAmount"
+            :label="`单笔最大亏损金额（${managedAccount.currency || '账户币种'}）`"
+            type="number" min="1" step="1" variant="outlined"
+            :disabled="!accountForm.singlePositionLossLimitEnabled"
+            hint="任一持仓达到该浮亏时，服务端立即触发整笔平仓；MT5 以 EA 上报利润为准，模拟盘以当前 Tick 预计净损益为准"
+            persistent-hint
+          />
           <div class="paper-actions mt-2">
             <v-btn color="primary" :loading="accountSaving" @click="saveAccountControls">保存账户配置</v-btn>
             <v-btn v-if="managedAccount.status === 'archived'" color="success" variant="tonal" :loading="accountSaving" @click="restoreManagedAccount">恢复账户</v-btn>
@@ -763,6 +772,7 @@ const accountForm = reactive({
   dailyLossLimit: 5, dailyOrderLimit: 100,
   dailyRiskLimit: 5,
   autoFlattenEnabled: false, autoFlattenTime: '',
+  singlePositionLossLimitEnabled: true, singlePositionLossLimitAmount: 30,
 })
 const strategyDialog = ref(false)
 const selectedAccount = ref(null)
@@ -1016,7 +1026,13 @@ function deploymentHealthMeta(deployment) {
   }
   return { color: 'success', alert: false, reason: '' }
 }
-function exitReasonLabel(reason) { return { take_profit: '止盈', stop_loss: '止损' }[reason] || reason }
+function exitReasonLabel(reason) {
+  return {
+    take_profit: '止盈',
+    stop_loss: '止损',
+    single_position_loss_limit: '单笔亏损上限',
+  }[reason] || reason
+}
 function setupLabel(value) {
   return {
     range_reversal: '箱体反转',
@@ -1152,6 +1168,8 @@ function openAccountManager(account) {
     dailyOrderLimit: account.daily_order_limit,
     autoFlattenEnabled: Boolean(account.auto_flatten_enabled),
     autoFlattenTime: account.auto_flatten_time || '',
+    singlePositionLossLimitEnabled: account.single_position_loss_limit_enabled !== false,
+    singlePositionLossLimitAmount: account.single_position_loss_limit_amount ?? 30,
   })
   accountDialog.value = true
 }
@@ -1170,6 +1188,8 @@ async function saveAccountControls() {
       daily_order_limit: accountForm.dailyOrderLimit,
       auto_flatten_enabled: accountForm.autoFlattenEnabled,
       auto_flatten_time: accountForm.autoFlattenTime || null,
+      single_position_loss_limit_enabled: accountForm.singlePositionLossLimitEnabled,
+      single_position_loss_limit_amount: accountForm.singlePositionLossLimitAmount,
     })
     messageType.value = 'success'
     message.value = data.message

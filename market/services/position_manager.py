@@ -690,13 +690,34 @@ class PositionManager:
                         favorable - distance
                         if direction == "buy" else favorable + distance
                     )
-                    candidates.append(candidate)
-                    add_event(
-                        kind, "triggered",
-                        f"浮盈 {profit_r:.2f}R 达到移动止损 {rule['activation_r']}R",
-                        candidate_stop_loss=candidate,
-                        distance_r=rule["distance_r"],
+                    # A rule being above its activation threshold is not itself
+                    # an executable stop update.  Only emit a triggered event
+                    # when the candidate really tightens the broker stop and is
+                    # still on the legal side of the current market price.
+                    # Otherwise every Tick would append the same timeline event
+                    # even though ``PositionAction`` later filters the candidate.
+                    tolerance = max(abs(price) * 1e-9, 1e-8)
+                    can_tighten = (
+                        candidate < price - tolerance
+                        and (
+                            current_sl <= 0
+                            or candidate > current_sl + tolerance
+                        )
+                        if direction == "buy"
+                        else candidate > price + tolerance
+                        and (
+                            current_sl <= 0
+                            or candidate < current_sl - tolerance
+                        )
                     )
+                    if can_tighten:
+                        candidates.append(candidate)
+                        add_event(
+                            kind, "triggered",
+                            f"浮盈 {profit_r:.2f}R 达到移动止损 {rule['activation_r']}R",
+                            candidate_stop_loss=candidate,
+                            distance_r=rule["distance_r"],
+                        )
                 else:
                     add_event(
                         kind, "checked",

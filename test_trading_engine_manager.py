@@ -461,7 +461,16 @@ class TradingEngineManagerTestCase(unittest.TestCase):
             10002.0,
         )
         self.assertEqual(len(restarted.trade_history_service.get_deals("GOLD#")), 1)
-        self.assertEqual(restarted.get_close_position_instructions("GOLD#"), [1001])
+        ea_result = restarted.get_trades_by_symbol(
+            "GOLD#", evaluate_price=False,
+        )
+        self.assertEqual(ea_result["close_tickets"], [1001])
+        self.assertEqual(ea_result["close_instructions"], [{
+            "symbol": "GOLD#",
+            "ticket": 1001,
+            "instruction_id": "position-close-1001",
+            "run_id": "",
+        }])
 
         rows = RuntimeStateRepository(
             self.admin.user_id,

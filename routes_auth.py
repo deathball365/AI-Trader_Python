@@ -549,6 +549,8 @@ def _account_payload(account):
         "daily_loss_limit": account.daily_loss_limit,
         "daily_risk_limit": account.daily_risk_limit,
         "daily_order_limit": account.daily_order_limit,
+        "single_position_loss_limit_enabled": account.single_position_loss_limit_enabled,
+        "single_position_loss_limit_amount": account.single_position_loss_limit_amount,
         "archived_at": account.archived_at,
         "last_seen_at": account.last_seen_at,
         "mt5_login": account.mt5_login,

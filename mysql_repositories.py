@@ -95,6 +95,8 @@ class TradingAccountRecord:
     updated_at: int
     auto_flatten_enabled: bool = False
     auto_flatten_time: Optional[str] = None
+    single_position_loss_limit_enabled: bool = True
+    single_position_loss_limit_amount: float = 30.0
 
 
 _STORAGE: Optional[MySQLStorage] = None
@@ -131,6 +133,8 @@ class TradingAccountRepository:
                a.daily_order_limit, a.archived_at,
                COALESCE(a.auto_flatten_enabled, 0) AS auto_flatten_enabled,
                a.auto_flatten_time,
+               COALESCE(a.single_position_loss_limit_enabled, 1) AS single_position_loss_limit_enabled,
+               COALESCE(a.single_position_loss_limit_amount, 30.0) AS single_position_loss_limit_amount,
                COALESCE(c.last_seen_at, a.last_seen_at) AS last_seen_at,
                COALESCE(c.mt5_login, a.mt5_login) AS mt5_login,
                COALESCE(c.mt5_server, a.mt5_server) AS mt5_server,
@@ -288,6 +292,8 @@ class TradingAccountRepository:
         daily_order_limit: Optional[int] = None,
         auto_flatten_enabled: Optional[bool] = None,
         auto_flatten_time: Optional[str] = None,
+        single_position_loss_limit_enabled: Optional[bool] = None,
+        single_position_loss_limit_amount: Optional[float] = None,
     ) -> TradingAccountRecord:
         account = self.get_by_id(user_id, account_id)
         if account is None:
@@ -303,6 +309,8 @@ class TradingAccountRepository:
             "daily_order_limit": account.daily_order_limit,
             "auto_flatten_enabled": account.auto_flatten_enabled,
             "auto_flatten_time": account.auto_flatten_time,
+            "single_position_loss_limit_enabled": account.single_position_loss_limit_enabled,
+            "single_position_loss_limit_amount": account.single_position_loss_limit_amount,
         }
         if account_name is not None:
             name = str(account_name).strip()
@@ -330,6 +338,14 @@ class TradingAccountRepository:
             if value and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
                 raise ValueError("自动清仓时间必须是北京时间 HH:mm")
             values["auto_flatten_time"] = value or None
+        if single_position_loss_limit_enabled is not None:
+            values["single_position_loss_limit_enabled"] = bool(
+                single_position_loss_limit_enabled
+            )
+        if single_position_loss_limit_amount is not None:
+            values["single_position_loss_limit_amount"] = float(
+                single_position_loss_limit_amount
+            )
         if values["auto_flatten_enabled"] and not values["auto_flatten_time"]:
             raise ValueError("开启自动清仓后必须填写北京时间")
         if not 1 <= values["max_total_positions"] <= 100:
@@ -342,6 +358,8 @@ class TradingAccountRepository:
             raise ValueError("每日风险占用上限必须在 0.1% 到 100% 之间")
         if not 1 <= values["daily_order_limit"] <= 10000:
             raise ValueError("每日订单上限必须在 1 到 10000 之间")
+        if not 1 <= values["single_position_loss_limit_amount"] <= 1000000:
+            raise ValueError("单笔持仓最大亏损金额必须在 1 到 1000000 之间")
         now = _now_ts()
         with self.storage._lock, self.storage._connect() as conn:
             conn.execute(
@@ -351,7 +369,9 @@ class TradingAccountRepository:
                     auto_trading_enabled = ?, max_total_positions = ?,
                     max_single_volume = ?, daily_loss_limit = ?, daily_risk_limit = ?,
                     daily_order_limit = ?, auto_flatten_enabled = ?,
-                    auto_flatten_time = ?, updated_at = ?
+                    auto_flatten_time = ?,
+                    single_position_loss_limit_enabled = ?,
+                    single_position_loss_limit_amount = ?, updated_at = ?
                 WHERE id = ? AND user_id = ?
                 """,
                 (
@@ -360,6 +380,8 @@ class TradingAccountRepository:
                     values["max_total_positions"], values["max_single_volume"],
                     values["daily_loss_limit"], values["daily_risk_limit"], values["daily_order_limit"],
                     int(values["auto_flatten_enabled"]), values["auto_flatten_time"],
+                    int(values["single_position_loss_limit_enabled"]),
+                    values["single_position_loss_limit_amount"],
                     now, account_id, user_id,
                 ),
             )
@@ -798,6 +820,12 @@ class TradingAccountRepository:
             daily_order_limit=int(row["daily_order_limit"]),
             auto_flatten_enabled=bool(row.get("auto_flatten_enabled", 0)),
             auto_flatten_time=row.get("auto_flatten_time"),
+            single_position_loss_limit_enabled=bool(
+                row.get("single_position_loss_limit_enabled", 1)
+            ),
+            single_position_loss_limit_amount=float(
+                row.get("single_position_loss_limit_amount", 30.0) or 30.0
+            ),
             archived_at=(
                 int(row["archived_at"])
                 if row["archived_at"] is not None else None
@@ -1405,6 +1433,74 @@ class LiveTradeDealRepository:
 
     def __init__(self, storage: Optional[MySQLStorage] = None):
         self.storage = storage or get_storage()
+
+    def filter_new_deals(
+        self, user_id: int, account_id: int, deals: List[Dict]
+    ) -> Dict:
+        """Return only deals newer than the account's persisted cursor.
+
+        Several chart EA instances may upload the same account-level MT5 history.
+        Deal records are immutable after MT5 books them, so the newest persisted
+        deal timestamp is a cheap account-level cursor.  Tickets already stored
+        at that exact second are also loaded because MT5 can create multiple
+        deals in one second; this avoids either reprocessing them or dropping a
+        late-arriving deal with the same timestamp.
+        """
+        result = {
+            "deals": [],
+            "latest_timestamp": 0,
+            "skipped_existing": 0,
+            "invalid": 0,
+        }
+        if not deals:
+            return result
+
+        row = self.storage.fetchone(
+            "SELECT MAX(deal_timestamp) AS latest_timestamp "
+            "FROM live_trade_deals WHERE user_id = ? AND account_id = ?",
+            (int(user_id), int(account_id)),
+        ) or {}
+        latest_timestamp = int(row.get("latest_timestamp") or 0)
+        result["latest_timestamp"] = latest_timestamp
+
+        parsed = []
+        has_same_timestamp = False
+        from market.models.trade_history import TradeDeal
+        for deal in deals:
+            try:
+                ticket = int(deal.get("ticket", 0) or 0)
+                timestamp = int(
+                    TradeDeal.from_ea_data(deal).to_dict().get("deal_timestamp") or 0
+                )
+            except (TypeError, ValueError, OverflowError):
+                result["invalid"] += 1
+                continue
+            if ticket <= 0 or timestamp <= 0:
+                result["invalid"] += 1
+                continue
+            parsed.append((timestamp, ticket, deal))
+            has_same_timestamp = has_same_timestamp or timestamp == latest_timestamp
+
+        existing_tickets = set()
+        if latest_timestamp > 0 and has_same_timestamp:
+            existing_tickets = {
+                int(item["ticket"])
+                for item in self.storage.fetchall(
+                    "SELECT ticket FROM live_trade_deals "
+                    "WHERE user_id = ? AND account_id = ? AND deal_timestamp = ?",
+                    (int(user_id), int(account_id), latest_timestamp),
+                )
+            }
+
+        # Also deduplicate repeated records inside the same EA request.
+        seen_tickets = set(existing_tickets)
+        for timestamp, ticket, deal in parsed:
+            if timestamp < latest_timestamp or ticket in seen_tickets:
+                result["skipped_existing"] += 1
+                continue
+            seen_tickets.add(ticket)
+            result["deals"].append(deal)
+        return result
 
     def record_many(
         self, user_id: int, account_id: int, deals: List[Dict]

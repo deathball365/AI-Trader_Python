@@ -395,6 +395,55 @@ class StructurePlanTests(unittest.TestCase):
         cached_ids = [item.get("plan_id") for item in next(iter(generator._cache.values()))]
         self.assertIn("retained-choch", cached_ids)
 
+    def test_generator_reloads_shared_plans_after_another_engine_refreshes(self):
+        repository = _Repository()
+        strategy = _Strategy()
+        first_engine = StructurePlanSignalGenerator(
+            self.store, repository, 1, 21,
+        )
+        second_engine = StructurePlanSignalGenerator(
+            self.store, repository, 1, 22,
+        )
+        old_plan = {
+            "plan_id": "old-plan", "status": "active",
+            "direction": "buy", "setup_type": "range_lower_reversal",
+            "entry_mode": "touch_or_near",
+        }
+        repository.plans = [old_plan]
+
+        self.assertEqual(
+            [item["plan_id"] for item in second_engine._plans(
+                "BTCUSD", strategy, strategy.config,
+            )],
+            ["old-plan"],
+        )
+        self.assertEqual(
+            second_engine._cache[("market-structure", "BTCUSD", "M5")][0]["plan_id"],
+            "old-plan",
+        )
+
+        # The first account refreshes the canonical scope.  The second account
+        # must not keep evaluating its private stale copy of the superseded plan.
+        repository.plans = [{
+            "plan_id": "new-plan", "status": "active",
+            "direction": "sell", "setup_type": "range_upper_reversal",
+            "entry_mode": "touch_or_near",
+        }]
+        first_engine._cache[("market-structure", "BTCUSD", "M5")] = list(
+            repository.plans
+        )
+
+        self.assertEqual(
+            [item["plan_id"] for item in second_engine._plans(
+                "BTCUSD", strategy, strategy.config,
+            )],
+            ["new-plan"],
+        )
+        self.assertEqual(
+            second_engine._cache[("market-structure", "BTCUSD", "M5")][0]["plan_id"],
+            "new-plan",
+        )
+
     def test_multiple_strategy_instances_share_one_canonical_plan_scope(self):
         repository = _Repository()
         generator = StructurePlanSignalGenerator(self.store, repository, 1, 2)
