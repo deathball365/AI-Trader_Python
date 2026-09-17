@@ -972,7 +972,7 @@ class StructureTradePlanRepository:
                 plan_id,plan_group_id,plan_stage,direction,tick_id,execution_mode,
                 status,order_id,reason_code,reason,payload_json,gate_trace_json,
                 account_snapshot_json,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT DO NOTHING
             """,
             (
@@ -1068,7 +1068,7 @@ class StructureTradePlanRepository:
                 plan_id,plan_group_id,plan_stage,direction,tick_id,execution_mode,
                 status,order_id,reason_code,reason,payload_json,gate_trace_json,
                 account_snapshot_json,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(user_id,account_id,deployment_id,plan_id,plan_stage,direction) DO UPDATE SET
                 status=excluded.status,order_id=excluded.order_id,
                 reason_code=excluded.reason_code,reason=excluded.reason,

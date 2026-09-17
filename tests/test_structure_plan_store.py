@@ -20,6 +20,7 @@ class _ExecutionStorage:
 
     def execute(self, sql, params=()):
         normalized = " ".join(sql.split())
+        self.assert_placeholder_count(sql, params)
         if normalized.startswith("INSERT INTO structure_plan_executions"):
             columns = normalized.split("(", 1)[1].split(")", 1)[0].split(",")
             row = dict(zip((item.strip() for item in columns), params))
@@ -55,6 +56,21 @@ class _ExecutionStorage:
         if normalized.startswith("UPDATE structure_trade_plans"):
             return
         raise AssertionError(normalized)
+
+    @staticmethod
+    def assert_placeholder_count(sql, params):
+        """Model the DB driver's positional-parameter validation.
+
+        The in-memory execution store previously zipped columns and values,
+        silently accepting an extra SQL placeholder.  PyMySQL rejects that
+        mismatch before the statement reaches MySQL, so tests must do the same.
+        """
+        expected = str(sql or "").count("?")
+        actual = len(tuple(params or ()))
+        if expected != actual:
+            raise AssertionError(
+                f"SQL placeholder mismatch: expected {expected}, received {actual}"
+            )
 
     def fetchone(self, sql, params=()):
         normalized = " ".join(sql.split())
