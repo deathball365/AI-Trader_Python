@@ -209,7 +209,7 @@
             <article><span>持仓 / 成交</span><strong>{{ paperDetail.positions.length }} / {{ paperDetail.trades.length }}</strong></article>
           </section>
           <section class="today-trade-stats">
-            <div class="runtime-section-title"><h3>今日成交统计</h3><span>北京时间 {{ paperDetail.today_trade_stats?.date || '--' }} · 当日 00:00 起</span></div>
+            <div class="runtime-section-title"><h3>今日成交统计</h3><span>北京时间 {{ paperDetail.today_trade_stats?.date || '--' }} · 当日 00:00 起{{ runtimeStatsLoading ? ' · 加载中' : '' }}</span></div>
             <div class="today-trade-grid">
               <article><span>今日已成交</span><strong>{{ paperDetail.today_trade_stats?.filled_count || 0 }} 单</strong></article>
               <article><span>盈利</span><strong class="positive">{{ paperDetail.today_trade_stats?.win_count || 0 }} 单 · {{ signedMoney(paperDetail.today_trade_stats?.win_amount) }} {{ paperDetail.account.currency }}</strong></article>
@@ -470,8 +470,9 @@
           </section>
 
           <section class="runtime-table-card orders-card">
-            <div class="runtime-section-title"><h3>后台运行日志</h3><span>最近 100 条</span></div>
-            <div v-if="!paperDetail.runtime_logs?.length" class="runtime-empty compact">后台维护启动后将在这里记录心跳与撮合事件</div>
+            <div class="runtime-section-title"><h3>后台运行日志</h3><span>最近 30 条{{ runtimeLogsLoading ? ' · 加载中' : '' }}</span></div>
+            <div v-if="runtimeLogsLoading && !paperDetail.runtime_logs?.length" class="runtime-empty compact">正在加载运行日志</div>
+            <div v-else-if="!paperDetail.runtime_logs?.length" class="runtime-empty compact">后台维护启动后将在这里记录心跳与撮合事件</div>
             <div v-for="log in paperDetail.runtime_logs || []" :key="log.id" class="runtime-row order-row">
               <span>{{ formatTime(log.created_at) }}</span>
               <b>{{ runtimeEventLabel(log.event_type) }}</b>
@@ -549,7 +550,7 @@
             <article><span>持仓 / 最近成交</span><strong>{{ liveDetail.positions.length }} / {{ liveDetail.trades.length }}</strong></article>
           </section>
           <section class="today-trade-stats">
-            <div class="runtime-section-title"><h3>今日成交统计</h3><span>北京时间 {{ liveDetail.today_trade_stats?.date || '--' }} · 当日 00:00 起</span></div>
+            <div class="runtime-section-title"><h3>今日成交统计</h3><span>北京时间 {{ liveDetail.today_trade_stats?.date || '--' }} · 当日 00:00 起{{ runtimeStatsLoading ? ' · 加载中' : '' }}</span></div>
             <div class="today-trade-grid">
               <article><span>今日已成交</span><strong>{{ liveDetail.today_trade_stats?.filled_count || 0 }} 单</strong></article>
               <article><span>盈利</span><strong class="positive">{{ liveDetail.today_trade_stats?.win_count || 0 }} 单 · {{ signedMoney(liveDetail.today_trade_stats?.win_amount) }} {{ liveDetail.account.currency }}</strong></article>
@@ -797,6 +798,8 @@ const selectedStrategyId = ref('')
 const deploying = ref(false)
 const deploymentLoadingId = ref('')
 const runtimeLoadingId = ref(null)
+const runtimeStatsLoading = ref(false)
+const runtimeLogsLoading = ref(false)
 const accountClosingId = ref(null)
 const reportLoading = ref(false)
 const paperReport = ref(null)
@@ -1304,6 +1307,44 @@ async function refreshSelectedAccount() {
   }
 }
 
+async function loadPaperRuntimeLogs(accountId) {
+  if (!paperDetail.value) return
+  runtimeLogsLoading.value = true
+  try {
+    const data = await accountAPI.getPaperRuntimeLogs(accountId, 1, 30)
+    if (!paperDetail.value || paperDetail.value.account?.account_id !== accountId) return
+    paperDetail.value = {
+      ...paperDetail.value,
+      runtime_logs: data.runtime_logs || [],
+    }
+  } catch (error) {
+    messageType.value = 'error'
+    message.value = error.response?.data?.detail || '加载运行日志失败'
+  } finally {
+    runtimeLogsLoading.value = false
+  }
+}
+
+async function applyRuntimeStats(target, accountId) {
+  if (!target.value) return
+  runtimeStatsLoading.value = true
+  try {
+    const data = await accountAPI.getRuntimeStats(accountId)
+    if (!target.value || target.value.account?.account_id !== accountId) return
+    target.value = {
+      ...target.value,
+      today_trade_stats: data.today_trade_stats || {},
+      execution_funnel: data.execution_funnel || {},
+      strategy_performance: data.strategy_performance || [],
+    }
+  } catch (error) {
+    messageType.value = 'error'
+    message.value = error.response?.data?.detail || '加载运行台统计失败'
+  } finally {
+    runtimeStatsLoading.value = false
+  }
+}
+
 async function openPaperRuntime(account) {
   runtimeLoadingId.value = account.account_id
   try {
@@ -1319,6 +1360,8 @@ async function openPaperRuntime(account) {
     await nextTick()
     // 策略上下文只服务于绑定/筛选，不阻塞运行台首屏；后台加载失败也不影响账户详情。
     loadPaperContext().catch(() => {})
+    applyRuntimeStats(paperDetail, account.account_id).catch(() => {})
+    loadPaperRuntimeLogs(account.account_id).catch(() => {})
   } catch (error) {
     messageType.value = 'error'
     message.value = error.response?.data?.detail || '加载模拟账户失败'
@@ -1337,6 +1380,7 @@ async function openLiveRuntime(account) {
     clearInterval(liveRefreshTimer)
     liveRefreshTimer = setInterval(refreshLiveDetail, 6000)
     await nextTick()
+    applyRuntimeStats(liveDetail, account.account_id).catch(() => {})
   } catch (error) {
     messageType.value = 'error'
     message.value = error.response?.data?.detail || '加载实盘运行台失败'
@@ -1349,10 +1393,18 @@ async function refreshLiveDetail() {
   if (!liveDetail.value || liveRefreshInFlight) return
   liveRefreshInFlight = true
   try {
-    const data = await accountAPI.getLiveMonitoring(liveDetail.value.account.account_id, ...equityRangeParams(liveEquityRange.value))
-    liveDetail.value = { ...data.detail, equity_curve: liveDetail.value.equity_curve || [] }
+    const accountId = liveDetail.value.account.account_id
+    const data = await accountAPI.getLiveMonitoring(accountId, ...equityRangeParams(liveEquityRange.value))
+    liveDetail.value = {
+      ...data.detail,
+      equity_curve: liveDetail.value.equity_curve || [],
+      today_trade_stats: liveDetail.value.today_trade_stats,
+      execution_funnel: liveDetail.value.execution_funnel,
+      strategy_performance: liveDetail.value.strategy_performance,
+    }
     await nextTick()
     renderLiveEquityChart()
+    applyRuntimeStats(liveDetail, accountId).catch(() => {})
   } catch (error) {
     messageType.value = 'error'
     message.value = error.response?.data?.detail || '刷新实盘运行数据失败'
@@ -1509,10 +1561,19 @@ function closeLivePromotion() {
 }
 
 async function refreshPaperDetail() {
-  const data = await accountAPI.getPaperDetail(paperDetail.value.account.account_id, 1, 30, ...equityRangeParams(paperEquityRange.value))
-  paperDetail.value = { ...data.detail, equity_curve: paperDetail.value.equity_curve || [] }
+  const accountId = paperDetail.value.account.account_id
+  const data = await accountAPI.getPaperDetail(accountId, 1, 30, ...equityRangeParams(paperEquityRange.value))
+  paperDetail.value = {
+    ...data.detail,
+    equity_curve: paperDetail.value.equity_curve || [],
+    today_trade_stats: paperDetail.value.today_trade_stats,
+    execution_funnel: paperDetail.value.execution_funnel,
+    strategy_performance: paperDetail.value.strategy_performance,
+  }
   await nextTick()
   renderEquityChart()
+  applyRuntimeStats(paperDetail, accountId).catch(() => {})
+  loadPaperRuntimeLogs(accountId).catch(() => {})
   await loadAccounts()
 }
 

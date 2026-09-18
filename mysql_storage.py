@@ -887,11 +887,13 @@ class MySQLStorage:
                         ("execution_status", "VARCHAR(32) NOT NULL DEFAULT 'pending'"),
                         ("mt5_position_id", "BIGINT NOT NULL DEFAULT 0"),
                         ("position_attribution_json", "JSON NULL"),
+                        ("strategy_id", "VARCHAR(64) NOT NULL DEFAULT ''"),
                     ),
                     "live_trade_deals": (
                         ("position_attribution_json", "JSON NULL"),
                         ("deal_timestamp", "BIGINT NOT NULL DEFAULT 0"),
                         ("broker_utc_offset_seconds", "INT NOT NULL DEFAULT 0"),
+                        ("strategy_id", "VARCHAR(64) NOT NULL DEFAULT ''"),
                     ),
                     "historical_klines": (
                         ("timestamp_utc", "BIGINT NOT NULL DEFAULT 0"),
@@ -964,6 +966,27 @@ class MySQLStorage:
                             # would fail later with a less actionable SQL error.
                             if getattr(exc, "args", (None,))[0] != 1060:
                                 raise
+                for table in ("live_trade_deals", "trade_execution_reports"):
+                    conn.execute(
+                        f"""
+                        UPDATE {table}
+                        SET strategy_id = JSON_UNQUOTE(JSON_EXTRACT(position_attribution_json, '$.strategy_id'))
+                        WHERE (strategy_id IS NULL OR strategy_id = '')
+                          AND JSON_EXTRACT(position_attribution_json, '$.strategy_id') IS NOT NULL
+                          AND JSON_UNQUOTE(JSON_EXTRACT(position_attribution_json, '$.strategy_id')) <> ''
+                        """
+                    )
+                for index_sql in (
+                    "ALTER TABLE live_trade_deals ADD KEY idx_live_trade_deals_strategy "
+                    "(user_id, account_id, strategy_id, deal_timestamp)",
+                    "ALTER TABLE trade_execution_reports ADD KEY idx_trade_execution_reports_strategy "
+                    "(user_id, account_id, strategy_id, reported_at)",
+                ):
+                    try:
+                        conn.execute(index_sql)
+                    except Exception as exc:
+                        if getattr(exc, "args", (None,))[0] != 1061:
+                            raise
                 conn.execute(
                     """
                     UPDATE execution_gate_audits

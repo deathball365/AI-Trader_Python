@@ -19,7 +19,6 @@ from market.services.position_manager import PositionManager
 from market.services.position_attribution import (
     build_position_attribution, close_position_attribution,
 )
-from market.services.account_strategy_performance import build_paper_performance
 from market.services.strategy.transient_decision_store import transient_decision_store
 from market.store.structure_plan_store import StructureTradePlanRepository
 from membership import MembershipService
@@ -38,7 +37,6 @@ from market.services.paper_matching_engine import PaperMatchingEngine
 from market.services.paper_order_service import PaperOrderService
 from market.services.paper_position_service import PaperPositionService
 from market.services.paper_accounting_service import PaperAccountingService
-from market.services.today_trade_stats import today_trade_stats
 from strategy_admission import StrategyAdmissionService, strategy_fingerprint
 from account_notification_service import AccountNotificationService
 from market.services.tick_execution_context import TickExecutionContext
@@ -1306,26 +1304,6 @@ class PaperTradingService:
                            equity_to: Optional[int] = None) -> Dict:
         account = self._paper_account(user_id, account_id)
         settings = self._settings(account_id)
-        # 决策快照保存在运行态仓储中；订单/成交通过 decision_id 读取开仓原因，
-        # 不把会变化的策略配置反向当作历史原因。
-        decision_reasons = {}
-        try:
-            runtime = RuntimeStateRepository(user_id, account_id, self.storage)
-            # 运行态只用于补充最近订单的开仓原因；无界读取历史决策会让账户
-            # 详情在长期运行账户上越来越慢。订单页本身只展示最近 30 条，
-            # 因此读取最近 1000 条快照已足够覆盖关联，并避免首屏卡死。
-            for payload in runtime.list_entities("strategy_decision", limit=1000):
-                decision_id = str(payload.get("decision_id") or "")
-                if decision_id:
-                    decision_reasons[decision_id] = str(
-                        payload.get("decision_reason")
-                        or payload.get("signal_summary", {}).get("summary")
-                        or "策略信号触发开仓"
-                    )
-        except Exception:
-            # 历史运行态缺失不应影响模拟账户详情页面。
-            decision_reasons = {}
-
         deployments = [dict(row) for row in self.storage.fetchall(
             """
             SELECT d.*, json_extract(s.config_json, '$.strategy_name') AS strategy_name
@@ -1377,6 +1355,39 @@ class PaperTradingService:
         )]
         orders_has_more = len(orders) > page_size
         orders = orders[:page_size]
+        trades = [dict(row) for row in self.storage.fetchall(
+            """
+            SELECT t.*, o.stop_loss AS initial_stop_loss,
+                   o.take_profit AS initial_take_profit,
+                   o.decision_id AS open_decision_id
+            FROM paper_trades t
+            LEFT JOIN paper_orders o ON o.order_id = t.order_id
+            WHERE t.account_id = ?
+            ORDER BY t.closed_at DESC, t.trade_id DESC LIMIT ? OFFSET ?
+            """,
+            (account_id, page_size + 1, offset),
+        )]
+        trades_has_more = len(trades) > page_size
+        trades = trades[:page_size]
+        # 只按本页订单/成交的 decision_id 回查开仓原因，避免把整个
+        # strategy_decision 历史扫进账户详情，和 Tick 抢同一组 SQL。
+        decision_reasons = {}
+        decision_ids = [
+            str(item.get("decision_id") or item.get("open_decision_id") or "")
+            for item in (*orders, *trades)
+        ]
+        try:
+            runtime = RuntimeStateRepository(user_id, account_id, self.storage)
+            for payload in runtime.list_entities_by_ids("strategy_decision", decision_ids):
+                decision_id = str(payload.get("decision_id") or "")
+                if decision_id:
+                    decision_reasons[decision_id] = str(
+                        payload.get("decision_reason")
+                        or payload.get("signal_summary", {}).get("summary")
+                        or "策略信号触发开仓"
+                    )
+        except Exception:
+            decision_reasons = {}
         for order in orders:
             order["position_attribution"] = json.loads(
                 order.get("position_attribution_json") or "{}"
@@ -1404,20 +1415,6 @@ class PaperTradingService:
             order["initial_take_profit"] = float(
                 attribution.get("initial_take_profit") or order.get("take_profit") or 0
             )
-        trades = [dict(row) for row in self.storage.fetchall(
-            """
-            SELECT t.*, o.stop_loss AS initial_stop_loss,
-                   o.take_profit AS initial_take_profit,
-                   o.decision_id AS open_decision_id
-            FROM paper_trades t
-            LEFT JOIN paper_orders o ON o.order_id = t.order_id
-            WHERE t.account_id = ?
-            ORDER BY t.closed_at DESC, t.trade_id DESC LIMIT ? OFFSET ?
-            """,
-            (account_id, page_size + 1, offset),
-        )]
-        trades_has_more = len(trades) > page_size
-        trades = trades[:page_size]
         for trade in trades:
             trade["position_attribution"] = json.loads(
                 trade.get("position_attribution_json") or "{}"
@@ -1455,29 +1452,10 @@ class PaperTradingService:
         return {
             "account": self._account_dict(account),
             "settings": settings,
-            "today_trade_stats": today_trade_stats(
-                self.storage, user_id, account_id, "paper",
-            ),
             "deployments": deployments,
             "orders": orders,
             "positions": positions,
             "trades": trades,
-            "strategy_performance": build_paper_performance(
-                self.storage, user_id, account_id,
-            ),
-            "runtime_logs": [
-                {
-                    **dict(row),
-                    "payload": json.loads(row["payload_json"] or "{}"),
-                }
-                for row in self.storage.fetchall(
-                    """
-                    SELECT * FROM paper_runtime_logs
-                    WHERE account_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?
-                    """,
-                    (account_id, page_size + 1, offset),
-                )[:page_size]
-            ],
             # Loaded lazily by the runtime page; do not make tens of thousands
             # of heartbeat rows part of the initial account response.
             "equity_curve": [],
@@ -1485,6 +1463,34 @@ class PaperTradingService:
             "page_size": page_size,
             "orders_has_more": orders_has_more,
             "trades_has_more": trades_has_more,
+        }
+
+    def list_runtime_logs(
+        self, user_id: int, account_id: int, page: int = 1, page_size: int = 30,
+    ) -> Dict:
+        self._paper_account(user_id, account_id)
+        page = max(1, int(page))
+        page_size = max(1, min(int(page_size), 100))
+        offset = (page - 1) * page_size
+        rows = [
+            {
+                **dict(row),
+                "payload": json.loads(row["payload_json"] or "{}"),
+            }
+            for row in self.storage.fetchall(
+                """
+                SELECT * FROM paper_runtime_logs
+                WHERE account_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?
+                """,
+                (account_id, page_size + 1, offset),
+            )
+        ]
+        has_more = len(rows) > page_size
+        return {
+            "runtime_logs": rows[:page_size],
+            "page": page,
+            "page_size": page_size,
+            "has_more": has_more,
         }
 
     def build_report(

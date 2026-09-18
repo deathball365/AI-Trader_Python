@@ -58,6 +58,8 @@ class TradingEngineManager:
         self._lock = threading.RLock()
         self._event_loop = None
         self._tick_contexts: Dict[Tuple[int, int, str], TickExecutionContext] = {}
+        self._active_deployments: Dict[int, Dict[str, tuple]] = {}
+        self._tick_strategy_cache: Dict[Tuple[int, str], tuple] = {}
         # Shared repository registry used by route factories and services.
         # Keeping one container also guarantees one MySQL pool per process.
         self.repositories = RepositoryContainer(get_storage())
@@ -170,66 +172,13 @@ class TradingEngineManager:
 
         # Include Paper-only deployments when building the public signal
         # snapshot.  They must not invoke a stateful generator on their own.
-        deployment_rows = self.repositories.storage.fetchall(
-            "SELECT DISTINCT d.account_id FROM strategy_deployments d "
-            "JOIN trading_accounts a ON a.id=d.account_id "
-            "WHERE d.user_id=? AND d.status='active' AND a.status='active' "
-            "AND a.enabled=1 AND a.trading_enabled=1 AND a.auto_trading_enabled=1",
-            (user_id,),
+        deployments = self._active_deployments_for_user(user_id)
+        strategies = self._strategies_for_tick(
+            user_id, symbol, execution_ids, deployments,
         )
-        strategy_by_id = {}
-        for account_id in dict.fromkeys(
-            [*execution_ids, *(int(row["account_id"]) for row in deployment_rows)]
-        ):
-            engine = self.get_engine(user_id, account_id)
-            for strategy in engine.strategy_runtime_coordinator.strategies_for_quote(
-                user_id, account_id, symbol,
-            ):
-                strategy_by_id[str(strategy.strategy_id)] = strategy
-
-        # Paper deployments are executed from the deployment table, while the
-        # account engine's strategy store is a cache of user configurations.
-        # After a deployment/config refresh those two views can briefly differ;
-        # building the shared Tick snapshot from the cache alone then makes
-        # PaperTradingService reject the Tick as ``snapshot_missing``.  Include
-        # every active Paper deployment explicitly, still using the exact
-        # broker-symbol matcher (no suffix aliases are introduced here).
-        try:
-            paper_rows = self.repositories.storage.fetchall(
-                """
-                SELECT d.*
-                FROM strategy_deployments d
-                JOIN trading_accounts a ON a.id = d.account_id
-                WHERE d.user_id = ? AND d.status = 'active'
-                  AND d.execution_mode = 'paper'
-                  AND a.account_type = 'paper'
-                  AND a.status = 'active' AND a.enabled = 1
-                  AND a.trading_enabled = 1 AND a.auto_trading_enabled = 1
-                """,
-                (user_id,),
-            )
-            for row in paper_rows:
-                try:
-                    strategy_data = self.paper_trading._deployment_strategy(
-                        user_id, row
-                    )
-                    strategy = TradingStrategy.from_dict(strategy_data)
-                    if self.paper_trading._strategy_matches_quote(
-                        user_id, strategy, symbol, int(row["account_id"]),
-                    ):
-                        strategy_by_id[str(strategy.strategy_id)] = strategy
-                except (KeyError, TypeError, ValueError):
-                    # A malformed/stale deployment is handled by the normal
-                    # deployment audit path and must not stop other accounts.
-                    continue
-        except Exception as exc:
-            # Snapshot construction must remain best effort for live EA calls;
-            # the account path will record the precise gate failure if needed.
-            print(f"[TradingEngineManager] Paper部署快照补充失败: {exc}")
-
         market_engine = self.get_market_engine(user_id)
         context = market_engine.create_tick_execution_context(
-            symbol, float(price), list(strategy_by_id.values()),
+            symbol, float(price), list(strategies),
             source_account_id=source_account_id,
         )
         with self._lock:
@@ -308,6 +257,12 @@ class TradingEngineManager:
         原有行为，刷新该用户的全部运行引擎。
         """
         with self._lock:
+            self._active_deployments.pop(int(user_id), None)
+            prefix = (int(user_id),)
+            self._tick_strategy_cache = {
+                key: value for key, value in self._tick_strategy_cache.items()
+                if key[:1] != prefix
+            }
             engines = [
                 runtime.engine for key, runtime in self._engines.items()
                 if key.user_id == int(user_id)
@@ -318,6 +273,94 @@ class TradingEngineManager:
             reload_strategy = getattr(store, "reload_from_storage", None)
             if reload_strategy:
                 reload_strategy()
+
+    def _strategies_for_tick(
+        self,
+        user_id: int,
+        symbol: str,
+        execution_ids: tuple,
+        deployments: Dict[str, tuple],
+    ) -> tuple:
+        """Return the strategies that may consume this quote.
+
+        Live engines and Paper deployments are resolved once per user/symbol
+        until refresh_user_strategies() invalidates the cache.  Tick matching
+        still uses exact broker symbols; this only avoids rebuilding the same
+        TradingStrategy objects on every quote.
+        """
+        cache_key = (int(user_id), str(symbol or "").strip().upper())
+        with self._lock:
+            cached = self._tick_strategy_cache.get(cache_key)
+            if cached is not None:
+                return cached
+        strategy_by_id = {}
+        for account_id in dict.fromkeys(
+            [*execution_ids, *deployments["account_ids"]]
+        ):
+            engine = self.get_engine(user_id, account_id)
+            for strategy in engine.strategy_runtime_coordinator.strategies_for_quote(
+                user_id, account_id, symbol,
+            ):
+                strategy_by_id[str(strategy.strategy_id)] = strategy
+        try:
+            for row in deployments["paper_rows"]:
+                try:
+                    strategy_data = self.paper_trading._deployment_strategy(
+                        user_id, row
+                    )
+                    strategy = TradingStrategy.from_dict(strategy_data)
+                    if self.paper_trading._strategy_matches_quote(
+                        user_id, strategy, symbol, int(row["account_id"]),
+                    ):
+                        strategy_by_id[str(strategy.strategy_id)] = strategy
+                except (KeyError, TypeError, ValueError):
+                    continue
+        except Exception as exc:
+            print(f"[TradingEngineManager] Paper部署快照补充失败: {exc}")
+        strategies = tuple(strategy_by_id.values())
+        with self._lock:
+            self._tick_strategy_cache[cache_key] = strategies
+        return strategies
+
+    def _active_deployments_for_user(self, user_id: int) -> Dict[str, tuple]:
+        """Return the current user's runnable deployments, cached per process.
+
+        Tick evaluation used to scan strategy_deployments on every quote.  The
+        set only changes when a strategy/deployment is saved, so invalidate
+        from refresh_user_strategies() instead of querying on the hot path.
+        """
+        user_id = int(user_id)
+        with self._lock:
+            cached = self._active_deployments.get(user_id)
+            if cached is not None:
+                return cached
+        account_rows = self.repositories.storage.fetchall(
+            "SELECT DISTINCT d.account_id FROM strategy_deployments d "
+            "JOIN trading_accounts a ON a.id=d.account_id "
+            "WHERE d.user_id=? AND d.status='active' AND a.status='active' "
+            "AND a.enabled=1 AND a.trading_enabled=1 AND a.auto_trading_enabled=1",
+            (user_id,),
+        )
+        paper_rows = self.repositories.storage.fetchall(
+            """
+            SELECT d.*
+            FROM strategy_deployments d
+            JOIN trading_accounts a ON a.id = d.account_id
+            WHERE d.user_id = ? AND d.status = 'active'
+              AND d.execution_mode = 'paper'
+              AND a.account_type = 'paper'
+              AND a.status = 'active' AND a.enabled = 1
+              AND a.trading_enabled = 1 AND a.auto_trading_enabled = 1
+            """,
+            (user_id,),
+        )
+        payload = {
+            "account_ids": tuple(int(row["account_id"]) for row in account_rows),
+            "paper_rows": tuple(dict(row) for row in paper_rows),
+        }
+        with self._lock:
+            self._active_deployments[user_id] = payload
+        return payload
 
     def suspend_user_live_orders(self, user_id: int) -> None:
         """撤销实盘授权后清理内存中尚未发送的开仓订单。"""

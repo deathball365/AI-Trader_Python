@@ -1270,6 +1270,7 @@ class TradeExecutionRepository:
         )
         instruction = json.loads(runtime["payload_json"] or "{}") if runtime else {}
         attribution = dict(instruction.get("position_attribution") or {})
+        strategy_id = str(attribution.get("strategy_id") or "")
         values = (
             user_id, account_id, instruction_id,
             str(payload.get("order_id", "") or ""),
@@ -1293,6 +1294,7 @@ class TradeExecutionRepository:
             str(payload.get("error_message", "") or "")[:500],
             now, json.dumps(payload, ensure_ascii=False),
             json.dumps(attribution, ensure_ascii=False),
+            strategy_id,
         )
         self.storage.execute(
             """
@@ -1301,8 +1303,8 @@ class TradeExecutionRepository:
                 success, execution_status, requested_price, executed_price, requested_volume,
                 executed_volume, slippage, mt5_order, mt5_deal, mt5_position_id, retcode,
                 error_message, reported_at, payload_json
-                , position_attribution_json
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                , position_attribution_json, strategy_id
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_id, instruction_id) DO UPDATE SET
                 success = excluded.success,
                 execution_status = excluded.execution_status,
@@ -1317,6 +1319,7 @@ class TradeExecutionRepository:
                 reported_at = excluded.reported_at,
                 payload_json = excluded.payload_json
                 , position_attribution_json = excluded.position_attribution_json
+                , strategy_id = excluded.strategy_id
             """,
             values,
         )
@@ -1656,9 +1659,11 @@ class LiveTradeDealRepository:
                     stats["unchanged"] += 1
                     continue
 
+            strategy_id = str(attribution.get("strategy_id") or "")
             values = (
                 int(user_id), int(account_id), ticket,
                 *comparable[:14], received_at, payload_json, attribution_json,
+                strategy_id,
             )
             self.storage.execute(
                 """
@@ -1667,8 +1672,8 @@ class LiveTradeDealRepository:
                     symbol, deal_type, entry_type, volume, price, profit, swap,
                     commission, deal_time, deal_timestamp,
                     broker_utc_offset_seconds, comment, received_at, payload_json
-                    , position_attribution_json
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    , position_attribution_json, strategy_id
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(account_id, ticket) DO UPDATE SET
                     mt5_order = excluded.mt5_order,
                     mt5_position_id = excluded.mt5_position_id,
@@ -1682,6 +1687,7 @@ class LiveTradeDealRepository:
                     comment = excluded.comment,
                     payload_json = excluded.payload_json
                     , position_attribution_json = excluded.position_attribution_json
+                    , strategy_id = excluded.strategy_id
                 """,
                 values,
             )
@@ -4352,6 +4358,47 @@ class RuntimeStateRepository:
             json.loads(row["payload_json"])
             for row in self.storage.fetchall(sql, tuple(params))
         ]
+
+    def list_entities_by_ids(
+        self,
+        entity_type: str,
+        entity_ids,
+    ) -> List[Dict]:
+        """Fetch only the requested runtime rows.
+
+        Account pages must not scan the full strategy_decision history just to
+        annotate the latest 30 orders.  Empty id lists return immediately.
+        """
+        ids = []
+        seen = set()
+        for raw in entity_ids or []:
+            entity_id = str(raw or "").strip()
+            if not entity_id or entity_id in seen:
+                continue
+            seen.add(entity_id)
+            ids.append(entity_id)
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.storage.fetchall(
+            f"""
+            SELECT entity_id, payload_json
+            FROM runtime_entities
+            WHERE user_id = ? AND account_id = ?
+              AND entity_type = ? AND entity_id IN ({placeholders})
+            """,
+            (self.user_id, self.account_id, entity_type, *ids),
+        )
+        payloads = []
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not payload.get("decision_id"):
+                payload["decision_id"] = str(row.get("entity_id") or "")
+            payloads.append(payload)
+        return payloads
 
     def get_entity(self, entity_type: str, entity_id: str) -> Optional[Dict]:
         """读取单条运行态，避免为一次状态回算扫描整个账户历史。"""

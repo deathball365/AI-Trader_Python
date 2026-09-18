@@ -15,6 +15,7 @@ from market.services.today_trade_stats import today_trade_stats
 from market.models.trading_strategy import StrategyLifecycle
 from market.services.live_strategy_promotion import promotion_candidate_accounts
 from mysql_repositories import (
+    RuntimeStateRepository,
     TradingAccountRecord,
 )
 from repositories.accounts import TradingAccountRepository
@@ -576,10 +577,24 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 user.user_id, account_id, page=page, page_size=page_size,
                 equity_from=equity_from, equity_to=equity_to,
             )
-            detail["execution_funnel"] = _execution_funnel(
-                repository.storage, user.user_id, account_id,
-            )
             return {"status": "ok", "detail": detail}
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.get("/accounts/{account_id}/paper/runtime-logs")
+    async def get_paper_runtime_logs(
+        account_id: int,
+        page: int = Query(1, ge=1),
+        page_size: int = Query(30, ge=1, le=100),
+        user: AuthUser = Depends(require_auth),
+    ) -> Dict:
+        try:
+            return {
+                "status": "ok",
+                **engine_manager.paper_trading.list_runtime_logs(
+                    user.user_id, account_id, page=page, page_size=page_size,
+                ),
+            }
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -609,8 +624,18 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
         if account is None or account.account_type not in {"mt5", "ibkr"}:
             raise HTTPException(status_code=404, detail="实盘账户不存在")
 
-        engine = engine_manager.get_engine(user.user_id, account_id)
-        positions = engine.position_service.get_positions()
+        # 运行台只读已持久化的持仓快照，不唤醒账户交易引擎。
+        # get_engine() 会加载策略缓存并和 Tick 抢同一进程资源。
+        positions = []
+        for payload in RuntimeStateRepository(
+            user.user_id, account_id, repositories.storage,
+        ).list_entities("position", statuses=["open"]):
+            if not isinstance(payload, dict):
+                continue
+            ticket = payload.get("ticket")
+            if ticket is not None and "ticket" not in payload:
+                payload["ticket"] = ticket
+            positions.append(payload)
         events_by_position = repositories.position_events.list_for_positions(
             user.user_id,
             account_id,
@@ -688,20 +713,46 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
             "status": "ok",
             "detail": {
                 "account": _account_payload(account),
-                "today_trade_stats": today_trade_stats(
-                    repository.storage, user.user_id, account_id, account.account_type,
-                ),
-                "execution_funnel": _execution_funnel(
-                    repository.storage, user.user_id, account_id,
-                ),
                 "positions": positions,
                 "trades": trades,
                 "execution_reports": execution_reports,
-                "strategy_performance": build_live_performance(
-                    repository.storage, user.user_id, account_id, positions,
-                ),
                 "equity_curve": [],
             },
+        }
+
+    @router.get("/accounts/{account_id}/runtime-stats")
+    async def get_account_runtime_stats(
+        account_id: int,
+        user: AuthUser = Depends(require_auth),
+    ) -> Dict:
+        account = repository.get_by_id(user.user_id, account_id)
+        if account is None:
+            raise HTTPException(status_code=404, detail="交易账户不存在")
+        if account.account_type == "paper":
+            performance = build_paper_performance(
+                repository.storage, user.user_id, account_id,
+            )
+        elif account.account_type in {"mt5", "ibkr"}:
+            positions = []
+            for payload in RuntimeStateRepository(
+                user.user_id, account_id, repositories.storage,
+            ).list_entities("position", statuses=["open"]):
+                if isinstance(payload, dict):
+                    positions.append(payload)
+            performance = build_live_performance(
+                repository.storage, user.user_id, account_id, positions,
+            )
+        else:
+            raise HTTPException(status_code=404, detail="该账户没有运行台统计")
+        return {
+            "status": "ok",
+            "today_trade_stats": today_trade_stats(
+                repository.storage, user.user_id, account_id, account.account_type,
+            ),
+            "execution_funnel": _execution_funnel(
+                repository.storage, user.user_id, account_id,
+            ),
+            "strategy_performance": performance,
         }
 
     @router.get("/accounts/{account_id}/live-monitoring/equity-curve")

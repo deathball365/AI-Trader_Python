@@ -316,11 +316,23 @@ export const accountAPI = {
     return response.data
   },
 
+  async getPaperRuntimeLogs(accountId, page = 1, pageSize = 30) {
+    const response = await api.get(`/accounts/${encodeURIComponent(accountId)}/paper/runtime-logs`, {
+      params: { page, page_size: pageSize },
+    })
+    return response.data
+  },
+
   async getPaperEquityCurve(accountId, equityFrom = null, equityTo = null) {
     const params = {}
     if (equityFrom != null) params.equity_from = equityFrom
     if (equityTo != null) params.equity_to = equityTo
     const response = await api.get(`/accounts/${encodeURIComponent(accountId)}/paper/equity-curve`, { params })
+    return response.data
+  },
+
+  async getRuntimeStats(accountId) {
+    const response = await api.get(`/accounts/${encodeURIComponent(accountId)}/runtime-stats`)
     return response.data
   },
 

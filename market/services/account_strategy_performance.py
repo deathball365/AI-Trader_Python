@@ -186,10 +186,9 @@ def build_live_performance(
         strategy_placeholders = ", ".join("?" for _ in strategy_ids)
         rows = [dict(row) for row in storage.fetchall(
             "SELECT ticket, mt5_position_id, entry_type, profit, swap, commission, "
-            "deal_timestamp, position_attribution_json FROM live_trade_deals "
+            "deal_timestamp, strategy_id, position_attribution_json FROM live_trade_deals "
             "WHERE user_id = ? AND account_id = ? "
-            "AND position_attribution_json IS NOT NULL "
-            "AND json_extract(position_attribution_json, '$.strategy_id') IN ("
+            "AND strategy_id IN ("
             + strategy_placeholders + ") ORDER BY deal_timestamp, id",
             (int(user_id), int(account_id), *strategy_ids),
         )]
@@ -198,7 +197,7 @@ def build_live_performance(
     by_position: Dict[str, List[Dict]] = {}
     for row in rows:
         attribution = _as_dict(row.get("position_attribution_json"))
-        strategy_id = str(attribution.get("strategy_id") or "")
+        strategy_id = str(row.get("strategy_id") or attribution.get("strategy_id") or "")
         if not strategy_id:
             continue
         row["strategy_id"] = strategy_id
@@ -231,10 +230,9 @@ def build_live_performance(
 
     if strategy_ids:
         reports = [dict(row) for row in storage.fetchall(
-            "SELECT success, mt5_position_id, position_attribution_json "
+            "SELECT success, mt5_position_id, strategy_id, position_attribution_json "
             "FROM trade_execution_reports WHERE user_id = ? AND account_id = ? "
-            "AND position_attribution_json IS NOT NULL "
-            "AND json_extract(position_attribution_json, '$.strategy_id') IN ("
+            "AND strategy_id IN ("
             + strategy_placeholders + ")",
             (int(user_id), int(account_id), *strategy_ids),
         )]
@@ -244,7 +242,7 @@ def build_live_performance(
     position_strategies: Dict[str, str] = {}
     for report in reports:
         attribution = _as_dict(report.get("position_attribution_json"))
-        strategy_id = str(attribution.get("strategy_id") or "")
+        strategy_id = str(report.get("strategy_id") or attribution.get("strategy_id") or "")
         if not strategy_id:
             continue
         if bool(report.get("success")):

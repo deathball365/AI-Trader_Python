@@ -1,6 +1,6 @@
 import unittest
 
-from market.services.account_strategy_performance import _summarize
+from market.services.account_strategy_performance import _summarize, build_live_performance
 
 
 class AccountStrategyPerformanceTests(unittest.TestCase):
@@ -31,6 +31,33 @@ class AccountStrategyPerformanceTests(unittest.TestCase):
         self.assertEqual(result["max_consecutive_losses"], 2)
         self.assertEqual(result["open_position_count"], 1)
         self.assertEqual(result["unrealized_profit"], 3.5)
+
+    def test_live_performance_filters_by_strategy_id_column(self):
+        queries = []
+
+        class _Storage:
+            def fetchall(self, sql, params=()):
+                queries.append((sql, params))
+                if "FROM strategy_deployments" in sql:
+                    return [{
+                        "deployment_id": "dep-1", "strategy_id": "74a8b589",
+                        "status": "active", "created_at": 1, "updated_at": 1,
+                        "execution_mode": "live", "symbol": "GOLD#",
+                        "config_json": '{"strategy_name":"GOLD M5"}',
+                    }]
+                if "FROM live_trade_deals" in sql:
+                    return []
+                if "FROM trade_execution_reports" in sql:
+                    return []
+                raise AssertionError(sql)
+
+        build_live_performance(_Storage(), 1, 21, [])
+        deal_sql = next(sql for sql, _ in queries if "FROM live_trade_deals" in sql)
+        report_sql = next(sql for sql, _ in queries if "FROM trade_execution_reports" in sql)
+        self.assertIn("strategy_id IN", deal_sql)
+        self.assertNotIn("json_extract", deal_sql.lower())
+        self.assertIn("strategy_id IN", report_sql)
+        self.assertNotIn("json_extract", report_sql.lower())
 
 
 if __name__ == "__main__":
