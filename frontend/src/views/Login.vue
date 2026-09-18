@@ -34,7 +34,6 @@
                     inputmode="numeric"
                     maxlength="6"
                     :disabled="loading"
-                    required
                   />
                   <v-btn
                     color="primary"
@@ -47,7 +46,7 @@
                     {{ resendCountdown ? `${resendCountdown}s` : '获取验证码' }}
                   </v-btn>
                 </div>
-                <v-btn type="submit" color="primary" size="large" block :loading="loading" class="mt-3">
+                <v-btn type="submit" color="primary" size="large" block :loading="loading || trustedChecking" :disabled="!emailValid" class="mt-3">
                   邮箱验证登录
                 </v-btn>
               </v-form>
@@ -78,6 +77,7 @@ const loading = ref(false)
 const codeSending = ref(false)
 const resendCountdown = ref(0)
 const errorMessage = ref('')
+const trustedChecking = ref(false)
 let timer = null
 
 const normalizedEmail = computed(() => email.value.trim().toLowerCase())
@@ -87,8 +87,22 @@ function finishLogin(result) {
   router.push(route.query.redirect || result.next_path || '/')
 }
 
+async function tryTrustedDeviceLogin() {
+  if (!emailValid.value || loading.value) return false
+  trustedChecking.value = true
+  try {
+    finishLogin(await authAPI.loginWithTrustedDevice(normalizedEmail.value))
+    return true
+  } catch {
+    return false
+  } finally {
+    trustedChecking.value = false
+  }
+}
+
 async function sendCode() {
   if (!emailValid.value) return
+  if (await tryTrustedDeviceLogin()) return
   codeSending.value = true
   errorMessage.value = ''
   try {
@@ -107,7 +121,12 @@ async function sendCode() {
 }
 
 async function handleEmailLogin() {
-  if (!emailValid.value || !/^\d{6}$/.test(verificationCode.value)) {
+  if (!emailValid.value) {
+    errorMessage.value = '请输入有效邮箱'
+    return
+  }
+  if (!verificationCode.value && await tryTrustedDeviceLogin()) return
+  if (!/^\d{6}$/.test(verificationCode.value)) {
     errorMessage.value = '请输入有效邮箱和 6 位验证码'
     return
   }

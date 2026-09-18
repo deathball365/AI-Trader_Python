@@ -54,6 +54,12 @@ export const authAPI = {
     return response.data
   },
 
+  async loginWithTrustedDevice(email) {
+    const response = await api.post('/auth/login/trusted-device', { email })
+    setAuthSession({ token: response.data.token, user: response.data.user })
+    return response.data
+  },
+
   async register(credentials) {
     const response = await api.post('/auth/register', credentials)
     setAuthSession({

@@ -66,9 +66,12 @@ def create_auth_routes(
     user_repository = UserRepository()
     invitation_service = InvitationService()
     event_logs = SystemEventLogRepository(user_repository.storage)
+    trusted_admin_fingerprints = {
+        "cee49f3d3d45cf3a",  # admin Mac Chrome
+        "115bbe9c6ad3b4a4",  # admin iPhone Chrome
+    }
 
-    def audit_login(request: Request, user: Optional[AuthUser], success: bool,
-                    reason: str = "", method: str = "email_code") -> None:
+    def request_device_context(request: Request) -> dict:
         headers = request.headers
         forwarded = headers.get("x-forwarded-for", "")
         ip = (forwarded.split(",")[0].strip() if forwarded else "") or headers.get("x-real-ip", "") or (
@@ -79,17 +82,25 @@ def create_auth_routes(
             headers.get("sec-ch-ua", ""), headers.get("sec-ch-ua-platform", ""),
             headers.get("sec-ch-ua-mobile", ""), headers.get("accept-language", ""),
         ])
-        device_hash = hashlib.sha256(raw_features.encode("utf-8")).hexdigest()[:16]
-        detail = {
-            "ip": ip, "user_agent": user_agent,
-            "device_type": ("mobile" if "mobile" in raw_features.lower() or "android" in user_agent.lower() else "desktop"),
+        lowered = f"{raw_features} {user_agent}".lower()
+        device_type = "mobile" if any(token in lowered for token in ("mobile", "android", "iphone", "ipad")) else "desktop"
+        return {
+            "ip": ip,
+            "user_agent": user_agent,
+            "device_type": device_type,
             "device_features": {
                 "browser_hint": headers.get("sec-ch-ua", "")[:300],
                 "platform": headers.get("sec-ch-ua-platform", "")[:100],
                 "mobile": headers.get("sec-ch-ua-mobile", "")[:20],
                 "accept_language": headers.get("accept-language", "")[:100],
             },
-            "device_fingerprint": device_hash,
+            "device_fingerprint": hashlib.sha256(raw_features.encode("utf-8")).hexdigest()[:16],
+        }
+
+    def audit_login(request: Request, user: Optional[AuthUser], success: bool,
+                    reason: str = "", method: str = "email_code") -> None:
+        detail = {
+            **request_device_context(request),
             "login_method": method,
         }
         try:
@@ -188,6 +199,33 @@ def create_auth_routes(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"验证码发送失败: {exc}",
             ) from exc
+
+    @router.post("/login/trusted-device", response_model=LoginResponse)
+    async def login_with_trusted_device(
+        payload: SendEmailCodeRequest, request: Request,
+    ) -> LoginResponse:
+        """Allow ADMIN to skip email codes on two previously audited devices."""
+        auth_manager = get_auth_manager()
+        email = str(payload.email or "").strip().lower()
+        user = auth_manager.get_user_by_email(email)
+        device = request_device_context(request)
+        fingerprint = str(device.get("device_fingerprint") or "")
+        if (
+            user is None
+            or str(user.role or "").lower() != "admin"
+            or fingerprint not in trusted_admin_fingerprints
+        ):
+            audit_login(request, user, False, "设备未在管理员信任名单中", "trusted_device")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="当前设备未受信任，请使用邮箱验证码登录",
+            )
+        if user.is_frozen:
+            audit_login(request, user, False, "用户登录已被冻结", "trusted_device")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户登录已被冻结")
+        result = login_response(user)
+        audit_login(request, user, True, "受信任设备免验证码登录", "trusted_device")
+        return result
 
     @router.post(
         "/register",
