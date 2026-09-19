@@ -53,6 +53,27 @@
       <EmptyState v-else icon="mdi-calendar-check-outline" text="本周暂无已录入的重大宏观事件" />
     </section>
 
+    <section class="impact-section">
+      <div class="focus-heading">
+        <div>
+          <div class="section-kicker">EVENT IMPACT MAP</div>
+          <h2>事件影响配置</h2>
+          <p>市场事件与交易品种的关联，以及新开仓暂停窗口</p>
+        </div>
+        <v-icon size="30" color="primary">mdi-source-branch</v-icon>
+      </div>
+      <div class="impact-list">
+        <article v-for="rule in impactRules" :key="rule.event_type" class="impact-row">
+          <div class="impact-event"><strong>{{ rule.label }}</strong><small>{{ rule.event_type }}</small></div>
+          <div class="impact-symbols">
+            <v-chip v-for="symbol in rule.symbols" :key="symbol" size="x-small" variant="outlined">{{ symbol }}</v-chip>
+          </div>
+          <div class="impact-window">前 {{ rule.before_minutes }} 分钟 · 后 {{ rule.after_minutes }} 分钟</div>
+          <v-chip size="small" color="error" variant="tonal">{{ rule.action }}</v-chip>
+        </article>
+      </div>
+    </section>
+
     <section class="metric-grid">
       <article class="metric-card calendar">
         <span>财经日历</span>
@@ -237,6 +258,7 @@ const activeTab = ref('calendar')
 const selectedDate = ref(localDateInput())
 const status = ref({})
 const weekFocus = ref({ data: [] })
+const impactRules = ref([])
 const calendar = ref([])
 const keyEvents = ref([])
 const riskCalendar = ref([])
@@ -255,6 +277,11 @@ async function loadStatus() {
 
 async function loadWeekFocus() {
   weekFocus.value = await marketAPI.getMarketWeekFocus(selectedDate.value)
+}
+
+async function loadImpactRules() {
+  const response = await marketAPI.getMarketImpactRules()
+  impactRules.value = response.data || []
 }
 
 async function loadCalendar() {
@@ -293,7 +320,7 @@ async function runLoad(loaders) {
 function loadDailyData() {
   return runLoad([
     activeTab.value === 'calendar' ? loadCalendar : activeTab.value === 'risk-calendar' ? loadRiskCalendar : loadKeyEvents,
-    loadStatus, loadWeekFocus,
+    loadStatus, loadWeekFocus, loadImpactRules,
   ])
 }
 
@@ -302,7 +329,7 @@ function loadActiveData() {
     ? loadCalendar
     : activeTab.value === 'risk-calendar' ? loadRiskCalendar
       : activeTab.value === 'key-events' ? loadKeyEvents : loadFlashNews
-  return runLoad([loader, loadStatus])
+  return runLoad([loader, loadStatus, loadImpactRules])
 }
 
 function mergeRealtimeFlash(items) {
@@ -372,7 +399,7 @@ function importanceColor(value) {
 }
 
 onMounted(() => {
-  runLoad([loadStatus, loadWeekFocus, loadCalendar, loadRiskCalendar, loadKeyEvents, loadFlashNews])
+  runLoad([loadStatus, loadWeekFocus, loadImpactRules, loadCalendar, loadRiskCalendar, loadKeyEvents, loadFlashNews])
   connectRealtime()
 })
 
@@ -397,6 +424,14 @@ onUnmounted(() => {
     linear-gradient(145deg, #f4f0e7 0%, #edf3ef 54%, #f8f6ef 100%);
 }
 .focus-section { margin-bottom: 18px; padding: 22px 24px; border: 1px solid rgba(122, 91, 35, .16); border-radius: 18px; background: linear-gradient(135deg, rgba(255,252,242,.96), rgba(255,255,255,.92)); box-shadow: 0 8px 22px rgba(86, 73, 43, .06); }
+.impact-section { margin-bottom: 18px; padding: 22px 24px; border: 1px solid rgba(39, 125, 102, .16); border-radius: 18px; background: rgba(255,255,255,.88); box-shadow: 0 8px 22px rgba(49, 91, 79, .05); }
+.impact-list { display: grid; gap: 8px; }
+.impact-row { display: grid; grid-template-columns: minmax(180px, 1.1fr) minmax(260px, 2fr) 150px auto; align-items: center; gap: 14px; padding: 11px 12px; border: 1px solid #e1e9e4; border-radius: 10px; background: #fbfdfb; }
+.impact-event strong, .impact-event small { display: block; }
+.impact-event strong { color: #28594b; font-size: .83rem; }
+.impact-event small { margin-top: 3px; color: #8a9690; font-size: .66rem; }
+.impact-symbols { display: flex; flex-wrap: wrap; gap: 4px; }
+.impact-window { color: #a35e32; font-size: .74rem; white-space: nowrap; }
 .focus-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
 .section-kicker { color: #aa7930; font-size: .68rem; font-weight: 800; letter-spacing: .14em; }
 .focus-heading h2 { margin: 3px 0; color: #27473d; font: 700 1.35rem Georgia, serif; }
@@ -408,6 +443,7 @@ onUnmounted(() => {
 .focus-time span { margin-top: 3px; color: #b47b2b; font: 700 1rem Georgia, serif; }
 .focus-copy span { margin-top: 4px; color: #818983; font-size: .68rem; }
 @media (max-width: 620px) { .focus-item { grid-template-columns: 1fr auto; }.focus-copy { grid-column: 1 / -1; grid-row: 2; }.focus-item > .v-chip { grid-column: 2; grid-row: 1; } }
+@media (max-width: 900px) { .impact-row { grid-template-columns: 1fr; gap: 8px; }.impact-window { white-space: normal; } }
 .event-hero { display: flex; justify-content: space-between; align-items: end; gap: 24px; padding: 34px 38px; margin-bottom: 20px; color: #f7f0df; border-radius: 24px; background: linear-gradient(120deg, #102f2a, #1f5d4e 72%, #8c652c); box-shadow: 0 20px 44px rgba(20, 61, 51, .2); }
 .eyebrow { color: #e4bd72; font-size: .72rem; font-weight: 800; letter-spacing: .17em; }
 .event-hero h1 { margin: 5px 0 8px; font-family: Georgia, serif; font-size: clamp(2.2rem, 5vw, 3.8rem); line-height: 1; }

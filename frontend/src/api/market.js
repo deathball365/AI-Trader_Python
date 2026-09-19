@@ -54,6 +54,11 @@ export const marketAPI = {
     return response.data
   },
 
+  async getMarketImpactRules() {
+    const response = await api.get('/news/impact-rules')
+    return response.data
+  },
+
   async getMarketFlashNews(limit = 100) {
     const response = await api.get('/news/flash', { params: { limit } })
     return response.data

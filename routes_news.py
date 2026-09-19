@@ -27,6 +27,7 @@ from market.utils.ws_manager import WebSocketManager
 from market_event_repository import MarketEventRepository
 from market.services.market_event_risk_service import (
     DEFAULT_EVENT_RISK_RULES,
+    EVENT_IMPACT_RULES,
     _calendar_timestamp,
     _major_us_event,
 )
@@ -349,6 +350,28 @@ def create_news_routes():
             "status": "ok", "week_start": week_start.isoformat(),
             "week_end": week_end.isoformat(), "count": len(result), "data": result,
         }
+
+    @router.get("/impact-rules")
+    async def get_impact_rules(user: AuthUser = Depends(require_auth)) -> Dict:
+        labels = {
+            "fomc": "美联储利率决议 / FOMC",
+            "nfp": "美国非农就业",
+            "us_inflation": "美国 CPI / PCE",
+            "energy": "EIA / OPEC / IEA 能源事件",
+            "rba": "澳洲联储 RBA",
+            "china_macro": "中国宏观数据",
+            "treasury_yield": "美债收益率事件",
+        }
+        data = [{
+            "event_type": rule["event_type"],
+            "label": labels.get(rule["event_type"], rule["event_type"]),
+            "symbols": list(rule["symbols"]),
+            "before_minutes": rule["before_minutes"],
+            "after_minutes": rule["after_minutes"],
+            "action": "暂停全部新开仓",
+            "keywords": list(rule["keywords"]),
+        } for rule in EVENT_IMPACT_RULES]
+        return {"status": "ok", "data": data}
 
     @router.post("/flash")
     async def upsert_flash_news(
