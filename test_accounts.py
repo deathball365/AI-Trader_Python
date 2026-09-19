@@ -167,6 +167,20 @@ class TradingAccountRepositoryTests(unittest.TestCase):
         self.assertEqual(updated.daily_risk_limit, 12.5)
         self.assertIsNotNone(self.repository.authenticate(self.user.user_id, token))
 
+    def test_account_control_update_invalidates_cached_account(self):
+        account, _ = self.repository.create_or_rotate_default(self.user.user_id)
+        # Warm both account cache paths before updating the database directly.
+        self.assertTrue(self.repository.get_by_id(self.user.user_id, account.account_id).trading_enabled)
+        self.assertTrue(self.repository.list_for_user(self.user.user_id)[0].trading_enabled)
+
+        updated = self.repository.update_controls(
+            self.user.user_id, account.account_id, trading_enabled=False,
+        )
+
+        self.assertFalse(updated.trading_enabled)
+        self.assertFalse(self.repository.get_by_id(self.user.user_id, account.account_id).trading_enabled)
+        self.assertFalse(self.repository.list_for_user(self.user.user_id)[0].trading_enabled)
+
     def test_single_position_loss_limit_defaults_and_updates(self):
         account = self.repository.create_paper_account(
             self.user.user_id, "Loss Guard Paper", 10000

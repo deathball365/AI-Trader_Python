@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 from mysql_storage import MySQLStorage
 from infrastructure.storage_factory import get_mysql_storage
 from repositories.identity import MetaRepository, UserRecord, UserRepository
-from runtime_cache import TTLCache
+from runtime_cache import TTLCache, invalidate
 
 if TYPE_CHECKING:
     from market.models import LLMConfig, TradingStrategy
@@ -396,6 +396,9 @@ class TradingAccountRepository:
                     (now, now, account_id),
                 )
             conn.commit()
+        # This update uses a transaction connection directly, so the storage
+        # layer cannot infer the affected table and invalidate its cache.
+        invalidate({"accounts"})
         return self.get_by_id(user_id, account_id)
 
     def set_archived(
