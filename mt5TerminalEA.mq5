@@ -91,7 +91,7 @@ const int TRADE_HISTORY_RETRY_DELAY_SECONDS = 15;
 
 // 账户级后台任务。财经日历由服务端校验，仅ADMIN实例可写入公共数据。
 datetime g_lastCalendarSyncTime = 0;
-const int CALENDAR_SYNC_INTERVAL_SECONDS = 60;
+const int CALENDAR_SYNC_INTERVAL_SECONDS = 600;
 int g_calendarDayOffset = 0;
 const int CALENDAR_DAYS_AHEAD = 7;
 datetime g_lastPositionSyncTime = 0;
