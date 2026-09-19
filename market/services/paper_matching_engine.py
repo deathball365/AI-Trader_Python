@@ -45,7 +45,9 @@ class PaperMatchingEngine:
         bid: float, ask: float, now: int, pivots: List[Dict], structures: Dict[str, Dict],
     ) -> Dict:
         from paper_trading import market_spec
-        point_size, contract_size = market_spec(symbol)
+        point_size, contract_size = market_spec(
+            symbol, account_id=account_id, storage=self.paper_service.storage,
+        )
         quote = TickQuote.create(bid, ask, now)
         settings = self.paper_service._settings(account_id)
         slippage = settings["slippage_points"] * point_size

@@ -51,21 +51,57 @@ from market.services.structure_plan_execution_coordinator import (
 )
 
 
-def market_spec(symbol: str) -> Tuple[float, float]:
-    upper = str(symbol or "").upper()
-    if "GOLD" in upper or "XAU" in upper:
-        return 0.01, 100.0
-    # BTCUSD 形式与外汇六码品种相同，但不能套用外汇的 100,000 合约规模。
-    if any(upper.startswith(asset) for asset in (
-        "BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "BNB", "LTC",
-        "AVAX", "TRX", "DOT", "LINK",
-    )):
-        return 0.01, 1.0
-    if "JPY" in upper:
-        return 0.001, 100000.0
-    if len(upper.rstrip("#._")) == 6:
-        return 0.00001, 100000.0
-    return 0.01, 1.0
+def _normalized_market_symbol(symbol: str) -> str:
+    return "".join(ch for ch in str(symbol or "").upper() if ch.isalnum())
+
+
+def market_spec(
+    symbol: str,
+    spec: Optional[Dict] = None,
+    *,
+    account_id: Optional[int] = None,
+    storage=None,
+) -> Tuple[float, float]:
+    """Return (point_size, contract_size) for Paper/backtest PnL.
+
+    Broker-reported specs win when they include a usable contract size.
+    Name-based fallbacks must run before the 6-letter FX heuristic, because
+    SILVER# / XAGUSD would otherwise inherit a 100,000 FX multiplier.
+    """
+    payload = dict(spec or {})
+    if not payload and account_id:
+        from repositories.instrument_specs import InstrumentSpecRepository
+        payload = InstrumentSpecRepository(storage).get(int(account_id), symbol) or {}
+
+    compact = _normalized_market_symbol(symbol)
+    point_size = float(payload.get("point_size") or payload.get("tick_size") or 0.0)
+    tick_size = float(payload.get("tick_size") or 0.0)
+    tick_value = float(payload.get("tick_value") or 0.0)
+    contract_size = float(payload.get("contract_size") or 0.0)
+    if tick_size > 0 and tick_value > 0:
+        contract_size = tick_value / tick_size
+    if compact.startswith(("BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "BNB", "LTC", "AVAX", "TRX", "DOT", "LINK")):
+        fallback_point, fallback_contract = 0.01, 1.0
+    elif "XAU" in compact or "GOLD" in compact:
+        fallback_point, fallback_contract = 0.01, 100.0
+    elif "XAG" in compact or "SILVER" in compact:
+        fallback_point, fallback_contract = 0.001, 5000.0
+    elif any(token in compact for token in ("USOIL", "UKOIL", "WTI", "BRENT", "OIL")):
+        fallback_point, fallback_contract = 0.01, 100.0
+    elif any(token in compact for token in ("US30", "US500", "US100", "NAS100", "SPX", "DJ30", "GER40", "UK100")):
+        fallback_point, fallback_contract = 0.01, 1.0
+    elif "JPY" in compact:
+        fallback_point, fallback_contract = 0.001, 100000.0
+    elif len(compact) == 6:
+        fallback_point, fallback_contract = 0.00001, 100000.0
+    else:
+        fallback_point, fallback_contract = 0.01, 1.0
+
+    if point_size <= 0:
+        point_size = fallback_point
+    if contract_size <= 0:
+        contract_size = fallback_contract
+    return point_size, contract_size
 
 
 class PaperTradingService:
@@ -489,7 +525,7 @@ class PaperTradingService:
                         "WHERE account_id=? AND symbol=? AND status='open'",
                         (now, int(account_id), symbol),
                     )
-                    point_size, contract_size = market_spec(symbol)
+                    point_size, contract_size = market_spec(symbol, account_id=account_id, storage=self.storage)
                     slippage = settings["slippage_points"] * point_size
                     balance = self.position_service.manage(
                         conn, int(user_id), int(account_id), symbol, bid, ask, now,
@@ -567,7 +603,7 @@ class PaperTradingService:
                         "WHERE account_id = ? AND symbol = ? AND status = 'open'",
                         (str(reason or "scheduled_flatten"), now, int(account_id), symbol),
                     )
-                    point_size, contract_size = market_spec(symbol)
+                    point_size, contract_size = market_spec(symbol, account_id=account_id, storage=self.storage)
                     balance = self.position_service.manage(
                         conn, int(user_id), int(account_id), symbol,
                         float(quote[0]), float(quote[1]), now, settings, [], {},
@@ -1751,7 +1787,7 @@ class PaperTradingService:
                 if entry_price > 0 and opening_stop > 0:
                     initial_risk = abs(entry_price - opening_stop)
             symbol = str(ordered[-1].get("symbol") or "")
-            _, contract_size = market_spec(symbol)
+            _, contract_size = market_spec(symbol, account_id=account_id, storage=self.storage)
             risk_amount = initial_risk * total_volume * contract_size
             realized_r = (
                 net_profit / risk_amount if risk_amount > 0
@@ -1854,7 +1890,7 @@ class PaperTradingService:
         account = self.storage.fetchone(
             "SELECT balance FROM trading_accounts WHERE id = ?", (account_id,)
         )
-        _, contract_size = market_spec(symbol)
+        _, contract_size = market_spec(symbol, account_id=account_id, storage=self.storage)
         risk_amount = float(account["balance"]) * float(strategy.risk_percent) / 100
         raw = risk_amount / max(risk_points * contract_size, 0.000001)
         return max(0.01, math.floor(raw * 100) / 100)
@@ -1962,14 +1998,14 @@ class PaperTradingService:
                 """,
                 (account_id, today_start),
             )
-            _, new_contract_size = market_spec(symbol)
+            _, new_contract_size = market_spec(symbol, account_id=account_id, storage=self.storage)
             existing_risk_pct = 0.0
             for row in risk_rows or []:
                 entry = float(row.get("requested_price") or 0)
                 stop = float(row.get("stop_loss") or 0)
                 if entry <= 0 or stop <= 0:
                     continue
-                _, contract_size = market_spec(row.get("symbol") or symbol)
+                _, contract_size = market_spec(row.get("symbol") or symbol, account_id=account_id, storage=self.storage)
                 existing_risk_pct += (
                     abs(entry - stop) * float(row.get("requested_volume") or 0)
                     * contract_size / balance * 100
@@ -1985,7 +2021,7 @@ class PaperTradingService:
                 warnings.append(
                     f"将超过每日风险占用上限 {daily_risk_limit:.2f}%"
                 )
-            _, contract_size = market_spec(symbol)
+            _, contract_size = market_spec(symbol, account_id=account_id, storage=self.storage)
             leverage = self._settings(account_id)["leverage"]
             if current_price * volume * contract_size / leverage > float(account["free_margin"]):
                 warnings.append("模拟账户可用保证金不足")

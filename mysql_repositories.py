@@ -604,8 +604,42 @@ class TradingAccountRepository:
                 """,
                 (account_id, *settings, now, now),
             )
+            if reference_account_id:
+                self._copy_instrument_specs(conn, int(reference_account_id), account_id, now)
             conn.commit()
         return self.get_by_id(user_id, account_id)
+
+    def _copy_instrument_specs(self, conn, source_account_id: int, target_account_id: int, now: int) -> None:
+        """Copy broker contract specs onto a Paper account so PnL uses the same multiplier."""
+        rows = conn.execute(
+            "SELECT symbol, min_volume, volume_step, max_volume, volume_digits, "
+            "contract_size, price_digits, tick_size, point_size, tick_value, source "
+            "FROM account_instrument_specs WHERE account_id=?",
+            (int(source_account_id),),
+        ).fetchall()
+        for row in rows:
+            payload = dict(row)
+            conn.execute(
+                "INSERT INTO account_instrument_specs "
+                "(account_id,symbol,min_volume,volume_step,max_volume,volume_digits,contract_size,"
+                "price_digits,tick_size,point_size,tick_value,source,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON DUPLICATE KEY UPDATE min_volume=VALUES(min_volume),volume_step=VALUES(volume_step),"
+                "max_volume=VALUES(max_volume),volume_digits=VALUES(volume_digits),"
+                "contract_size=VALUES(contract_size),price_digits=VALUES(price_digits),"
+                "tick_size=VALUES(tick_size),point_size=VALUES(point_size),"
+                "tick_value=VALUES(tick_value),"
+                "source=VALUES(source),updated_at=VALUES(updated_at)",
+                (
+                    int(target_account_id), payload.get("symbol"),
+                    payload.get("min_volume"), payload.get("volume_step"),
+                    payload.get("max_volume"), payload.get("volume_digits"),
+                    payload.get("contract_size"), payload.get("price_digits"),
+                    payload.get("tick_size"), payload.get("point_size"),
+                    payload.get("tick_value") or 0,
+                    str(payload.get("source") or "copied")[:32], int(now),
+                ),
+            )
 
     def resolve_paper_reference(self, user_id: int, reference_account_id: int) -> Dict:
         """Resolve Paper matching defaults from a live/Paper reference account."""

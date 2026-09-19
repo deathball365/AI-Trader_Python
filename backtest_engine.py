@@ -2586,13 +2586,19 @@ def position_limit_reason(
 
 
 def market_spec(symbol: str, bars: List[Dict]) -> Tuple[float, float]:
-    upper = symbol.upper()
-    if "GOLD" in upper or "XAU" in upper:
-        return 0.01, 100.0
-    if "JPY" in upper:
-        return 0.001, 100000.0
-    if len(upper.rstrip("#._")) == 6:
-        return 0.00001, 100000.0
+    from paper_trading import market_spec as paper_market_spec
+    point_size, contract_size = paper_market_spec(symbol)
+    compact = "".join(ch for ch in str(symbol or "").upper() if ch.isalnum())
+    known = (
+        compact.startswith(("BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "BNB", "LTC", "AVAX", "TRX", "DOT", "LINK"))
+        or any(token in compact for token in (
+            "XAU", "GOLD", "XAG", "SILVER", "USOIL", "UKOIL", "WTI", "BRENT", "OIL",
+            "US30", "US500", "US100", "NAS100", "SPX", "DJ30", "GER40", "UK100", "JPY",
+        ))
+        or len(compact) == 6
+    )
+    if known:
+        return point_size, contract_size
     sample = bars[0]["close"] if bars else 1
     decimals = max(0, min(8, len(str(sample).partition(".")[2])))
     return 10 ** -decimals, 1.0

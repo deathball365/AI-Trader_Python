@@ -164,6 +164,7 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
                     "price_digits": payload.get("price_digits"),
                     "tick_size": payload.get("tick_size"),
                     "point_size": payload.get("point_size"),
+                    "tick_value": payload.get("tick_value"),
                     "source": payload.get("source") or "mt5",
                 },
             )

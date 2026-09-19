@@ -18,6 +18,7 @@ DEFAULT_SPEC = {
     "price_digits": 0,
     "tick_size": 0.0,
     "point_size": 0.0,
+    "tick_value": 0.0,
     "source": "default",
 }
 
@@ -27,14 +28,30 @@ class InstrumentSpecRepository:
         self.storage = storage or get_storage()
 
     def get(self, account_id: int, symbol: str) -> Dict:
+        account_id = int(account_id or 0)
+        symbol = str(symbol or "").strip()
         row = self.storage.fetchone(
             "SELECT account_id,symbol,min_volume,volume_step,max_volume,"
-            "volume_digits,contract_size,price_digits,tick_size,point_size,source,updated_at "
+            "volume_digits,contract_size,price_digits,tick_size,point_size,tick_value,source,updated_at "
             "FROM account_instrument_specs WHERE account_id=? AND symbol=?",
-            (int(account_id or 0), str(symbol or "").strip()),
+            (account_id, symbol),
         )
+        if row is None and account_id:
+            row = self.storage.fetchone(
+                "SELECT s.account_id,s.symbol,s.min_volume,s.volume_step,s.max_volume,"
+                "s.volume_digits,s.contract_size,s.price_digits,s.tick_size,s.point_size,"
+                "s.tick_value,s.source,s.updated_at "
+                "FROM account_instrument_specs s "
+                "JOIN trading_accounts target ON target.id=? "
+                "JOIN trading_accounts source ON source.id=s.account_id "
+                "WHERE target.account_type='paper' AND source.user_id=target.user_id "
+                "AND source.account_type IN ('mt5','ibkr') AND s.symbol=? "
+                "AND COALESCE(s.contract_size,0) > 0 "
+                "ORDER BY s.updated_at DESC, s.account_id DESC LIMIT 1",
+                (account_id, symbol),
+            )
         result = dict(DEFAULT_SPEC)
-        result.update({"account_id": int(account_id or 0), "symbol": str(symbol or "").strip()})
+        result.update({"account_id": account_id, "symbol": symbol})
         if row:
             result.update(dict(row))
         return result
@@ -54,20 +71,22 @@ class InstrumentSpecRepository:
         price_digits = max(0, min(12, int(spec.get("price_digits") or 0)))
         tick_size = max(0.0, float(spec.get("tick_size") or 0.0))
         point_size = max(0.0, float(spec.get("point_size") or 0.0))
+        tick_value = max(0.0, float(spec.get("tick_value") or 0.0))
         source = str(spec.get("source") or "broker")[:32]
         now = int(time.time())
         self.storage.execute(
             "INSERT INTO account_instrument_specs "
             "(account_id,symbol,min_volume,volume_step,max_volume,volume_digits,contract_size,"
-            "price_digits,tick_size,point_size,source,updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+            "price_digits,tick_size,point_size,tick_value,source,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON DUPLICATE KEY UPDATE min_volume=VALUES(min_volume),volume_step=VALUES(volume_step),"
             "max_volume=VALUES(max_volume),volume_digits=VALUES(volume_digits),"
             "contract_size=VALUES(contract_size),price_digits=VALUES(price_digits),"
             "tick_size=VALUES(tick_size),point_size=VALUES(point_size),"
+            "tick_value=VALUES(tick_value),"
             "source=VALUES(source),updated_at=VALUES(updated_at)",
             (account_id, symbol, min_volume, step, max_volume, digits, contract,
-             price_digits, tick_size, point_size, source, now),
+             price_digits, tick_size, point_size, tick_value, source, now),
         )
         return self.get(account_id, symbol)
 

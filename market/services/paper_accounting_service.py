@@ -16,7 +16,10 @@ class PaperAccountingService:
         for position in rows:
             quote = self.paper_service._quotes.get((user_id, position["symbol"]))
             mark = (quote[0] if position["direction"] == "buy" else quote[1]) if quote else float(position["current_price"])
-            _, contract_size = market_spec(position["symbol"])
+            _, contract_size = market_spec(
+                position["symbol"], account_id=account_id,
+                storage=self.paper_service.storage,
+            )
             multiplier = 1 if position["direction"] == "buy" else -1
             active_volume = float(position["remaining_volume"] or position["volume"])
             unrealized = (mark - float(position["entry_price"])) * multiplier * active_volume * contract_size

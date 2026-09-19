@@ -463,6 +463,7 @@ class MySQLStorage:
                     price_digits INT NOT NULL DEFAULT 0,
                     tick_size DECIMAL(24,10) NOT NULL DEFAULT 0,
                     point_size DECIMAL(24,10) NOT NULL DEFAULT 0,
+                    tick_value DECIMAL(24,10) NOT NULL DEFAULT 0,
                     source VARCHAR(32) NOT NULL DEFAULT 'default',
                     updated_at BIGINT NOT NULL,
                     PRIMARY KEY (account_id, symbol),
@@ -931,6 +932,7 @@ class MySQLStorage:
                         ("price_digits", "INT NOT NULL DEFAULT 0"),
                         ("tick_size", "DECIMAL(24,10) NOT NULL DEFAULT 0"),
                         ("point_size", "DECIMAL(24,10) NOT NULL DEFAULT 0"),
+                        ("tick_value", "DECIMAL(24,10) NOT NULL DEFAULT 0"),
                     ),
                     "structure_plan_executions": (
                         ("plan_stage", "VARCHAR(32) NOT NULL DEFAULT 'default'"),

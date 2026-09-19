@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright "wwananggxxxx"
 #property link      "https://www.mql5.com"
-#property version   "2.09"
-#define EA_API_VERSION "2.0.9"
+#property version   "2.10"
+#define EA_API_VERSION "2.1.0"
 #property strict
 
 //--- 需要访问Web请求权限
@@ -106,23 +106,23 @@ const int INSTRUMENT_SPEC_REPORT_INTERVAL_SECONDS = 300;
 //+------------------------------------------------------------------+
 string URLEncode(string str)
   {
-   string result = "";
-   for(int i = 0; i < StringLen(str); i++)
-     {
-      ushort ch = StringGetCharacter(str, i);
-      // 字母、数字、连字符、下划线、点号不需要编码
-      if((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') ||
-         ch == '-' || ch == '_' || ch == '.')
+      string result = "";
+      for(int i = 0; i < StringLen(str); i++)
         {
-         result += CharToString((uchar)ch);
+         ushort ch = StringGetCharacter(str, i);
+         // 字母、数字、连字符、下划线、点号不需要编码
+         if((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') ||
+            ch == '-' || ch == '_' || ch == '.')
+           {
+            result += CharToString((uchar)ch);
+           }
+         else
+           {
+            // 其他字符编码为 %XX 格式
+            result += "%" + StringFormat("%02X", ch);
+           }
         }
-      else
-        {
-         // 其他字符编码为 %XX 格式
-         result += "%" + StringFormat("%02X", ch);
-        }
-     }
-   return result;
+      return result;
   }
 
 //+------------------------------------------------------------------+
@@ -130,30 +130,30 @@ string URLEncode(string str)
 //+------------------------------------------------------------------+
 string EscapeJsonString(string str)
   {
-   string result = "";
-   for(int i = 0; i < StringLen(str); i++)
-     {
-      ushort ch = StringGetCharacter(str, i);
-      if(ch == '"')
-         result += "\\\"";
-      else if(ch == '\\')
-         result += "\\\\";
-      else if(ch == 8)
-         result += "\\b";
-      else if(ch == 12)
-         result += "\\f";
-      else if(ch == 10)
-         result += "\\n";
-      else if(ch == 13)
-         result += "\\r";
-      else if(ch == 9)
-         result += "\\t";
-      else if(ch < 32)
-         result += StringFormat("\\u%04X", (int)ch);
-      else
-         result += ShortToString(ch);
-     }
-   return result;
+      string result = "";
+      for(int i = 0; i < StringLen(str); i++)
+        {
+         ushort ch = StringGetCharacter(str, i);
+         if(ch == '"')
+            result += "\\\"";
+         else if(ch == '\\')
+            result += "\\\\";
+         else if(ch == 8)
+            result += "\\b";
+         else if(ch == 12)
+            result += "\\f";
+         else if(ch == 10)
+            result += "\\n";
+         else if(ch == 13)
+            result += "\\r";
+         else if(ch == 9)
+            result += "\\t";
+         else if(ch < 32)
+            result += StringFormat("\\u%04X", (int)ch);
+         else
+            result += ShortToString(ch);
+        }
+      return result;
   }
 
 //+------------------------------------------------------------------+
@@ -161,10 +161,10 @@ string EscapeJsonString(string str)
 //+------------------------------------------------------------------+
 string BuildAuthenticatedHeaders()
   {
-   return "Content-Type: application/json\r\n"
-          + "X-EA-User-ID: " + IntegerToString(g_webUserId) + "\r\n"
-          + "X-EA-Token: " + g_eaToken + "\r\n"
-          + "X-EA-Version: " + EA_API_VERSION + "\r\n";
+      return "Content-Type: application/json\r\n"
+             + "X-EA-User-ID: " + IntegerToString(g_webUserId) + "\r\n"
+             + "X-EA-Token: " + g_eaToken + "\r\n"
+             + "X-EA-Version: " + EA_API_VERSION + "\r\n";
   }
 
 //+------------------------------------------------------------------+
@@ -175,49 +175,49 @@ string BuildAuthenticatedHeaders()
 //+------------------------------------------------------------------+
 string InstructionExecutionKey(string instructionId)
   {
-   return "AITRADE.exec." + IntegerToString(g_webUserId) + "." + instructionId;
+      return "AITRADE.exec." + IntegerToString(g_webUserId) + "." + instructionId;
   }
 
 bool GetExecutedInstructionDeal(string instructionId, long &dealTicket)
   {
-   dealTicket = 0;
-   if(instructionId == "")
-      return false;
-   string key = InstructionExecutionKey(instructionId);
-   if(!GlobalVariableCheck(key))
-      return false;
-   dealTicket = (long)GlobalVariableGet(key);
-   return true;
+      dealTicket = 0;
+      if(instructionId == "")
+         return false;
+      string key = InstructionExecutionKey(instructionId);
+      if(!GlobalVariableCheck(key))
+         return false;
+      dealTicket = (long)GlobalVariableGet(key);
+      return true;
   }
 
 void MarkInstructionExecuted(string instructionId, long dealTicket)
   {
-   if(instructionId == "")
-      return;
-   // Store the deal ticket when available so a later duplicate delivery can
-   // reconstruct and retry the execution receipt without placing another order.
-   GlobalVariableSet(InstructionExecutionKey(instructionId), (double)MathMax(1, dealTicket));
+      if(instructionId == "")
+         return;
+      // Store the deal ticket when available so a later duplicate delivery can
+      // reconstruct and retry the execution receipt without placing another order.
+      GlobalVariableSet(InstructionExecutionKey(instructionId), (double)MathMax(1, dealTicket));
   }
 
 void ResendExecutedInstructionReport(string instructionId, string orderId, string symbol,
-                                     string action, double requestedPrice, double requestedVolume,
-                                     long dealTicket)
+                                        string action, double requestedPrice, double requestedVolume,
+                                        long dealTicket)
   {
-   double executedPrice = 0;
-   double executedVolume = requestedVolume;
-   long mt5Order = 0;
-   long positionId = 0;
-   if(dealTicket > 1 && HistorySelect(TimeCurrent() - 7 * 86400, TimeCurrent() + 60))
-     {
-      executedPrice = HistoryDealGetDouble((ulong)dealTicket, DEAL_PRICE);
-      executedVolume = HistoryDealGetDouble((ulong)dealTicket, DEAL_VOLUME);
-      mt5Order = HistoryDealGetInteger((ulong)dealTicket, DEAL_ORDER);
-      positionId = HistoryDealGetInteger((ulong)dealTicket, DEAL_POSITION_ID);
-     }
-   SendTradeExecutionReport(
-      instructionId, orderId, symbol, action, true, requestedPrice, executedPrice,
-      requestedVolume, executedVolume, mt5Order, dealTicket, positionId, 0, ""
-   );
+      double executedPrice = 0;
+      double executedVolume = requestedVolume;
+      long mt5Order = 0;
+      long positionId = 0;
+      if(dealTicket > 1 && HistorySelect(TimeCurrent() - 7 * 86400, TimeCurrent() + 60))
+        {
+         executedPrice = HistoryDealGetDouble((ulong)dealTicket, DEAL_PRICE);
+         executedVolume = HistoryDealGetDouble((ulong)dealTicket, DEAL_VOLUME);
+         mt5Order = HistoryDealGetInteger((ulong)dealTicket, DEAL_ORDER);
+         positionId = HistoryDealGetInteger((ulong)dealTicket, DEAL_POSITION_ID);
+        }
+      SendTradeExecutionReport(
+         instructionId, orderId, symbol, action, true, requestedPrice, executedPrice,
+         requestedVolume, executedVolume, mt5Order, dealTicket, positionId, 0, ""
+      );
   }
 
 //+------------------------------------------------------------------+
@@ -225,29 +225,29 @@ void ResendExecutedInstructionReport(string instructionId, string orderId, strin
 //+------------------------------------------------------------------+
 string GetActivationCodeFromProgramName()
   {
-   string programName = MQLInfoString(MQL_PROGRAM_NAME);
-   string prefix = "mt5TerminalEA_";
-   int prefixPos = StringFind(programName, prefix);
-   if(prefixPos != 0)
-      return "";
-
-   string code = StringSubstr(programName, StringLen(prefix));
-   int extensionPos = StringFind(code, ".");
-   if(extensionPos >= 0)
-      code = StringSubstr(code, 0, extensionPos);
-   StringToUpper(code);
-
-   if(StringLen(code) != 12)
-      return "";
-   for(int i = 0; i < StringLen(code); i++)
-     {
-      ushort ch = StringGetCharacter(code, i);
-      bool isLetter = (ch >= 'A' && ch <= 'Z');
-      bool isDigit = (ch >= '2' && ch <= '9');
-      if(!isLetter && !isDigit)
+      string programName = MQLInfoString(MQL_PROGRAM_NAME);
+      string prefix = "mt5TerminalEA_";
+      int prefixPos = StringFind(programName, prefix);
+      if(prefixPos != 0)
          return "";
-     }
-   return code;
+
+      string code = StringSubstr(programName, StringLen(prefix));
+      int extensionPos = StringFind(code, ".");
+      if(extensionPos >= 0)
+         code = StringSubstr(code, 0, extensionPos);
+      StringToUpper(code);
+
+      if(StringLen(code) != 12)
+         return "";
+      for(int i = 0; i < StringLen(code); i++)
+        {
+         ushort ch = StringGetCharacter(code, i);
+         bool isLetter = (ch >= 'A' && ch <= 'Z');
+         bool isDigit = (ch >= '2' && ch <= '9');
+         if(!isLetter && !isDigit)
+            return "";
+        }
+      return code;
   }
 
 //+------------------------------------------------------------------+
@@ -255,31 +255,31 @@ string GetActivationCodeFromProgramName()
 //+------------------------------------------------------------------+
 bool LoadCredentials(string expectedActivationCode)
   {
-   int handle = FileOpen(g_credentialsFile, FILE_READ | FILE_TXT | FILE_ANSI);
-   if(handle == INVALID_HANDLE)
-      return false;
+      int handle = FileOpen(g_credentialsFile, FILE_READ | FILE_TXT | FILE_ANSI);
+      if(handle == INVALID_HANDLE)
+         return false;
 
-   string savedServer = FileReadString(handle);
-   string savedCode = FileReadString(handle);
-   string savedUserId = FileReadString(handle);
-   string savedToken = FileReadString(handle);
-   string savedRole = "";
-   if(!FileIsEnding(handle))
-      savedRole = FileReadString(handle);
-   FileClose(handle);
+      string savedServer = FileReadString(handle);
+      string savedCode = FileReadString(handle);
+      string savedUserId = FileReadString(handle);
+      string savedToken = FileReadString(handle);
+      string savedRole = "";
+      if(!FileIsEnding(handle))
+         savedRole = FileReadString(handle);
+      FileClose(handle);
 
-   if(savedServer != g_pythonServer || savedCode != expectedActivationCode ||
-      StringLen(savedToken) == 0)
-      return false;
+      if(savedServer != g_pythonServer || savedCode != expectedActivationCode ||
+         StringLen(savedToken) == 0)
+         return false;
 
-   long userId = (long)StringToInteger(savedUserId);
-   if(userId <= 0)
-      return false;
+      long userId = (long)StringToInteger(savedUserId);
+      if(userId <= 0)
+         return false;
 
-   g_webUserId = userId;
-   g_eaToken = savedToken;
-   g_isAdmin = (savedRole == "admin");
-   return true;
+      g_webUserId = userId;
+      g_eaToken = savedToken;
+      g_isAdmin = (savedRole == "admin");
+      return true;
   }
 
 //+------------------------------------------------------------------+
@@ -287,20 +287,20 @@ bool LoadCredentials(string expectedActivationCode)
 //+------------------------------------------------------------------+
 bool SaveCredentials(string activationCode)
   {
-   int handle = FileOpen(
-      g_credentialsFile,
-      FILE_WRITE | FILE_TXT | FILE_ANSI
-   );
-   if(handle == INVALID_HANDLE)
-      return false;
+      int handle = FileOpen(
+         g_credentialsFile,
+         FILE_WRITE | FILE_TXT | FILE_ANSI
+      );
+      if(handle == INVALID_HANDLE)
+         return false;
 
-   FileWrite(handle, g_pythonServer);
-   FileWrite(handle, activationCode);
-   FileWrite(handle, IntegerToString(g_webUserId));
-   FileWrite(handle, g_eaToken);
-   FileWrite(handle, g_isAdmin ? "admin" : "user");
-   FileClose(handle);
-   return true;
+      FileWrite(handle, g_pythonServer);
+      FileWrite(handle, activationCode);
+      FileWrite(handle, IntegerToString(g_webUserId));
+      FileWrite(handle, g_eaToken);
+      FileWrite(handle, g_isAdmin ? "admin" : "user");
+      FileClose(handle);
+      return true;
   }
 
 //+------------------------------------------------------------------+
@@ -308,62 +308,62 @@ bool SaveCredentials(string activationCode)
 //+------------------------------------------------------------------+
 bool ActivateEA(string activationCode)
   {
-   string programName = MQLInfoString(MQL_PROGRAM_NAME);
-   string jsonBody = "{";
-   jsonBody += "\"activation_code\":\"" + activationCode + "\",";
-   jsonBody += "\"mt5_login\":\""
-               + IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
-   jsonBody += "\"mt5_server\":\""
-               + EscapeJsonString(AccountInfoString(ACCOUNT_SERVER)) + "\",";
-   jsonBody += "\"ea_version\":\"" + EA_API_VERSION + "\",";
-   jsonBody += "\"program_name\":\"" + EscapeJsonString(programName) + "\"";
-   jsonBody += "}";
+      string programName = MQLInfoString(MQL_PROGRAM_NAME);
+      string jsonBody = "{";
+      jsonBody += "\"activation_code\":\"" + activationCode + "\",";
+      jsonBody += "\"mt5_login\":\""
+                  + IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
+      jsonBody += "\"mt5_server\":\""
+                  + EscapeJsonString(AccountInfoString(ACCOUNT_SERVER)) + "\",";
+      jsonBody += "\"ea_version\":\"" + EA_API_VERSION + "\",";
+      jsonBody += "\"program_name\":\"" + EscapeJsonString(programName) + "\"";
+      jsonBody += "}";
 
-   uchar postData[];
-   uchar responseData[];
-   StringToCharArray(jsonBody, postData, 0, WHOLE_ARRAY, CP_UTF8);
-   if(ArraySize(postData) > 0)
-      ArrayResize(postData, ArraySize(postData) - 1);
+      uchar postData[];
+      uchar responseData[];
+      StringToCharArray(jsonBody, postData, 0, WHOLE_ARRAY, CP_UTF8);
+      if(ArraySize(postData) > 0)
+         ArrayResize(postData, ArraySize(postData) - 1);
 
-   string responseHeaders = "";
-   ResetLastError();
-   int responseCode = WebRequest(
-      "POST",
-      g_pythonServer + "/ea/activate",
-      "Content-Type: application/json\r\n",
-      10000,
-      postData,
-      responseData,
-      responseHeaders
-   );
-   if(responseCode != 200)
-     {
-      Print(
-         "[EA Activation] Failed. HTTP=", responseCode,
-         ", error=", GetLastError(),
-         ". Check the activation file and WebRequest whitelist."
+      string responseHeaders = "";
+      ResetLastError();
+      int responseCode = WebRequest(
+         "POST",
+         g_pythonServer + "/ea/activate",
+         "Content-Type: application/json\r\n",
+         10000,
+         postData,
+         responseData,
+         responseHeaders
       );
-      return false;
-     }
+      if(responseCode != 200)
+        {
+         Print(
+            "[EA Activation] Failed. HTTP=", responseCode,
+            ", error=", GetLastError(),
+            ". Check the activation file and WebRequest whitelist."
+         );
+         return false;
+        }
 
-   string responseText = CharArrayToString(
-      responseData, 0, WHOLE_ARRAY, CP_UTF8
-   );
-   long userId = (long)ExtractJsonDouble(responseText, "user_id");
-   string token = ExtractJsonString(responseText, "ea_token");
-   g_isAdmin = (ExtractJsonDouble(responseText, "is_admin") > 0.5);
-   if(userId <= 0 || StringLen(token) == 0)
-     {
-      Print("[EA Activation] Server response did not contain credentials.");
-      return false;
-     }
+      string responseText = CharArrayToString(
+         responseData, 0, WHOLE_ARRAY, CP_UTF8
+      );
+      long userId = (long)ExtractJsonDouble(responseText, "user_id");
+      string token = ExtractJsonString(responseText, "ea_token");
+      g_isAdmin = (ExtractJsonDouble(responseText, "is_admin") > 0.5);
+      if(userId <= 0 || StringLen(token) == 0)
+        {
+         Print("[EA Activation] Server response did not contain credentials.");
+         return false;
+        }
 
-   g_webUserId = userId;
-   g_eaToken = token;
-   if(!SaveCredentials(activationCode))
-      Print("[EA Activation] Warning: credentials could not be saved locally.");
-   Print("[EA Activation] Account binding completed for user_id=", g_webUserId);
-   return true;
+      g_webUserId = userId;
+      g_eaToken = token;
+      if(!SaveCredentials(activationCode))
+         Print("[EA Activation] Warning: credentials could not be saved locally.");
+      Print("[EA Activation] Account binding completed for user_id=", g_webUserId);
+      return true;
   }
 
 //+------------------------------------------------------------------+
@@ -371,103 +371,105 @@ bool ActivateEA(string activationCode)
 //+------------------------------------------------------------------+
 int VolumeDigits(double step)
   {
-   int digits = 0;
-   double value = step;
-   while(digits < 8 && MathAbs(value - MathRound(value)) > 0.00000001)
-     {
-      value *= 10.0;
-      digits++;
-     }
-   return digits;
+      int digits = 0;
+      double value = step;
+      while(digits < 8 && MathAbs(value - MathRound(value)) > 0.00000001)
+        {
+         value *= 10.0;
+         digits++;
+        }
+      return digits;
   }
 
 double NormalizeTradeVolume(string symbol, double requested, bool closing=false, double current=0.0)
   {
-   double minimum = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-   double maximum = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
-   double step = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
-   if(minimum <= 0) minimum = 0.01;
-   if(maximum <= 0) maximum = 100.0;
-   if(step <= 0) step = minimum;
-   requested = MathMax(0.0, requested);
-   if(closing && current > 0 && requested >= current - step * 0.5)
-      return current;
-   double normalized = MathFloor((requested + 0.0000000001) / step) * step;
-   if(!closing)
-      normalized = MathMax(minimum, normalized);
-   else if(normalized < minimum && current >= minimum)
-      normalized = current;
-   normalized = MathMin(maximum, normalized);
-   return NormalizeDouble(normalized, VolumeDigits(step));
+      double minimum = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+      double maximum = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+      double step = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+      if(minimum <= 0) minimum = 0.01;
+      if(maximum <= 0) maximum = 100.0;
+      if(step <= 0) step = minimum;
+      requested = MathMax(0.0, requested);
+      if(closing && current > 0 && requested >= current - step * 0.5)
+         return current;
+      double normalized = MathFloor((requested + 0.0000000001) / step) * step;
+      if(!closing)
+         normalized = MathMax(minimum, normalized);
+      else if(normalized < minimum && current >= minimum)
+         normalized = current;
+      normalized = MathMin(maximum, normalized);
+      return NormalizeDouble(normalized, VolumeDigits(step));
   }
 
 double NormalizeTradePrice(string symbol, double requested, int roundingMode=0)
   {
-   if(requested <= 0)
-      return 0.0;
-   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
-   double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
-   if(tickSize <= 0)
-      tickSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
-   if(tickSize > 0)
-     {
-      double units = requested / tickSize;
-      if(roundingMode > 0)
-         units = MathCeil(units - 0.000000001);
-      else if(roundingMode < 0)
-         units = MathFloor(units + 0.000000001);
-      else
-         units = MathRound(units);
-      requested = units * tickSize;
-     }
-   return NormalizeDouble(requested, digits);
+      if(requested <= 0)
+         return 0.0;
+      int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+      double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+      if(tickSize <= 0)
+         tickSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
+      if(tickSize > 0)
+        {
+         double units = requested / tickSize;
+         if(roundingMode > 0)
+            units = MathCeil(units - 0.000000001);
+         else if(roundingMode < 0)
+            units = MathFloor(units + 0.000000001);
+         else
+            units = MathRound(units);
+         requested = units * tickSize;
+        }
+      return NormalizeDouble(requested, digits);
   }
 
 bool SendInstrumentSpec()
   {
-   if(StringLen(g_eaToken) == 0 || StringLen(_Symbol) == 0)
-      return false;
-   double minVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-   double maxVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
-   double stepVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-   double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
-   int priceDigits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
-   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   double pointSize = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   if(minVolume <= 0) minVolume = 0.01;
-   if(stepVolume <= 0) stepVolume = minVolume;
-   if(maxVolume <= 0) maxVolume = 100.0;
-   if(contractSize <= 0) contractSize = 1.0;
-   string jsonBody = "{";
-   jsonBody += "\"symbol\":\"" + EscapeJsonString(_Symbol) + "\",";
-   jsonBody += "\"min_volume\":" + DoubleToString(minVolume, 8) + ",";
-   jsonBody += "\"volume_step\":" + DoubleToString(stepVolume, 8) + ",";
-   jsonBody += "\"max_volume\":" + DoubleToString(maxVolume, 8) + ",";
-   jsonBody += "\"volume_digits\":" + IntegerToString(VolumeDigits(stepVolume)) + ",";
-   jsonBody += "\"contract_size\":" + DoubleToString(contractSize, 8) + ",";
-   jsonBody += "\"price_digits\":" + IntegerToString(priceDigits) + ",";
-   jsonBody += "\"tick_size\":" + DoubleToString(tickSize, 10) + ",";
-   jsonBody += "\"point_size\":" + DoubleToString(pointSize, 10) + ",";
-   jsonBody += "\"source\":\"mt5\"}";
-   uchar postData[];
-   uchar responseData[];
-   string responseHeaders = "";
-   StringToCharArray(jsonBody, postData, 0, WHOLE_ARRAY, CP_UTF8);
-   if(ArraySize(postData) > 0)
-      ArrayResize(postData, ArraySize(postData) - 1);
-   int responseCode = WebRequest(
-      "POST", g_pythonServer + "/ea/instrument_specs",
-      BuildAuthenticatedHeaders(), 5000, postData, responseData, responseHeaders
-   );
-   if(responseCode != 200)
-     {
-      Print("[品种规格上报] 失败 HTTP=", responseCode, " error=", GetLastError());
-      return false;
-     }
-   Print("[品种规格上报] ", _Symbol, " min=", DoubleToString(minVolume, 8),
-         " step=", DoubleToString(stepVolume, 8), " digits=", priceDigits,
-         " tick=", DoubleToString(tickSize, 10));
-   return true;
+      if(StringLen(g_eaToken) == 0 || StringLen(_Symbol) == 0)
+         return false;
+      double minVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+      double maxVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+      double stepVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+      double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+      int priceDigits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+      double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+      double pointSize = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+      double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+      if(minVolume <= 0) minVolume = 0.01;
+      if(stepVolume <= 0) stepVolume = minVolume;
+      if(maxVolume <= 0) maxVolume = 100.0;
+      if(contractSize <= 0) contractSize = 1.0;
+      string jsonBody = "{";
+      jsonBody += "\"symbol\":\"" + EscapeJsonString(_Symbol) + "\",";
+      jsonBody += "\"min_volume\":" + DoubleToString(minVolume, 8) + ",";
+      jsonBody += "\"volume_step\":" + DoubleToString(stepVolume, 8) + ",";
+      jsonBody += "\"max_volume\":" + DoubleToString(maxVolume, 8) + ",";
+      jsonBody += "\"volume_digits\":" + IntegerToString(VolumeDigits(stepVolume)) + ",";
+      jsonBody += "\"contract_size\":" + DoubleToString(contractSize, 8) + ",";
+      jsonBody += "\"price_digits\":" + IntegerToString(priceDigits) + ",";
+      jsonBody += "\"tick_size\":" + DoubleToString(tickSize, 10) + ",";
+      jsonBody += "\"point_size\":" + DoubleToString(pointSize, 10) + ",";
+      jsonBody += "\"source\":\"mt5\"}";
+      uchar postData[];
+      uchar responseData[];
+      string responseHeaders = "";
+      StringToCharArray(jsonBody, postData, 0, WHOLE_ARRAY, CP_UTF8);
+      if(ArraySize(postData) > 0)
+         ArrayResize(postData, ArraySize(postData) - 1);
+      int responseCode = WebRequest(
+         "POST", g_pythonServer + "/ea/instrument_specs",
+         BuildAuthenticatedHeaders(), 5000, postData, responseData, responseHeaders
+      );
+      if(responseCode != 200)
+        {
+         Print("[品种规格上报] 失败 HTTP=", responseCode, " error=", GetLastError());
+         return false;
+        }
+      Print("[品种规格上报] ", _Symbol, " min=", DoubleToString(minVolume, 8),
+            " step=", DoubleToString(stepVolume, 8), " digits=", priceDigits,
+            " tick=", DoubleToString(tickSize, 10),
+            " tick_value=", DoubleToString(tickValue, 10));
+      return true;
   }
 
 //+------------------------------------------------------------------+
@@ -475,70 +477,70 @@ bool SendInstrumentSpec()
 //+------------------------------------------------------------------+
 int OnInit()
   {
-   g_pythonServer = InpServerUrl;
-   while(StringLen(g_pythonServer) > 0 &&
-         StringSubstr(g_pythonServer, StringLen(g_pythonServer) - 1, 1) == "/")
-      g_pythonServer = StringSubstr(g_pythonServer, 0, StringLen(g_pythonServer) - 1);
+      g_pythonServer = InpServerUrl;
+      while(StringLen(g_pythonServer) > 0 &&
+            StringSubstr(g_pythonServer, StringLen(g_pythonServer) - 1, 1) == "/")
+         g_pythonServer = StringSubstr(g_pythonServer, 0, StringLen(g_pythonServer) - 1);
 
-   g_activationCode = GetActivationCodeFromProgramName();
-   bool credentialsReady = false;
-   if(StringLen(g_activationCode) > 0)
-     {
-      credentialsReady = LoadCredentials(g_activationCode);
+      g_activationCode = GetActivationCodeFromProgramName();
+      bool credentialsReady = false;
+      if(StringLen(g_activationCode) > 0)
+        {
+         credentialsReady = LoadCredentials(g_activationCode);
+         if(!credentialsReady)
+            credentialsReady = ActivateEA(g_activationCode);
+        }
+      else if(InpWebUserId > 0 && StringLen(InpEaToken) > 0)
+        {
+         g_webUserId = InpWebUserId;
+         g_eaToken = InpEaToken;
+         g_isAdmin = false; // 手工凭证不绕过服务端ADMIN校验
+         credentialsReady = true;
+        }
+      else
+        {
+         credentialsReady = LoadCredentials("");
+        }
+
       if(!credentialsReady)
-         credentialsReady = ActivateEA(g_activationCode);
-     }
-   else if(InpWebUserId > 0 && StringLen(InpEaToken) > 0)
-     {
-      g_webUserId = InpWebUserId;
-      g_eaToken = InpEaToken;
-      g_isAdmin = false; // 手工凭证不绕过服务端ADMIN校验
-      credentialsReady = true;
-     }
-   else
-     {
-      credentialsReady = LoadCredentials("");
-     }
-
-   if(!credentialsReady)
-     {
-      Print(
-         "EA account binding is missing. Download a personalized EX5 file ",
-         "or set InpWebUserId and InpEaToken manually."
-      );
-      return(INIT_PARAMETERS_INCORRECT);
-     }
+        {
+         Print(
+            "EA account binding is missing. Download a personalized EX5 file ",
+            "or set InpWebUserId and InpEaToken manually."
+         );
+         return(INIT_PARAMETERS_INCORRECT);
+        }
 
 //--- 初始化交易类
-   trade.SetExpertMagicNumber(123456);
+      trade.SetExpertMagicNumber(123456);
 
 //--- 初始化时间
-   g_lastStatisticTime = TimeCurrent();
-   g_lastPythonRequestTime = GetTickCount();
-   g_lastKlinePushTime = TimeCurrent();
-   g_lastTradeHistoryReportTime = 0;  // 初始化交易历史上报时间
+      g_lastStatisticTime = TimeCurrent();
+      g_lastPythonRequestTime = GetTickCount();
+      g_lastKlinePushTime = TimeCurrent();
+      g_lastTradeHistoryReportTime = 0;  // 初始化交易历史上报时间
 
 //--- 初始化随机数种子
-   MathSrand((uint)TimeCurrent());
+      MathSrand((uint)TimeCurrent());
 
-   //--- 设置定时器，每1秒触发一次
-   EventSetTimer(1);
-   SendInstrumentSpec();
-   g_lastInstrumentSpecReportTime = TimeCurrent();
+      //--- 设置定时器，每1秒触发一次
+      EventSetTimer(1);
+      SendInstrumentSpec();
+      g_lastInstrumentSpecReportTime = TimeCurrent();
 
 //--- 打印初始化信息
-   Print("Expert initialized successfully");
-   Print("Python server: ", g_pythonServer);
-   Print("Risk limit: ", g_riskLimitPercent, "%");
+      Print("Expert initialized successfully");
+      Print("Python server: ", g_pythonServer);
+      Print("Risk limit: ", g_riskLimitPercent, "%");
 
 //--- 启动任务改由OnTimer分批执行，避免阻塞EA初始化
-   g_klineInitialized = false;
-   g_tradeHistorySyncPending = true;
-   g_nextTradeHistoryRetryTime = TimeCurrent();
-   Print("Historical K-line and trade history bootstrap scheduled by OnTimer");
+      g_klineInitialized = false;
+      g_tradeHistorySyncPending = true;
+      g_nextTradeHistoryRetryTime = TimeCurrent();
+      Print("Historical K-line and trade history bootstrap scheduled by OnTimer");
 
 //---
-   return(INIT_SUCCEEDED);
+      return(INIT_SUCCEEDED);
   }
 //+------------------------------------------------------------------+
 //| Expert deinitialization function                                 |
@@ -546,9 +548,9 @@ int OnInit()
 void OnDeinit(const int reason)
   {
 //--- 取消定时器
-   EventKillTimer();
+      EventKillTimer();
 //---
-   Print("Expert deinitialized, reason: ", reason);
+      Print("Expert deinitialized, reason: ", reason);
   }
 //+------------------------------------------------------------------+
 //| 更新统计数据 - 每个TICK调用                                      |
@@ -556,28 +558,28 @@ void OnDeinit(const int reason)
 void UpdateStatistics()
   {
 //--- 获取当前价格；Tick计数只在OnTick中增加
-   MqlTick lastTick;
-   if(SymbolInfoTick(_Symbol, lastTick))
-     {
-      g_bidPrice = lastTick.bid;
-      g_askPrice = lastTick.ask;
-
-      // 计算点差
-      g_spread = g_askPrice - g_bidPrice;
-      // 计算点差（点数）= 点差金额 / 点值
-      double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-      if(point > 0)
+      MqlTick lastTick;
+      if(SymbolInfoTick(_Symbol, lastTick))
         {
-         g_spreadPoints = g_spread / point;
+         g_bidPrice = lastTick.bid;
+         g_askPrice = lastTick.ask;
+
+         // 计算点差
+         g_spread = g_askPrice - g_bidPrice;
+         // 计算点差（点数）= 点差金额 / 点值
+         double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+         if(point > 0)
+           {
+            g_spreadPoints = g_spread / point;
+           }
         }
-     }
 
 //--- 获取账户信息
-   g_accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   g_accountEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-   g_marginLevel = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
-   g_freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-   g_margin = AccountInfoDouble(ACCOUNT_MARGIN);
+      g_accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+      g_accountEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+      g_marginLevel = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
+      g_freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+      g_margin = AccountInfoDouble(ACCOUNT_MARGIN);
   }
 
 //+------------------------------------------------------------------+
@@ -586,69 +588,69 @@ void UpdateStatistics()
 //+------------------------------------------------------------------+
 string GetPositionsSummary(bool onlyCurrentSymbol = true)
   {
-   string summary = "[";
-   int positionCount = 0;
+      string summary = "[";
+      int positionCount = 0;
 
-   for(int i = 0; i < PositionsTotal(); i++)
-     {
-      if(!PositionGetTicket(i)) continue;
-
-      string posSymbol = PositionGetString(POSITION_SYMBOL);
-      if(onlyCurrentSymbol && posSymbol != _Symbol) continue;  // 只统计当前品种
-
-      double posVolume = PositionGetDouble(POSITION_VOLUME);
-      double posPriceOpen = PositionGetDouble(POSITION_PRICE_OPEN);
-      double posProfit = PositionGetDouble(POSITION_PROFIT);
-      double posSL = PositionGetDouble(POSITION_SL);
-      double posTP = PositionGetDouble(POSITION_TP);
-      string posComment = PositionGetString(POSITION_COMMENT);
-      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-
-      // 获取当前价格（需要根据品种获取对应的bid/ask）
-      double currentPrice = 0;
-      if(posSymbol == _Symbol)
+      for(int i = 0; i < PositionsTotal(); i++)
         {
-         currentPrice = (posType == POSITION_TYPE_BUY) ? g_bidPrice : g_askPrice;
-        }
-      else
-        {
-         // 对于其他品种，使用当前tick价格
-         MqlTick tick;
-         if(SymbolInfoTick(posSymbol, tick))
+         if(!PositionGetTicket(i)) continue;
+
+         string posSymbol = PositionGetString(POSITION_SYMBOL);
+         if(onlyCurrentSymbol && posSymbol != _Symbol) continue;  // 只统计当前品种
+
+         double posVolume = PositionGetDouble(POSITION_VOLUME);
+         double posPriceOpen = PositionGetDouble(POSITION_PRICE_OPEN);
+         double posProfit = PositionGetDouble(POSITION_PROFIT);
+         double posSL = PositionGetDouble(POSITION_SL);
+         double posTP = PositionGetDouble(POSITION_TP);
+         string posComment = PositionGetString(POSITION_COMMENT);
+         ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+
+         // 获取当前价格（需要根据品种获取对应的bid/ask）
+         double currentPrice = 0;
+         if(posSymbol == _Symbol)
            {
-            currentPrice = (posType == POSITION_TYPE_BUY) ? tick.bid : tick.ask;
+            currentPrice = (posType == POSITION_TYPE_BUY) ? g_bidPrice : g_askPrice;
            }
+         else
+           {
+            // 对于其他品种，使用当前tick价格
+            MqlTick tick;
+            if(SymbolInfoTick(posSymbol, tick))
+              {
+               currentPrice = (posType == POSITION_TYPE_BUY) ? tick.bid : tick.ask;
+              }
+           }
+
+         double distanceSL = (posSL > 0) ? MathAbs(currentPrice - posSL) : 0;
+         double distanceTP = (posTP > 0) ? MathAbs(posTP - currentPrice) : 0;
+
+         if(positionCount > 0) summary += ",";
+         summary += "{";
+         summary += "\"ticket\":" + IntegerToString(PositionGetInteger(POSITION_TICKET)) + ",";
+         summary += "\"position_id\":" + IntegerToString(PositionGetInteger(POSITION_IDENTIFIER)) + ",";
+         summary += "\"symbol\":\"" + posSymbol + "\",";
+         summary += "\"volume\":" + DoubleToString(posVolume, 2) + ",";
+         summary += "\"priceOpen\":" + DoubleToString(posPriceOpen, _Digits) + ",";
+         summary += "\"openTime\":" + IntegerToString(PositionGetInteger(POSITION_TIME)) + ",";
+         long brokerOffset = (long)(TimeCurrent() - TimeGMT());
+         summary += "\"open_timestamp\":" + IntegerToString(PositionGetInteger(POSITION_TIME) - brokerOffset) + ",";
+         summary += "\"broker_open_time\":\"" + TimeToString((datetime)PositionGetInteger(POSITION_TIME), TIME_DATE | TIME_SECONDS) + "\",";
+         summary += "\"broker_utc_offset_seconds\":" + IntegerToString(brokerOffset) + ",";
+         summary += "\"type\":\"" + (posType == POSITION_TYPE_BUY ? "BUY" : "SELL") + "\",";
+         summary += "\"profit\":" + DoubleToString(posProfit, 2) + ",";
+         summary += "\"comment\":\"" + EscapeJsonString(posComment) + "\",";
+         summary += "\"sl\":" + DoubleToString(posSL, _Digits) + ",";
+         summary += "\"tp\":" + DoubleToString(posTP, _Digits) + ",";
+         summary += "\"distanceSL\":" + DoubleToString(distanceSL, _Digits) + ",";
+         summary += "\"distanceTP\":" + DoubleToString(distanceTP, _Digits) + "";
+         summary += "}";
+
+         positionCount++;
         }
 
-      double distanceSL = (posSL > 0) ? MathAbs(currentPrice - posSL) : 0;
-      double distanceTP = (posTP > 0) ? MathAbs(posTP - currentPrice) : 0;
-
-      if(positionCount > 0) summary += ",";
-      summary += "{";
-      summary += "\"ticket\":" + IntegerToString(PositionGetInteger(POSITION_TICKET)) + ",";
-      summary += "\"position_id\":" + IntegerToString(PositionGetInteger(POSITION_IDENTIFIER)) + ",";
-      summary += "\"symbol\":\"" + posSymbol + "\",";
-      summary += "\"volume\":" + DoubleToString(posVolume, 2) + ",";
-      summary += "\"priceOpen\":" + DoubleToString(posPriceOpen, _Digits) + ",";
-      summary += "\"openTime\":" + IntegerToString(PositionGetInteger(POSITION_TIME)) + ",";
-      long brokerOffset = (long)(TimeCurrent() - TimeGMT());
-      summary += "\"open_timestamp\":" + IntegerToString(PositionGetInteger(POSITION_TIME) - brokerOffset) + ",";
-      summary += "\"broker_open_time\":\"" + TimeToString((datetime)PositionGetInteger(POSITION_TIME), TIME_DATE | TIME_SECONDS) + "\",";
-      summary += "\"broker_utc_offset_seconds\":" + IntegerToString(brokerOffset) + ",";
-      summary += "\"type\":\"" + (posType == POSITION_TYPE_BUY ? "BUY" : "SELL") + "\",";
-      summary += "\"profit\":" + DoubleToString(posProfit, 2) + ",";
-      summary += "\"comment\":\"" + EscapeJsonString(posComment) + "\",";
-      summary += "\"sl\":" + DoubleToString(posSL, _Digits) + ",";
-      summary += "\"tp\":" + DoubleToString(posTP, _Digits) + ",";
-      summary += "\"distanceSL\":" + DoubleToString(distanceSL, _Digits) + ",";
-      summary += "\"distanceTP\":" + DoubleToString(distanceTP, _Digits) + "";
-      summary += "}";
-
-      positionCount++;
-     }
-
-   summary += "]";
-   return summary;
+      summary += "]";
+      return summary;
   }
 
 //+------------------------------------------------------------------+
@@ -657,37 +659,37 @@ string GetPositionsSummary(bool onlyCurrentSymbol = true)
 //+------------------------------------------------------------------+
 void SendPositionsToPython(bool allSymbols = true)
   {
-   string positions = GetPositionsSummary(!allSymbols);  // allSymbols=true时，onlyCurrentSymbol=false
+      string positions = GetPositionsSummary(!allSymbols);  // allSymbols=true时，onlyCurrentSymbol=false
 
-   // 构建JSON请求体
-   string jsonBody = "{";
-   jsonBody += "\"symbol\":\"" + _Symbol + "\",";  // 当前品种
-   jsonBody += "\"positions\":" + positions;
-   jsonBody += "}";
+      // 构建JSON请求体
+      string jsonBody = "{";
+      jsonBody += "\"symbol\":\"" + _Symbol + "\",";  // 当前品种
+      jsonBody += "\"positions\":" + positions;
+      jsonBody += "}";
 
-   // 发送HTTP POST请求
-   string headers = BuildAuthenticatedHeaders();
-   uchar postData[];
-   uchar responseData[];
-   string outheaders = "";
-   int responseCode = 0;
+      // 发送HTTP POST请求
+      string headers = BuildAuthenticatedHeaders();
+      uchar postData[];
+      uchar responseData[];
+      string outheaders = "";
+      int responseCode = 0;
 
-   // 将JSON字符串转换为字节数组
-   StringToCharArray(jsonBody, postData, 0, WHOLE_ARRAY, CP_UTF8);
-   // 移除末尾的null字符
-   ArrayResize(postData, ArraySize(postData) - 1);
+      // 将JSON字符串转换为字节数组
+      StringToCharArray(jsonBody, postData, 0, WHOLE_ARRAY, CP_UTF8);
+      // 移除末尾的null字符
+      ArrayResize(postData, ArraySize(postData) - 1);
 
-   string url = g_pythonServer + "/ea/positions";
-   responseCode = WebRequest("POST", url, headers, 5000, postData, responseData, outheaders);
+      string url = g_pythonServer + "/ea/positions";
+      responseCode = WebRequest("POST", url, headers, 5000, postData, responseData, outheaders);
 
-   if(responseCode == 200)
-     {
-      Print("[持仓上报] 成功上报持仓数据");
-     }
-   else if(responseCode != -1)
-     {
-      Print("[持仓上报] 失败. Response code: ", responseCode);
-     }
+      if(responseCode == 200)
+        {
+         Print("[持仓上报] 成功上报持仓数据");
+        }
+      else if(responseCode != -1)
+        {
+         Print("[持仓上报] 失败. Response code: ", responseCode);
+        }
   }
 
 //+------------------------------------------------------------------+
@@ -695,41 +697,41 @@ void SendPositionsToPython(bool allSymbols = true)
 //+------------------------------------------------------------------+
 void CheckAndCloseRiskyPositions()
   {
-   // 信用账户可能余额很低但权益正常，取较大值避免风控阈值被压到开仓点差以下。
-   double riskBase = MathMax(g_accountBalance, g_accountEquity);
-   if(riskBase <= 0)
-      return;
+      // 信用账户可能余额很低但权益正常，取较大值避免风控阈值被压到开仓点差以下。
+      double riskBase = MathMax(g_accountBalance, g_accountEquity);
+      if(riskBase <= 0)
+         return;
 
-   double riskThreshold = riskBase * (g_riskLimitPercent / 100.0);
-   
-   for(int i = 0; i < PositionsTotal(); i++)
-     {
-      if(!PositionGetTicket(i)) continue;
+      double riskThreshold = riskBase * (g_riskLimitPercent / 100.0);
       
-      string posSymbol = PositionGetString(POSITION_SYMBOL);
-      if(posSymbol != _Symbol) continue;
-      
-      double posProfit = PositionGetDouble(POSITION_PROFIT);
-      
-      // 如果损失超过阈值，平仓
-      if(posProfit < -riskThreshold)
+      for(int i = 0; i < PositionsTotal(); i++)
         {
-         long posTicket = PositionGetInteger(POSITION_TICKET);
-         double posVolume = PositionGetDouble(POSITION_VOLUME);
-         Print("Risk limit exceeded! Position profit: ", posProfit, " Limit: ", -riskThreshold);
+         if(!PositionGetTicket(i)) continue;
          
-         if(ClosePositionByTicket(posTicket))
+         string posSymbol = PositionGetString(POSITION_SYMBOL);
+         if(posSymbol != _Symbol) continue;
+         
+         double posProfit = PositionGetDouble(POSITION_PROFIT);
+         
+         // 如果损失超过阈值，平仓
+         if(posProfit < -riskThreshold)
            {
-            Print("Position closed successfully: ", posTicket);
-            // 记录平仓动作
-            RecordTrade("CLOSE", _Symbol, posVolume, 0, 0, 0);
-           }
-         else
-           {
-            Print("Failed to close position: ", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+            long posTicket = PositionGetInteger(POSITION_TICKET);
+            double posVolume = PositionGetDouble(POSITION_VOLUME);
+            Print("Risk limit exceeded! Position profit: ", posProfit, " Limit: ", -riskThreshold);
+            
+            if(ClosePositionByTicket(posTicket))
+              {
+               Print("Position closed successfully: ", posTicket);
+               // 记录平仓动作
+               RecordTrade("CLOSE", _Symbol, posVolume, 0, 0, 0);
+              }
+            else
+              {
+               Print("Failed to close position: ", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+              }
            }
         }
-     }
   }
 
 //+------------------------------------------------------------------+
@@ -737,64 +739,64 @@ void CheckAndCloseRiskyPositions()
 //+------------------------------------------------------------------+
 void RequestTradesFromPython(bool pollOnly)
   {
-   string headers = BuildAuthenticatedHeaders();
-   uchar responseData[];
-   string response = "";
-   string outheaders = "";
-   int responseCode = 0;
-   
-   // 构建请求URL，携带SYMBOL和当前价格
-   string currentPrice = DoubleToString((g_bidPrice + g_askPrice) / 2, _Digits);
-   string encodedSymbol = URLEncode(_Symbol);
-   string url = g_pythonServer + "/get_trades?symbol=" + encodedSymbol + "&price=" + currentPrice;
-   if(pollOnly)
-      url += "&poll_only=true";
-   
-   // 建立HTTP请求到Python服务。网络瞬断或服务端刚好繁忙时，不能把
-   // 本次机会直接丢掉；服务端会保留同一个 instruction_id 供后续拉取。
-   uchar emptyData[];
-   int maxAttempts = pollOnly ? 1 : 3;
-   for(int attempt = 0; attempt < maxAttempts; attempt++)
-     {
-      ArrayFree(responseData);
-      outheaders = "";
-      responseCode = WebRequest("GET", url, headers, 3000, emptyData, responseData, outheaders);
-      if(responseCode == 200)
-         break;
-      if(attempt < maxAttempts - 1)
-         Sleep(500 * (attempt + 1));
-     }
-
-   if(responseCode == 200)
-     {
-      // 将响应转换为字符串
-      if(ArraySize(responseData) > 0)
+      string headers = BuildAuthenticatedHeaders();
+      uchar responseData[];
+      string response = "";
+      string outheaders = "";
+      int responseCode = 0;
+      
+      // 构建请求URL，携带SYMBOL和当前价格
+      string currentPrice = DoubleToString((g_bidPrice + g_askPrice) / 2, _Digits);
+      string encodedSymbol = URLEncode(_Symbol);
+      string url = g_pythonServer + "/get_trades?symbol=" + encodedSymbol + "&price=" + currentPrice;
+      if(pollOnly)
+         url += "&poll_only=true";
+      
+      // 建立HTTP请求到Python服务。网络瞬断或服务端刚好繁忙时，不能把
+      // 本次机会直接丢掉；服务端会保留同一个 instruction_id 供后续拉取。
+      uchar emptyData[];
+      int maxAttempts = pollOnly ? 1 : 3;
+      for(int attempt = 0; attempt < maxAttempts; attempt++)
         {
-         for(int i = 0; i < ArraySize(responseData); i++)
-           {
-            response += CharToString(responseData[i]);
-           }
-
-         // 解析JSON并执行交易
-         ParseAndExecuteTrades(response);
+         ArrayFree(responseData);
+         outheaders = "";
+         responseCode = WebRequest("GET", url, headers, 3000, emptyData, responseData, outheaders);
+         if(responseCode == 200)
+            break;
+         if(attempt < maxAttempts - 1)
+            Sleep(500 * (attempt + 1));
         }
-     }
-   else if(responseCode != -1)  // -1表示请求被禁用
-     {
-      Print("WebRequest failed. Response code: ", responseCode);
-      Print("URL: ", url);
 
-      // 打印错误详情
-      if(responseCode == 404)
-         Print("Endpoint not found. Check server URL.");
-      else if(responseCode == 500)
-         Print("Server error. Check server logs.");
-     }
-   else if(responseCode == -1)
-     {
-      Print("WebRequest is disabled! Please enable WebRequest in MT5 Options -> Expert Advisors");
-      Print("Make sure 'http://39.106.142.123' is added to the WebRequest allowed list");
-     }
+      if(responseCode == 200)
+        {
+         // 将响应转换为字符串
+         if(ArraySize(responseData) > 0)
+           {
+            for(int i = 0; i < ArraySize(responseData); i++)
+              {
+               response += CharToString(responseData[i]);
+              }
+
+            // 解析JSON并执行交易
+            ParseAndExecuteTrades(response);
+           }
+        }
+      else if(responseCode != -1)  // -1表示请求被禁用
+        {
+         Print("WebRequest failed. Response code: ", responseCode);
+         Print("URL: ", url);
+
+         // 打印错误详情
+         if(responseCode == 404)
+            Print("Endpoint not found. Check server URL.");
+         else if(responseCode == 500)
+            Print("Server error. Check server logs.");
+        }
+      else if(responseCode == -1)
+        {
+         Print("WebRequest is disabled! Please enable WebRequest in MT5 Options -> Expert Advisors");
+         Print("Make sure 'http://39.106.142.123' is added to the WebRequest allowed list");
+        }
   }
 
 //+------------------------------------------------------------------+
@@ -802,239 +804,239 @@ void RequestTradesFromPython(bool pollOnly)
 //+------------------------------------------------------------------+
 void ParseAndExecuteTrades(string jsonData)
   {
-   // JSON格式: {"trades": [...], "close_tickets": [...], "pivot_alerts": [...]}
-   // EA只处理trades和close_tickets，pivot_alerts由Python推送到前端
+      // JSON格式: {"trades": [...], "close_tickets": [...], "pivot_alerts": [...]}
+      // EA只处理trades和close_tickets，pivot_alerts由Python推送到前端
 
-   if(StringLen(jsonData) == 0) return;
+      if(StringLen(jsonData) == 0) return;
 
-   bool hasTrades = false;
-   bool hasCloseTickets = false;
+      bool hasTrades = false;
+      bool hasCloseTickets = false;
 
-   // 提取trades数组
-   int tradesPos = StringFind(jsonData, "\"trades\":");
-   if(tradesPos != -1)
-     {
-      int tradesStart = StringFind(jsonData, "[", tradesPos);
-      int tradesEnd = StringFind(jsonData, "]", tradesStart);
-      if(tradesStart != -1 && tradesEnd != -1)
+      // 提取trades数组
+      int tradesPos = StringFind(jsonData, "\"trades\":");
+      if(tradesPos != -1)
         {
-         string tradesJson = StringSubstr(jsonData, tradesStart, tradesEnd - tradesStart + 1);
-         // 如果trades数组不为空
-         if(tradesJson != "[]")
+         int tradesStart = StringFind(jsonData, "[", tradesPos);
+         int tradesEnd = StringFind(jsonData, "]", tradesStart);
+         if(tradesStart != -1 && tradesEnd != -1)
            {
-            Print("[EA] 收到交易指令: ", tradesJson);
-            hasTrades = true;
-            ParseTradeArray(tradesJson);
-           }
-        }
-     }
-   else
-     {
-      // 旧格式兼容：直接是数组 [...]
-      if(StringFind(jsonData, "[") == 0 && StringFind(jsonData, "]") > 0)
-        {
-         string content = StringSubstr(jsonData, 1, StringLen(jsonData) - 2);
-         if(StringLen(content) > 0)
-           {
-            hasTrades = true;
-            ParseTradeArray(jsonData);
-           }
-        }
-     }
-
-   // 新版持久化平仓指令携带服务端 instruction_id，EA 回执必须原样返回，
-   // 才能把定时清仓请求与真实成交关联起来。
-   int closeInstructionsPos = StringFind(jsonData, "\"close_instructions\":");
-   if(closeInstructionsPos != -1)
-     {
-      int instructionsStart = StringFind(jsonData, "[", closeInstructionsPos);
-      int instructionsEnd = StringFind(jsonData, "]", instructionsStart);
-      if(instructionsStart != -1 && instructionsEnd > instructionsStart + 1)
-        {
-         string instructionsJson = StringSubstr(jsonData, instructionsStart + 1, instructionsEnd - instructionsStart - 1);
-         int instructionCursor = 0;
-         while(instructionCursor < StringLen(instructionsJson))
-           {
-            int objectStart = StringFind(instructionsJson, "{", instructionCursor);
-            int objectEnd = StringFind(instructionsJson, "}", objectStart);
-            if(objectStart == -1 || objectEnd == -1) break;
-            string closeInstruction = StringSubstr(instructionsJson, objectStart, objectEnd - objectStart + 1);
-            long ticket = (long)ExtractJsonDouble(closeInstruction, "ticket");
-            string instructionId = ExtractJsonString(closeInstruction, "instruction_id");
-            if(ticket > 0) ClosePositionByTicket(ticket, instructionId);
-            instructionCursor = objectEnd + 1;
-           }
-         hasCloseTickets = true;
-        }
-     }
-
-   // 旧版 close_tickets 仅在没有新版指令时兼容，避免同一持仓执行两次。
-   int closePos = StringFind(jsonData, "\"close_tickets\":");
-   if(closeInstructionsPos == -1 && closePos != -1)
-     {
-      int closeStart = StringFind(jsonData, "[", closePos);
-      int closeEnd = StringFind(jsonData, "]", closeStart);
-      if(closeStart != -1 && closeEnd != -1)
-        {
-         string closeJson = StringSubstr(jsonData, closeStart, closeEnd - closeStart + 1);
-         Print("[EA] 收到close_tickets: ", closeJson);
-         if(closeJson != "[]")
-           {
-            hasCloseTickets = true;
-            ParseAndExecuteClose(closeJson);
-           }
-        }
-     }
-
-   int updatesPos = StringFind(jsonData, "\"position_updates\":");
-   if(updatesPos != -1)
-     {
-      int updatesStart = StringFind(jsonData, "[", updatesPos);
-      int updatesEnd = StringFind(jsonData, "]", updatesStart);
-      if(updatesStart != -1 && updatesEnd != -1 && updatesEnd > updatesStart + 1)
-        {
-         string updatesJson = StringSubstr(jsonData, updatesStart + 1, updatesEnd - updatesStart - 1);
-         int cursor = 0;
-         while(cursor < StringLen(updatesJson))
-           {
-            int objectStart = StringFind(updatesJson, "{", cursor);
-            int objectEnd = StringFind(updatesJson, "}", objectStart);
-            if(objectStart == -1 || objectEnd == -1) break;
-            string updateJson = StringSubstr(updatesJson, objectStart, objectEnd - objectStart + 1);
-               long ticket = (long)ExtractJsonDouble(updateJson, "ticket");
-               string instructionId = ExtractJsonString(updateJson, "instruction_id");
-               double sl = ExtractJsonDouble(updateJson, "sl");
-               double tp = ExtractJsonDouble(updateJson, "tp");
-               if(ticket > 0 && PositionSelectByTicket(ticket))
-                 {
-                  string updateSymbol = PositionGetString(POSITION_SYMBOL);
-               ENUM_POSITION_TYPE positionType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-               int stopRounding = positionType == POSITION_TYPE_BUY ? 1 : -1;
-               sl = NormalizeTradePrice(updateSymbol, sl, stopRounding);
-               tp = NormalizeTradePrice(updateSymbol, tp, 0);
-               double bidPrice = SymbolInfoDouble(updateSymbol, SYMBOL_BID);
-               double askPrice = SymbolInfoDouble(updateSymbol, SYMBOL_ASK);
-               double pointSize = SymbolInfoDouble(updateSymbol, SYMBOL_POINT);
-               long stopsLevel = SymbolInfoInteger(updateSymbol, SYMBOL_TRADE_STOPS_LEVEL);
-               double minimumDistance = MathMax(0.0, (double)stopsLevel * pointSize);
-               bool stopIsValid = sl <= 0 || (
-                  positionType == POSITION_TYPE_BUY ?
-                     sl < bidPrice - minimumDistance + pointSize * 0.1 :
-                     sl > askPrice + minimumDistance - pointSize * 0.1
-               );
-               bool modifyOk = false;
-               long modifyRetcode = TRADE_RETCODE_INVALID_STOPS;
-               string modifyError = "止损不符合当前品种报价精度、最小跳动或最小距离";
-               if(stopIsValid)
-                 {
-                  modifyOk = trade.PositionModify(ticket, sl, tp);
-                  modifyRetcode = (long)trade.ResultRetcode();
-                  modifyError = modifyOk ? "" : trade.ResultRetcodeDescription();
-                 }
-               // PositionModify 返回 true 只表示请求已被交易类接受；以 retcode
-               // 作为最终结果依据，并把结果回报后端，供审计链显示。
-               bool modifySuccess = modifyOk && (
-                  modifyRetcode == TRADE_RETCODE_DONE ||
-                  modifyRetcode == TRADE_RETCODE_DONE_PARTIAL ||
-                  modifyRetcode == TRADE_RETCODE_NO_CHANGES
-               );
-               double actualSl = 0;
-               double actualTp = 0;
-               if(PositionSelectByTicket(ticket))
-                 {
-                  actualSl = PositionGetDouble(POSITION_SL);
-                  actualTp = PositionGetDouble(POSITION_TP);
-                 }
-               if(modifySuccess)
-                  Print("[持仓更新成功] Ticket: ", ticket, " SL: ", sl, " TP: ", tp,
-                        " Retcode: ", modifyRetcode);
-               else
-                  Print("[持仓更新失败] Ticket: ", ticket, " Retcode: ",
-                        modifyRetcode, " ", modifyError, " normalized SL=", sl);
-               SendTradeExecutionReport(
-                  instructionId == "" ?
-                     "position-sl-" + IntegerToString(ticket) + "-" + IntegerToString((long)TimeCurrent()) :
-                     instructionId,
-                  "position-" + IntegerToString(ticket), updateSymbol, "position_modify_sl",
-                  modifySuccess, sl, actualSl, 0, 0,
-                  (long)trade.ResultOrder(), (long)trade.ResultDeal(), ticket,
-                  modifyRetcode,
-                  modifySuccess ? "" : modifyError
-               );
-              }
-           cursor = objectEnd + 1;
-           }
-        }
-     }
-
-   int partialsPos = StringFind(jsonData, "\"position_partials\":");
-   if(partialsPos != -1)
-     {
-      int partialsStart = StringFind(jsonData, "[", partialsPos);
-      int partialsEnd = StringFind(jsonData, "]", partialsStart);
-      if(partialsStart != -1 && partialsEnd != -1 && partialsEnd > partialsStart + 1)
-        {
-         string partialsJson = StringSubstr(jsonData, partialsStart + 1, partialsEnd - partialsStart - 1);
-         int cursor = 0;
-         while(cursor < StringLen(partialsJson))
-           {
-            int objectStart = StringFind(partialsJson, "{", cursor);
-            int objectEnd = StringFind(partialsJson, "}", objectStart);
-            if(objectStart == -1 || objectEnd == -1) break;
-            string partialJson = StringSubstr(partialsJson, objectStart, objectEnd - objectStart + 1);
-            long ticket = (long)ExtractJsonDouble(partialJson, "ticket");
-            double volume = ExtractJsonDouble(partialJson, "volume");
-            string levelId = ExtractJsonString(partialJson, "level_id");
-            string instructionId = ExtractJsonString(partialJson, "instruction_id");
-            if(instructionId == "")
-               instructionId = "position-partial-" + IntegerToString(ticket) + "-" + levelId;
-            if(ticket > 0 && volume > 0 && PositionSelectByTicket(ticket))
+            string tradesJson = StringSubstr(jsonData, tradesStart, tradesEnd - tradesStart + 1);
+            // 如果trades数组不为空
+            if(tradesJson != "[]")
               {
-               string positionSymbol = PositionGetString(POSITION_SYMBOL);
-               long positionId = PositionGetInteger(POSITION_IDENTIFIER);
-               ENUM_POSITION_TYPE positionType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-               double requestedPrice = positionType == POSITION_TYPE_BUY
-                                       ? SymbolInfoDouble(positionSymbol, SYMBOL_BID)
-                                       : SymbolInfoDouble(positionSymbol, SYMBOL_ASK);
-               volume = NormalizeTradeVolume(
-                  positionSymbol, volume, true,
-                  PositionGetDouble(POSITION_VOLUME)
-               );
-               if(volume <= 0)
-                 {
-                  Print("[分批止盈跳过] 数量低于品种最小手数: ", positionSymbol);
-                  cursor = objectEnd + 1;
-                  continue;
-                 }
-               if(trade.PositionClosePartial(ticket, volume))
-                 {
-                  Print("[分批止盈成功] Ticket: ", ticket, " Volume: ", volume, " Level: ", levelId);
-                  long resultPositionId = ResolvePositionId((long)trade.ResultDeal(), positionSymbol);
-                  SendTradeExecutionReport(
-                     instructionId,
-                     "position-" + IntegerToString(ticket), positionSymbol, "partial_close",
-                     true, requestedPrice, trade.ResultPrice(), volume, trade.ResultVolume(),
-                     (long)trade.ResultOrder(), (long)trade.ResultDeal(),
-                     resultPositionId > 0 ? resultPositionId : positionId,
-                     (long)trade.ResultRetcode(), ""
-                  );
-                 }
-               else
-                 {
-                  Print("[分批止盈失败] Ticket: ", ticket, " Volume: ", volume, " Retcode: ", trade.ResultRetcodeDescription());
-                  SendTradeExecutionReport(
-                     instructionId,
-                     "position-" + IntegerToString(ticket), positionSymbol, "partial_close",
-                     false, requestedPrice, 0, volume, 0,
-                     (long)trade.ResultOrder(), (long)trade.ResultDeal(), positionId,
-                     (long)trade.ResultRetcode(), trade.ResultRetcodeDescription()
-                  );
-                 }
+               Print("[EA] 收到交易指令: ", tradesJson);
+               hasTrades = true;
+               ParseTradeArray(tradesJson);
               }
-            cursor = objectEnd + 1;
            }
         }
-     }
+      else
+        {
+         // 旧格式兼容：直接是数组 [...]
+         if(StringFind(jsonData, "[") == 0 && StringFind(jsonData, "]") > 0)
+           {
+            string content = StringSubstr(jsonData, 1, StringLen(jsonData) - 2);
+            if(StringLen(content) > 0)
+              {
+               hasTrades = true;
+               ParseTradeArray(jsonData);
+              }
+           }
+        }
+
+      // 新版持久化平仓指令携带服务端 instruction_id，EA 回执必须原样返回，
+      // 才能把定时清仓请求与真实成交关联起来。
+      int closeInstructionsPos = StringFind(jsonData, "\"close_instructions\":");
+      if(closeInstructionsPos != -1)
+        {
+         int instructionsStart = StringFind(jsonData, "[", closeInstructionsPos);
+         int instructionsEnd = StringFind(jsonData, "]", instructionsStart);
+         if(instructionsStart != -1 && instructionsEnd > instructionsStart + 1)
+           {
+            string instructionsJson = StringSubstr(jsonData, instructionsStart + 1, instructionsEnd - instructionsStart - 1);
+            int instructionCursor = 0;
+            while(instructionCursor < StringLen(instructionsJson))
+              {
+               int objectStart = StringFind(instructionsJson, "{", instructionCursor);
+               int objectEnd = StringFind(instructionsJson, "}", objectStart);
+               if(objectStart == -1 || objectEnd == -1) break;
+               string closeInstruction = StringSubstr(instructionsJson, objectStart, objectEnd - objectStart + 1);
+               long ticket = (long)ExtractJsonDouble(closeInstruction, "ticket");
+               string instructionId = ExtractJsonString(closeInstruction, "instruction_id");
+               if(ticket > 0) ClosePositionByTicket(ticket, instructionId);
+               instructionCursor = objectEnd + 1;
+              }
+            hasCloseTickets = true;
+           }
+        }
+
+      // 旧版 close_tickets 仅在没有新版指令时兼容，避免同一持仓执行两次。
+      int closePos = StringFind(jsonData, "\"close_tickets\":");
+      if(closeInstructionsPos == -1 && closePos != -1)
+        {
+         int closeStart = StringFind(jsonData, "[", closePos);
+         int closeEnd = StringFind(jsonData, "]", closeStart);
+         if(closeStart != -1 && closeEnd != -1)
+           {
+            string closeJson = StringSubstr(jsonData, closeStart, closeEnd - closeStart + 1);
+            Print("[EA] 收到close_tickets: ", closeJson);
+            if(closeJson != "[]")
+              {
+               hasCloseTickets = true;
+               ParseAndExecuteClose(closeJson);
+              }
+           }
+        }
+
+      int updatesPos = StringFind(jsonData, "\"position_updates\":");
+      if(updatesPos != -1)
+        {
+         int updatesStart = StringFind(jsonData, "[", updatesPos);
+         int updatesEnd = StringFind(jsonData, "]", updatesStart);
+         if(updatesStart != -1 && updatesEnd != -1 && updatesEnd > updatesStart + 1)
+           {
+            string updatesJson = StringSubstr(jsonData, updatesStart + 1, updatesEnd - updatesStart - 1);
+            int cursor = 0;
+            while(cursor < StringLen(updatesJson))
+              {
+               int objectStart = StringFind(updatesJson, "{", cursor);
+               int objectEnd = StringFind(updatesJson, "}", objectStart);
+               if(objectStart == -1 || objectEnd == -1) break;
+               string updateJson = StringSubstr(updatesJson, objectStart, objectEnd - objectStart + 1);
+                  long ticket = (long)ExtractJsonDouble(updateJson, "ticket");
+                  string instructionId = ExtractJsonString(updateJson, "instruction_id");
+                  double sl = ExtractJsonDouble(updateJson, "sl");
+                  double tp = ExtractJsonDouble(updateJson, "tp");
+                  if(ticket > 0 && PositionSelectByTicket(ticket))
+                    {
+                     string updateSymbol = PositionGetString(POSITION_SYMBOL);
+                  ENUM_POSITION_TYPE positionType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+                  int stopRounding = positionType == POSITION_TYPE_BUY ? 1 : -1;
+                  sl = NormalizeTradePrice(updateSymbol, sl, stopRounding);
+                  tp = NormalizeTradePrice(updateSymbol, tp, 0);
+                  double bidPrice = SymbolInfoDouble(updateSymbol, SYMBOL_BID);
+                  double askPrice = SymbolInfoDouble(updateSymbol, SYMBOL_ASK);
+                  double pointSize = SymbolInfoDouble(updateSymbol, SYMBOL_POINT);
+                  long stopsLevel = SymbolInfoInteger(updateSymbol, SYMBOL_TRADE_STOPS_LEVEL);
+                  double minimumDistance = MathMax(0.0, (double)stopsLevel * pointSize);
+                  bool stopIsValid = sl <= 0 || (
+                     positionType == POSITION_TYPE_BUY ?
+                        sl < bidPrice - minimumDistance + pointSize * 0.1 :
+                        sl > askPrice + minimumDistance - pointSize * 0.1
+                  );
+                  bool modifyOk = false;
+                  long modifyRetcode = TRADE_RETCODE_INVALID_STOPS;
+                  string modifyError = "止损不符合当前品种报价精度、最小跳动或最小距离";
+                  if(stopIsValid)
+                    {
+                     modifyOk = trade.PositionModify(ticket, sl, tp);
+                     modifyRetcode = (long)trade.ResultRetcode();
+                     modifyError = modifyOk ? "" : trade.ResultRetcodeDescription();
+                    }
+                  // PositionModify 返回 true 只表示请求已被交易类接受；以 retcode
+                  // 作为最终结果依据，并把结果回报后端，供审计链显示。
+                  bool modifySuccess = modifyOk && (
+                     modifyRetcode == TRADE_RETCODE_DONE ||
+                     modifyRetcode == TRADE_RETCODE_DONE_PARTIAL ||
+                     modifyRetcode == TRADE_RETCODE_NO_CHANGES
+                  );
+                  double actualSl = 0;
+                  double actualTp = 0;
+                  if(PositionSelectByTicket(ticket))
+                    {
+                     actualSl = PositionGetDouble(POSITION_SL);
+                     actualTp = PositionGetDouble(POSITION_TP);
+                    }
+                  if(modifySuccess)
+                     Print("[持仓更新成功] Ticket: ", ticket, " SL: ", sl, " TP: ", tp,
+                           " Retcode: ", modifyRetcode);
+                  else
+                     Print("[持仓更新失败] Ticket: ", ticket, " Retcode: ",
+                           modifyRetcode, " ", modifyError, " normalized SL=", sl);
+                  SendTradeExecutionReport(
+                     instructionId == "" ?
+                        "position-sl-" + IntegerToString(ticket) + "-" + IntegerToString((long)TimeCurrent()) :
+                        instructionId,
+                     "position-" + IntegerToString(ticket), updateSymbol, "position_modify_sl",
+                     modifySuccess, sl, actualSl, 0, 0,
+                     (long)trade.ResultOrder(), (long)trade.ResultDeal(), ticket,
+                     modifyRetcode,
+                     modifySuccess ? "" : modifyError
+                  );
+                 }
+              cursor = objectEnd + 1;
+              }
+           }
+        }
+
+      int partialsPos = StringFind(jsonData, "\"position_partials\":");
+      if(partialsPos != -1)
+        {
+         int partialsStart = StringFind(jsonData, "[", partialsPos);
+         int partialsEnd = StringFind(jsonData, "]", partialsStart);
+         if(partialsStart != -1 && partialsEnd != -1 && partialsEnd > partialsStart + 1)
+           {
+            string partialsJson = StringSubstr(jsonData, partialsStart + 1, partialsEnd - partialsStart - 1);
+            int cursor = 0;
+            while(cursor < StringLen(partialsJson))
+              {
+               int objectStart = StringFind(partialsJson, "{", cursor);
+               int objectEnd = StringFind(partialsJson, "}", objectStart);
+               if(objectStart == -1 || objectEnd == -1) break;
+               string partialJson = StringSubstr(partialsJson, objectStart, objectEnd - objectStart + 1);
+               long ticket = (long)ExtractJsonDouble(partialJson, "ticket");
+               double volume = ExtractJsonDouble(partialJson, "volume");
+               string levelId = ExtractJsonString(partialJson, "level_id");
+               string instructionId = ExtractJsonString(partialJson, "instruction_id");
+               if(instructionId == "")
+                  instructionId = "position-partial-" + IntegerToString(ticket) + "-" + levelId;
+               if(ticket > 0 && volume > 0 && PositionSelectByTicket(ticket))
+                 {
+                  string positionSymbol = PositionGetString(POSITION_SYMBOL);
+                  long positionId = PositionGetInteger(POSITION_IDENTIFIER);
+                  ENUM_POSITION_TYPE positionType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+                  double requestedPrice = positionType == POSITION_TYPE_BUY
+                                          ? SymbolInfoDouble(positionSymbol, SYMBOL_BID)
+                                          : SymbolInfoDouble(positionSymbol, SYMBOL_ASK);
+                  volume = NormalizeTradeVolume(
+                     positionSymbol, volume, true,
+                     PositionGetDouble(POSITION_VOLUME)
+                  );
+                  if(volume <= 0)
+                    {
+                     Print("[分批止盈跳过] 数量低于品种最小手数: ", positionSymbol);
+                     cursor = objectEnd + 1;
+                     continue;
+                    }
+                  if(trade.PositionClosePartial(ticket, volume))
+                    {
+                     Print("[分批止盈成功] Ticket: ", ticket, " Volume: ", volume, " Level: ", levelId);
+                     long resultPositionId = ResolvePositionId((long)trade.ResultDeal(), positionSymbol);
+                     SendTradeExecutionReport(
+                        instructionId,
+                        "position-" + IntegerToString(ticket), positionSymbol, "partial_close",
+                        true, requestedPrice, trade.ResultPrice(), volume, trade.ResultVolume(),
+                        (long)trade.ResultOrder(), (long)trade.ResultDeal(),
+                        resultPositionId > 0 ? resultPositionId : positionId,
+                        (long)trade.ResultRetcode(), ""
+                     );
+                    }
+                  else
+                    {
+                     Print("[分批止盈失败] Ticket: ", ticket, " Volume: ", volume, " Retcode: ", trade.ResultRetcodeDescription());
+                     SendTradeExecutionReport(
+                        instructionId,
+                        "position-" + IntegerToString(ticket), positionSymbol, "partial_close",
+                        false, requestedPrice, 0, volume, 0,
+                        (long)trade.ResultOrder(), (long)trade.ResultDeal(), positionId,
+                        (long)trade.ResultRetcode(), trade.ResultRetcodeDescription()
+                     );
+                    }
+                 }
+               cursor = objectEnd + 1;
+              }
+           }
+        }
   }
 
 //+------------------------------------------------------------------+
@@ -1042,46 +1044,46 @@ void ParseAndExecuteTrades(string jsonData)
 //+------------------------------------------------------------------+
 void ParseAndExecuteClose(string jsonData)
   {
-   Print("[EA] ParseAndExecuteClose 输入: ", jsonData, " 长度: ", StringLen(jsonData));
+      Print("[EA] ParseAndExecuteClose 输入: ", jsonData, " 长度: ", StringLen(jsonData));
 
-   // 移除首尾的括号
-   if(StringFind(jsonData, "[") == 0)
-     {
-      jsonData = StringSubstr(jsonData, 1, StringLen(jsonData) - 2);
-     }
-
-   Print("[EA] 移除括号后: ", jsonData, " 长度: ", StringLen(jsonData));
-
-   if(StringLen(jsonData) == 0) return;
-
-   // 直接解析数字（假设只有一个ticket）
-   long ticket = StringToInteger(jsonData);
-   Print("[EA] 直接解析ticket: ", ticket);
-
-   if(ticket > 0)
-     {
-      ClosePositionByTicket(ticket);
-     }
-   else
-     {
-      // 如果有逗号分隔的多个ticket
-      string tickets[];
-      int count = StringSplit(jsonData, ',', tickets);
-      Print("[EA] 多ticket模式, count=", count);
-
-      for(int i = 0; i < count; i++)
+      // 移除首尾的括号
+      if(StringFind(jsonData, "[") == 0)
         {
-         string ticketStr = tickets[i];
-         StringTrimLeft(ticketStr);
-         StringTrimRight(ticketStr);
-         ticket = StringToInteger(ticketStr);
-         Print("[EA] ticket[", i, "] str='", ticketStr, "' -> ", ticket);
-         if(ticket > 0)
+         jsonData = StringSubstr(jsonData, 1, StringLen(jsonData) - 2);
+        }
+
+      Print("[EA] 移除括号后: ", jsonData, " 长度: ", StringLen(jsonData));
+
+      if(StringLen(jsonData) == 0) return;
+
+      // 直接解析数字（假设只有一个ticket）
+      long ticket = StringToInteger(jsonData);
+      Print("[EA] 直接解析ticket: ", ticket);
+
+      if(ticket > 0)
+        {
+         ClosePositionByTicket(ticket);
+        }
+      else
+        {
+         // 如果有逗号分隔的多个ticket
+         string tickets[];
+         int count = StringSplit(jsonData, ',', tickets);
+         Print("[EA] 多ticket模式, count=", count);
+
+         for(int i = 0; i < count; i++)
            {
-            ClosePositionByTicket(ticket);
+            string ticketStr = tickets[i];
+            StringTrimLeft(ticketStr);
+            StringTrimRight(ticketStr);
+            ticket = StringToInteger(ticketStr);
+            Print("[EA] ticket[", i, "] str='", ticketStr, "' -> ", ticket);
+            if(ticket > 0)
+              {
+               ClosePositionByTicket(ticket);
+              }
            }
         }
-     }
   }
 
 //+------------------------------------------------------------------+
@@ -1089,54 +1091,54 @@ void ParseAndExecuteClose(string jsonData)
 //+------------------------------------------------------------------+
 bool ClosePositionByTicket(long ticket, string instructionId = "")
   {
-   Print("[EA] ClosePositionByTicket 尝试平仓: ticket=", ticket);
+      Print("[EA] ClosePositionByTicket 尝试平仓: ticket=", ticket);
 
-   if(!PositionSelectByTicket(ticket))
-     {
-      Print("[平仓失败] 未找到持仓 Ticket: ", ticket);
-      return false;
-     }
-   string positionSymbol = PositionGetString(POSITION_SYMBOL);
-   long positionId = PositionGetInteger(POSITION_IDENTIFIER);
-   double volume = PositionGetDouble(POSITION_VOLUME);
-   ENUM_POSITION_TYPE positionType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-   double requestedPrice = positionType == POSITION_TYPE_BUY
-                           ? SymbolInfoDouble(positionSymbol, SYMBOL_BID)
-                           : SymbolInfoDouble(positionSymbol, SYMBOL_ASK);
+      if(!PositionSelectByTicket(ticket))
+        {
+         Print("[平仓失败] 未找到持仓 Ticket: ", ticket);
+         return false;
+        }
+      string positionSymbol = PositionGetString(POSITION_SYMBOL);
+      long positionId = PositionGetInteger(POSITION_IDENTIFIER);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      ENUM_POSITION_TYPE positionType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      double requestedPrice = positionType == POSITION_TYPE_BUY
+                              ? SymbolInfoDouble(positionSymbol, SYMBOL_BID)
+                              : SymbolInfoDouble(positionSymbol, SYMBOL_ASK);
 
-   // 使用CTrade类平仓（更简单可靠）
-   if(trade.PositionClose(ticket))
-     {
-      Print("[平仓成功] Ticket: ", ticket);
-      long resultPositionId = ResolvePositionId((long)trade.ResultDeal(), positionSymbol);
-      string reportInstructionId = instructionId;
-      if(StringLen(reportInstructionId) == 0)
-         reportInstructionId = "position-close-" + IntegerToString(ticket) + "-" + IntegerToString(trade.ResultDeal());
-      SendTradeExecutionReport(
-         reportInstructionId,
-         "position-" + IntegerToString(ticket), positionSymbol, "close",
-         true, requestedPrice, trade.ResultPrice(), volume, trade.ResultVolume(),
-         (long)trade.ResultOrder(), (long)trade.ResultDeal(),
-         resultPositionId > 0 ? resultPositionId : positionId,
-         (long)trade.ResultRetcode(), ""
-      );
-      return true;
-     }
-   else
-     {
-      Print("[平仓失败] Ticket: ", ticket, " Error: ", GetLastError(), " Retcode: ", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
-      string failedInstructionId = instructionId;
-      if(StringLen(failedInstructionId) == 0)
-         failedInstructionId = "position-close-failed-" + IntegerToString(ticket) + "-" + IntegerToString((long)TimeCurrent());
-      SendTradeExecutionReport(
-         failedInstructionId,
-         "position-" + IntegerToString(ticket), positionSymbol, "close",
-         false, requestedPrice, 0, volume, 0,
-         (long)trade.ResultOrder(), (long)trade.ResultDeal(), positionId,
-         (long)trade.ResultRetcode(), trade.ResultRetcodeDescription()
-      );
-      return false;
-     }
+      // 使用CTrade类平仓（更简单可靠）
+      if(trade.PositionClose(ticket))
+        {
+         Print("[平仓成功] Ticket: ", ticket);
+         long resultPositionId = ResolvePositionId((long)trade.ResultDeal(), positionSymbol);
+         string reportInstructionId = instructionId;
+         if(StringLen(reportInstructionId) == 0)
+            reportInstructionId = "position-close-" + IntegerToString(ticket) + "-" + IntegerToString(trade.ResultDeal());
+         SendTradeExecutionReport(
+            reportInstructionId,
+            "position-" + IntegerToString(ticket), positionSymbol, "close",
+            true, requestedPrice, trade.ResultPrice(), volume, trade.ResultVolume(),
+            (long)trade.ResultOrder(), (long)trade.ResultDeal(),
+            resultPositionId > 0 ? resultPositionId : positionId,
+            (long)trade.ResultRetcode(), ""
+         );
+         return true;
+        }
+      else
+        {
+         Print("[平仓失败] Ticket: ", ticket, " Error: ", GetLastError(), " Retcode: ", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+         string failedInstructionId = instructionId;
+         if(StringLen(failedInstructionId) == 0)
+            failedInstructionId = "position-close-failed-" + IntegerToString(ticket) + "-" + IntegerToString((long)TimeCurrent());
+         SendTradeExecutionReport(
+            failedInstructionId,
+            "position-" + IntegerToString(ticket), positionSymbol, "close",
+            false, requestedPrice, 0, volume, 0,
+            (long)trade.ResultOrder(), (long)trade.ResultDeal(), positionId,
+            (long)trade.ResultRetcode(), trade.ResultRetcodeDescription()
+         );
+         return false;
+        }
   }
 
 //+------------------------------------------------------------------+
@@ -1144,33 +1146,33 @@ bool ClosePositionByTicket(long ticket, string instructionId = "")
 //+------------------------------------------------------------------+
 void ParseTradeArray(string jsonData)
   {
-   // 移除首尾的括号
-   if(StringFind(jsonData, "[") == 0)
-     {
-      jsonData = StringSubstr(jsonData, 1, StringLen(jsonData) - 2);
-     }
+      // 移除首尾的括号
+      if(StringFind(jsonData, "[") == 0)
+        {
+         jsonData = StringSubstr(jsonData, 1, StringLen(jsonData) - 2);
+        }
 
-   if(StringLen(jsonData) == 0) return;
+      if(StringLen(jsonData) == 0) return;
 
-   // 简单的JSON解析
-   int tradeCount = 0;
-   int pos = -1;
+      // 简单的JSON解析
+      int tradeCount = 0;
+      int pos = -1;
 
-   while(true)
-     {
-      int startPos = StringFind(jsonData, "{", pos + 1);
-      int endPos = StringFind(jsonData, "}", startPos);
+      while(true)
+        {
+         int startPos = StringFind(jsonData, "{", pos + 1);
+         int endPos = StringFind(jsonData, "}", startPos);
 
-      if(startPos == -1 || endPos == -1) break;
+         if(startPos == -1 || endPos == -1) break;
 
-      string tradeStr = StringSubstr(jsonData, startPos + 1, endPos - startPos - 1);
-      ExecuteTradeFromJson(tradeStr);
+         string tradeStr = StringSubstr(jsonData, startPos + 1, endPos - startPos - 1);
+         ExecuteTradeFromJson(tradeStr);
 
-      pos = endPos;
-      tradeCount++;
+         pos = endPos;
+         tradeCount++;
 
-      if(tradeCount > 100) break;  // 防止无限循环
-     }
+         if(tradeCount > 100) break;  // 防止无限循环
+        }
   }
 
 //+------------------------------------------------------------------+
@@ -1178,56 +1180,56 @@ void ParseTradeArray(string jsonData)
 //+------------------------------------------------------------------+
 void ExecuteTradeFromJson(string tradeJson)
   {
-   string instructionId = ExtractJsonString(tradeJson, "instruction_id");
-   string orderId = ExtractJsonString(tradeJson, "order_id");
-   string symbol = ExtractJsonString(tradeJson, "symbol");
-   string action = ExtractJsonString(tradeJson, "action");
-   double requestedPrice = ExtractJsonDouble(tradeJson, "price");
-   double volume = ExtractJsonDouble(tradeJson, "mount");
-   double sl = ExtractJsonDouble(tradeJson, "sl");
-   double tp = ExtractJsonDouble(tradeJson, "tp");
-   string exitMode = ExtractJsonString(tradeJson, "exit_mode");
-   string description = ExtractJsonString(tradeJson, "description");
+      string instructionId = ExtractJsonString(tradeJson, "instruction_id");
+      string orderId = ExtractJsonString(tradeJson, "order_id");
+      string symbol = ExtractJsonString(tradeJson, "symbol");
+      string action = ExtractJsonString(tradeJson, "action");
+      double requestedPrice = ExtractJsonDouble(tradeJson, "price");
+      double volume = ExtractJsonDouble(tradeJson, "mount");
+      double sl = ExtractJsonDouble(tradeJson, "sl");
+      double tp = ExtractJsonDouble(tradeJson, "tp");
+      string exitMode = ExtractJsonString(tradeJson, "exit_mode");
+      string description = ExtractJsonString(tradeJson, "description");
 
-   long previousDeal = 0;
-   if(GetExecutedInstructionDeal(instructionId, previousDeal))
-     {
-      Print("[EA] 重复交易指令，跳过再次下单并补发回执: ", instructionId);
-      ResendExecutedInstructionReport(
-         instructionId, orderId, symbol, action, requestedPrice, volume, previousDeal
-      );
-      return;
-     }
+      long previousDeal = 0;
+      if(GetExecutedInstructionDeal(instructionId, previousDeal))
+        {
+         Print("[EA] 重复交易指令，跳过再次下单并补发回执: ", instructionId);
+         ResendExecutedInstructionReport(
+            instructionId, orderId, symbol, action, requestedPrice, volume, previousDeal
+         );
+         return;
+        }
 
-   Print("[EA] 收到交易指令: symbol=", symbol, " action=", action, " volume=", volume, " sl=", sl, " tp=", tp, " description=", description);
+      Print("[EA] 收到交易指令: symbol=", symbol, " action=", action, " volume=", volume, " sl=", sl, " tp=", tp, " description=", description);
 
-   if(symbol == "" || action == "" || volume <= 0)
-     {
-      Print("[EA] 交易参数无效，跳过");
-      return;
-     }
+      if(symbol == "" || action == "" || volume <= 0)
+        {
+         Print("[EA] 交易参数无效，跳过");
+         return;
+        }
 
-   string normalizedSymbol = symbol;
-   string normalizedCurrentSymbol = _Symbol;
-   StringToUpper(normalizedSymbol);
-   StringToUpper(normalizedCurrentSymbol);
-   if(normalizedSymbol != normalizedCurrentSymbol)
-     {
-      Print("[EA] Symbol不匹配，跳过。收到: ", symbol, " 当前品种: ", _Symbol);
-      return;
-     }
+      string normalizedSymbol = symbol;
+      string normalizedCurrentSymbol = _Symbol;
+      StringToUpper(normalizedSymbol);
+      StringToUpper(normalizedCurrentSymbol);
+      if(normalizedSymbol != normalizedCurrentSymbol)
+        {
+         Print("[EA] Symbol不匹配，跳过。收到: ", symbol, " 当前品种: ", _Symbol);
+         return;
+        }
 
-   // 如果没有description，使用默认值
-   if(description == "")
-     {
-      description = "Python AI Trade";
-     }
+      // 如果没有description，使用默认值
+      if(description == "")
+        {
+         description = "Python AI Trade";
+        }
 
-   ENUM_ORDER_TYPE orderType = (action == "b") ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+      ENUM_ORDER_TYPE orderType = (action == "b") ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
 
-   Print("[EA] 准备执行交易: ", (orderType == ORDER_TYPE_BUY ? "BUY" : "SELL"), " ", volume, " ", symbol, " desc=", description);
-   ExecuteTrade(orderType, volume, sl, tp, description, exitMode,
-                instructionId, orderId, requestedPrice, action);
+      Print("[EA] 准备执行交易: ", (orderType == ORDER_TYPE_BUY ? "BUY" : "SELL"), " ", volume, " ", symbol, " desc=", description);
+      ExecuteTrade(orderType, volume, sl, tp, description, exitMode,
+                   instructionId, orderId, requestedPrice, action);
   }
 
 //+------------------------------------------------------------------+
@@ -1235,17 +1237,17 @@ void ExecuteTradeFromJson(string tradeJson)
 //+------------------------------------------------------------------+
 string ExtractJsonString(string json, string key)
   {
-   string searchKey = "\"" + key + "\":\"";
-   int startPos = StringFind(json, searchKey);
-   
-   if(startPos == -1) return "";
-   
-   startPos += StringLen(searchKey);
-   int endPos = StringFind(json, "\"", startPos);
-   
-   if(endPos == -1) return "";
-   
-   return StringSubstr(json, startPos, endPos - startPos);
+      string searchKey = "\"" + key + "\":\"";
+      int startPos = StringFind(json, searchKey);
+      
+      if(startPos == -1) return "";
+      
+      startPos += StringLen(searchKey);
+      int endPos = StringFind(json, "\"", startPos);
+      
+      if(endPos == -1) return "";
+      
+      return StringSubstr(json, startPos, endPos - startPos);
   }
 
 //+------------------------------------------------------------------+
@@ -1253,168 +1255,194 @@ string ExtractJsonString(string json, string key)
 //+------------------------------------------------------------------+
 double ExtractJsonDouble(string json, string key)
   {
-   string searchKey = "\"" + key + "\":";
-   int startPos = StringFind(json, searchKey);
-   
-   if(startPos == -1) return 0;
-   
-   startPos += StringLen(searchKey);
-   int endPos = StringFind(json, ",", startPos);
-   
-   if(endPos == -1) endPos = StringFind(json, "}", startPos);
-   if(endPos == -1) endPos = StringLen(json);
-   
-   string valueStr = StringSubstr(json, startPos, endPos - startPos);
-   return StringToDouble(valueStr);
+      string searchKey = "\"" + key + "\":";
+      int startPos = StringFind(json, searchKey);
+      
+      if(startPos == -1) return 0;
+      
+      startPos += StringLen(searchKey);
+      int endPos = StringFind(json, ",", startPos);
+      
+      if(endPos == -1) endPos = StringFind(json, "}", startPos);
+      if(endPos == -1) endPos = StringLen(json);
+      
+      string valueStr = StringSubstr(json, startPos, endPos - startPos);
+      return StringToDouble(valueStr);
   }
 
 //+------------------------------------------------------------------+
 //| 执行交易                                                          |
 //+------------------------------------------------------------------+
 void ExecuteTrade(ENUM_ORDER_TYPE orderType, double volume, double sl, double tp,
-                  string description, string exitMode, string instructionId, string orderId,
-                  double requestedPrice, string action)
+                     string description, string exitMode, string instructionId, string orderId,
+                     double requestedPrice, string action)
   {
-   if(volume <= 0)
-     {
-      Print("Invalid volume: ", volume);
-      return;
-     }
+      if(volume <= 0)
+        {
+         Print("Invalid volume: ", volume);
+         return;
+        }
 
-   // 如果没有指定止损/止盈，按照千分之一计算
-   double price = (orderType == ORDER_TYPE_BUY) ? g_askPrice : g_bidPrice;
-   if(sl <= 0)
-     {
+      // 如果没有指定止损/止盈，按照千分之一计算
+      double price = (orderType == ORDER_TYPE_BUY) ? g_askPrice : g_bidPrice;
+      if(sl <= 0)
+        {
+         if(orderType == ORDER_TYPE_BUY)
+            sl = price * (1.0 - 0.001);
+         else
+            sl = price * (1.0 + 0.001);
+        }
+      if(tp <= 0 && exitMode == "fixed_rr")
+        {
+         if(orderType == ORDER_TYPE_BUY)
+            tp = price * (1.0 + 0.001);
+         else
+            tp = price * (1.0 - 0.001);
+        }
+      else if(exitMode != "fixed_rr")
+        {
+         // Dynamic exits are managed by the server; MT5 keeps the initial SL only.
+         tp = 0;
+        }
+
+      // 标准化手数和价格，避免外汇/贵金属因为小数位或最小跳动被拒单。
+      volume = NormalizeTradeVolume(_Symbol, volume, false, 0.0);
+      int stopRounding = (orderType == ORDER_TYPE_BUY) ? -1 : 1;
+      sl = NormalizeTradePrice(_Symbol, sl, stopRounding);
+      if(tp > 0)
+         tp = NormalizeTradePrice(_Symbol, tp, 0);
+
+      double bidPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double askPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double pointSize = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+      long stopsLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+      double minimumDistance = MathMax(0.0, (double)stopsLevel * pointSize);
+      bool stopIsValid = sl <= 0 || (
+         orderType == ORDER_TYPE_BUY ?
+            sl < bidPrice - minimumDistance + pointSize * 0.1 :
+            sl > askPrice + minimumDistance - pointSize * 0.1
+      );
+      if(!stopIsValid)
+        {
+         Print("[EA] 开仓止损不符合当前品种报价精度或最小距离, sl=", sl,
+               " bid=", bidPrice, " ask=", askPrice);
+         SendTradeExecutionReport(
+            instructionId, orderId, _Symbol, action, false, requestedPrice, 0,
+            volume, 0, 0, 0, 0, TRADE_RETCODE_INVALID_STOPS,
+            "开仓止损不符合当前品种报价精度、最小跳动或最小距离"
+         );
+         return;
+        }
+
+      // 执行订单
+      bool succeeded = false;
       if(orderType == ORDER_TYPE_BUY)
-         sl = price * (1.0 - 0.001);
-      else
-         sl = price * (1.0 + 0.001);
-     }
-   if(tp <= 0 && exitMode == "fixed_rr")
-     {
-      if(orderType == ORDER_TYPE_BUY)
-         tp = price * (1.0 + 0.001);
-      else
-         tp = price * (1.0 - 0.001);
-     }
-   else if(exitMode != "fixed_rr")
-     {
-      // Dynamic exits are managed by the server; MT5 keeps the initial SL only.
-      tp = 0;
-     }
+        {
+         succeeded = trade.Buy(volume, _Symbol, 0, sl, tp, description);
+         if(succeeded)
+           {
+            Print("Buy order executed: Volume=", volume, " SL=", sl, " TP=", tp, " Description=", description);
+            RecordTrade("BUY", _Symbol, volume, sl, tp, trade.ResultPrice());
+            MarkInstructionExecuted(instructionId, (long)trade.ResultDeal());
+           }
+         else
+           {
+            Print("Buy order failed: ", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+           }
+        }
+      else if(orderType == ORDER_TYPE_SELL)
+        {
+         succeeded = trade.Sell(volume, _Symbol, 0, sl, tp, description);
+         if(succeeded)
+           {
+            Print("Sell order executed: Volume=", volume, " SL=", sl, " TP=", tp, " Description=", description);
+            RecordTrade("SELL", _Symbol, volume, sl, tp, trade.ResultPrice());
+            MarkInstructionExecuted(instructionId, (long)trade.ResultDeal());
+           }
+         else
+           {
+            Print("Sell order failed: ", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+           }
+        }
 
-   // 标准化手数
-   volume = NormalizeTradeVolume(_Symbol, volume, false, 0.0);
-
-   // 执行订单
-   bool succeeded = false;
-   if(orderType == ORDER_TYPE_BUY)
-     {
-      succeeded = trade.Buy(volume, _Symbol, 0, sl, tp, description);
-      if(succeeded)
-        {
-         Print("Buy order executed: Volume=", volume, " SL=", sl, " TP=", tp, " Description=", description);
-         RecordTrade("BUY", _Symbol, volume, sl, tp, trade.ResultPrice());
-         MarkInstructionExecuted(instructionId, (long)trade.ResultDeal());
-        }
-      else
-        {
-         Print("Buy order failed: ", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
-        }
-     }
-   else if(orderType == ORDER_TYPE_SELL)
-     {
-      succeeded = trade.Sell(volume, _Symbol, 0, sl, tp, description);
-      if(succeeded)
-        {
-         Print("Sell order executed: Volume=", volume, " SL=", sl, " TP=", tp, " Description=", description);
-         RecordTrade("SELL", _Symbol, volume, sl, tp, trade.ResultPrice());
-         MarkInstructionExecuted(instructionId, (long)trade.ResultDeal());
-        }
-      else
-        {
-         Print("Sell order failed: ", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
-        }
-     }
-
-   SendTradeExecutionReport(
-      instructionId,
-      orderId,
-      _Symbol,
-      action,
-      succeeded,
-      requestedPrice,
-      trade.ResultPrice(),
-      volume,
-      succeeded ? trade.ResultVolume() : 0,
-      (long)trade.ResultOrder(),
-      (long)trade.ResultDeal(),
-      ResolvePositionId((long)trade.ResultDeal(), _Symbol),
-      (long)trade.ResultRetcode(),
-      succeeded ? "" : trade.ResultRetcodeDescription()
-   );
+      SendTradeExecutionReport(
+         instructionId,
+         orderId,
+         _Symbol,
+         action,
+         succeeded,
+         requestedPrice,
+         trade.ResultPrice(),
+         volume,
+         succeeded ? trade.ResultVolume() : 0,
+         (long)trade.ResultOrder(),
+         (long)trade.ResultDeal(),
+         ResolvePositionId((long)trade.ResultDeal(), _Symbol),
+         (long)trade.ResultRetcode(),
+         succeeded ? "" : trade.ResultRetcodeDescription()
+      );
   }
 
 //+------------------------------------------------------------------+
 //| 即时回报服务端交易指令执行结果                                   |
 //+------------------------------------------------------------------+
 void SendTradeExecutionReport(
-   string instructionId, string orderId, string symbol, string action,
-   bool success, double requestedPrice, double executedPrice,
-   double requestedVolume, double executedVolume, long mt5Order,
-   long mt5Deal, long mt5PositionId, long retcode, string errorMessage)
+      string instructionId, string orderId, string symbol, string action,
+      bool success, double requestedPrice, double executedPrice,
+      double requestedVolume, double executedVolume, long mt5Order,
+      long mt5Deal, long mt5PositionId, long retcode, string errorMessage)
   {
-   if(instructionId == "")
-      return;
+      if(instructionId == "")
+         return;
 
-   string jsonBody = "{";
-   jsonBody += "\"instruction_id\":\"" + EscapeJsonString(instructionId) + "\",";
-   jsonBody += "\"order_id\":\"" + EscapeJsonString(orderId) + "\",";
-   jsonBody += "\"symbol\":\"" + EscapeJsonString(symbol) + "\",";
-   jsonBody += "\"action\":\"" + EscapeJsonString(action) + "\",";
-   jsonBody += "\"success\":" + (success ? "true" : "false") + ",";
-   jsonBody += "\"requested_price\":" + DoubleToString(requestedPrice, _Digits) + ",";
-   jsonBody += "\"executed_price\":" + DoubleToString(executedPrice, _Digits) + ",";
-   int volumeDigits = VolumeDigits(SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP));
-   jsonBody += "\"requested_volume\":" + DoubleToString(requestedVolume, volumeDigits) + ",";
-   jsonBody += "\"executed_volume\":" + DoubleToString(executedVolume, volumeDigits) + ",";
-   jsonBody += "\"mt5_order\":" + IntegerToString(mt5Order) + ",";
-   jsonBody += "\"mt5_deal\":" + IntegerToString(mt5Deal) + ",";
-   jsonBody += "\"mt5_position_id\":" + IntegerToString(mt5PositionId) + ",";
-   jsonBody += "\"retcode\":" + IntegerToString(retcode) + ",";
-   long brokerOffset = (long)(TimeCurrent() - TimeGMT());
-   jsonBody += "\"reported_timestamp\":" + IntegerToString((long)TimeCurrent() - brokerOffset) + ",";
-   jsonBody += "\"broker_server_time\":\"" + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS) + "\",";
-   jsonBody += "\"broker_utc_offset_seconds\":" + IntegerToString(brokerOffset) + ",";
-   jsonBody += "\"error_message\":\"" + EscapeJsonString(errorMessage) + "\"";
-   jsonBody += "}";
+      string jsonBody = "{";
+      jsonBody += "\"instruction_id\":\"" + EscapeJsonString(instructionId) + "\",";
+      jsonBody += "\"order_id\":\"" + EscapeJsonString(orderId) + "\",";
+      jsonBody += "\"symbol\":\"" + EscapeJsonString(symbol) + "\",";
+      jsonBody += "\"action\":\"" + EscapeJsonString(action) + "\",";
+      jsonBody += "\"success\":" + (success ? "true" : "false") + ",";
+      jsonBody += "\"requested_price\":" + DoubleToString(requestedPrice, _Digits) + ",";
+      jsonBody += "\"executed_price\":" + DoubleToString(executedPrice, _Digits) + ",";
+      int volumeDigits = VolumeDigits(SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP));
+      jsonBody += "\"requested_volume\":" + DoubleToString(requestedVolume, volumeDigits) + ",";
+      jsonBody += "\"executed_volume\":" + DoubleToString(executedVolume, volumeDigits) + ",";
+      jsonBody += "\"mt5_order\":" + IntegerToString(mt5Order) + ",";
+      jsonBody += "\"mt5_deal\":" + IntegerToString(mt5Deal) + ",";
+      jsonBody += "\"mt5_position_id\":" + IntegerToString(mt5PositionId) + ",";
+      jsonBody += "\"retcode\":" + IntegerToString(retcode) + ",";
+      long brokerOffset = (long)(TimeCurrent() - TimeGMT());
+      jsonBody += "\"reported_timestamp\":" + IntegerToString((long)TimeCurrent() - brokerOffset) + ",";
+      jsonBody += "\"broker_server_time\":\"" + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS) + "\",";
+      jsonBody += "\"broker_utc_offset_seconds\":" + IntegerToString(brokerOffset) + ",";
+      jsonBody += "\"error_message\":\"" + EscapeJsonString(errorMessage) + "\"";
+      jsonBody += "}";
 
-   uchar postData[];
-   uchar responseData[];
-   string outheaders = "";
-   StringToCharArray(jsonBody, postData, 0, WHOLE_ARRAY, CP_UTF8);
-   ArrayResize(postData, ArraySize(postData) - 1);
-   int responseCode = 0;
-   for(int attempt = 0; attempt < 3; attempt++)
-     {
-      ArrayFree(responseData);
-      outheaders = "";
-      responseCode = WebRequest(
-         "POST",
-         g_pythonServer + "/ea/trade_execution",
-         BuildAuthenticatedHeaders(),
-         3000,
-         postData,
-         responseData,
-         outheaders
-      );
-      if(responseCode == 200)
-         break;
-      if(attempt < 2)
-         Sleep(500 * (attempt + 1));
-     }
-   if(responseCode != 200)
-      Print("[EA] 交易执行回报失败: HTTP ", responseCode);
+      uchar postData[];
+      uchar responseData[];
+      string outheaders = "";
+      StringToCharArray(jsonBody, postData, 0, WHOLE_ARRAY, CP_UTF8);
+      ArrayResize(postData, ArraySize(postData) - 1);
+      int responseCode = 0;
+      for(int attempt = 0; attempt < 3; attempt++)
+        {
+         ArrayFree(responseData);
+         outheaders = "";
+         responseCode = WebRequest(
+            "POST",
+            g_pythonServer + "/ea/trade_execution",
+            BuildAuthenticatedHeaders(),
+            3000,
+            postData,
+            responseData,
+            outheaders
+         );
+         if(responseCode == 200)
+            break;
+         if(attempt < 2)
+            Sleep(500 * (attempt + 1));
+        }
+      if(responseCode != 200)
+         Print("[EA] 交易执行回报失败: HTTP ", responseCode);
   }
 
 //+------------------------------------------------------------------+
@@ -1424,19 +1452,19 @@ void SendTradeExecutionReport(
 //+------------------------------------------------------------------+
 long ResolvePositionId(long dealTicket, string symbol)
   {
-   if(dealTicket > 0)
-     {
-      datetime now = TimeCurrent();
-      if(HistorySelect(now - 86400, now + 60))
+      if(dealTicket > 0)
         {
-         long positionId = HistoryDealGetInteger((ulong)dealTicket, DEAL_POSITION_ID);
-         if(positionId > 0)
-            return positionId;
+         datetime now = TimeCurrent();
+         if(HistorySelect(now - 86400, now + 60))
+           {
+            long positionId = HistoryDealGetInteger((ulong)dealTicket, DEAL_POSITION_ID);
+            if(positionId > 0)
+               return positionId;
+           }
         }
-     }
-   if(symbol != "" && PositionSelect(symbol))
-      return PositionGetInteger(POSITION_IDENTIFIER);
-   return 0;
+      if(symbol != "" && PositionSelect(symbol))
+         return PositionGetInteger(POSITION_IDENTIFIER);
+      return 0;
   }
 
 //+------------------------------------------------------------------+
@@ -1444,32 +1472,31 @@ long ResolvePositionId(long dealTicket, string symbol)
 //+------------------------------------------------------------------+
 void RecordTrade(string action, string symbol, double volume, double sl, double tp, double price)
   {
-   long brokerOffset = (long)(TimeCurrent() - TimeGMT());
-   string tradeRecord = "{";
-   tradeRecord += "\"time\":\"" + TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES) + "\",";
-   tradeRecord += "\"trade_timestamp\":" + IntegerToString((long)TimeCurrent() - brokerOffset) + ",";
-   tradeRecord += "\"broker_utc_offset_seconds\":" + IntegerToString(brokerOffset) + ",";
-   tradeRecord += "\"action\":\"" + action + "\",";
-   tradeRecord += "\"symbol\":\"" + symbol + "\",";
-   tradeRecord += "\"volume\":" + DoubleToString(volume, 2) + ",";
-   tradeRecord += "\"price\":" + DoubleToString(price, _Digits) + ",";
-   tradeRecord += "\"sl\":" + DoubleToString(sl, _Digits) + ",";
-   tradeRecord += "\"tp\":" + DoubleToString(tp, _Digits) + "";
-   tradeRecord += "}";
-   
-   if(StringLen(g_tradesOfDay) > 0)
-     {
-      g_tradesOfDay += ",";
-     }
-   g_tradesOfDay += tradeRecord;
+      long brokerOffset = (long)(TimeCurrent() - TimeGMT());
+      string tradeRecord = "{";
+      tradeRecord += "\"time\":\"" + TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES) + "\",";
+      tradeRecord += "\"trade_timestamp\":" + IntegerToString((long)TimeCurrent() - brokerOffset) + ",";
+      tradeRecord += "\"broker_utc_offset_seconds\":" + IntegerToString(brokerOffset) + ",";
+      tradeRecord += "\"action\":\"" + action + "\",";
+      tradeRecord += "\"symbol\":\"" + symbol + "\",";
+      tradeRecord += "\"volume\":" + DoubleToString(volume, 2) + ",";
+      tradeRecord += "\"price\":" + DoubleToString(price, _Digits) + ",";
+      tradeRecord += "\"sl\":" + DoubleToString(sl, _Digits) + ",";
+      tradeRecord += "\"tp\":" + DoubleToString(tp, _Digits) + "";
+      tradeRecord += "}";
+      
+      if(StringLen(g_tradesOfDay) > 0)
+        {
+         g_tradesOfDay += ",";
+        }
+      g_tradesOfDay += tradeRecord;
   }
 
 //+------------------------------------------------------------------+
 //| 发送分钟统计数据到Python服务                                      |
 //+------------------------------------------------------------------+
-void SendMinuteStatistics()
+void SendMinuteStatistics(bool includeAccountSnapshot)
   {
-   // 构建统计JSON
    string statisticJson = "{";
    statisticJson += "\"symbol\":\"" + _Symbol + "\",";
    statisticJson += "\"timestamp\":\"" + TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES) + "\",";
@@ -1481,21 +1508,23 @@ void SendMinuteStatistics()
    statisticJson += "\"bidPrice\":" + DoubleToString(g_bidPrice, _Digits) + ",";
    statisticJson += "\"askPrice\":" + DoubleToString(g_askPrice, _Digits) + ",";
    statisticJson += "\"spread\":" + DoubleToString(g_spread, _Digits) + ",";
-   statisticJson += "\"spreadPoints\":" + DoubleToString(g_spreadPoints, 1) + ",";
-   statisticJson += "\"balance\":" + DoubleToString(g_accountBalance, 2) + ",";
-   statisticJson += "\"equity\":" + DoubleToString(g_accountEquity, 2) + ",";
-   statisticJson += "\"marginLevel\":" + DoubleToString(g_marginLevel, 2) + ",";
-   statisticJson += "\"freeMargin\":" + DoubleToString(g_freeMargin, 2) + ",";
-   statisticJson += "\"margin\":" + DoubleToString(g_margin, 2) + ",";
-   statisticJson += "\"positions\":" + GetPositionsSummary() + ",";
-   statisticJson += "\"trades\":[" + g_tradesOfDay + "]";
+   statisticJson += "\"spreadPoints\":" + DoubleToString(g_spreadPoints, 1);
+   if(includeAccountSnapshot)
+     {
+      statisticJson += ",";
+      statisticJson += "\"balance\":" + DoubleToString(g_accountBalance, 2) + ",";
+      statisticJson += "\"equity\":" + DoubleToString(g_accountEquity, 2) + ",";
+      statisticJson += "\"marginLevel\":" + DoubleToString(g_marginLevel, 2) + ",";
+      statisticJson += "\"freeMargin\":" + DoubleToString(g_freeMargin, 2) + ",";
+      statisticJson += "\"margin\":" + DoubleToString(g_margin, 2) + ",";
+      statisticJson += "\"positions\":" + GetPositionsSummary() + ",";
+      statisticJson += "\"trades\":[" + g_tradesOfDay + "]";
+     }
    statisticJson += "}";
 
-   // 发送到Python服务
    SendToPythonServer(statisticJson);
-
-   // 重置数据
-   g_tradesOfDay = "";
+   if(includeAccountSnapshot)
+      g_tradesOfDay = "";
   }
 
 //+------------------------------------------------------------------+
@@ -1521,10 +1550,6 @@ void SendToPythonServer(string jsonData)
      }
 
    int dataSize = ArraySize(postData);
-
-   // 调试：打印发送的数据
-   Print("Sending JSON data size: ", dataSize, " bytes");
-   Print("JSON: ", jsonStr);
 
    responseCode = WebRequest(
       "POST",
@@ -1671,6 +1696,35 @@ void OnTick()
 //+------------------------------------------------------------------+
 //| Timer function - 定时任务处理                                     |
 //+------------------------------------------------------------------+
+string AccountTaskOwnerKey()
+  {
+   return "AITRADE.account.owner." + IntegerToString(g_webUserId) + "." + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
+  }
+
+string AccountTaskHeartbeatKey()
+  {
+   return "AITRADE.account.beat." + IntegerToString(g_webUserId) + "." + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
+  }
+
+bool ClaimAccountTaskOwner(datetime now)
+  {
+   // 账户级任务（成交历史、财经日历、全账户持仓）只需要一个图表负责。
+   // 品种级任务（取指令、K线、规格）仍由各自图表执行。
+   string ownerKey = AccountTaskOwnerKey();
+   string beatKey = AccountTaskHeartbeatKey();
+   long chartId = ChartID();
+   if(GlobalVariableCheck(ownerKey) && GlobalVariableCheck(beatKey))
+     {
+      long owner = (long)GlobalVariableGet(ownerKey);
+      datetime heartbeat = (datetime)GlobalVariableGet(beatKey);
+      if(owner > 0 && owner != chartId && heartbeat > 0 && (now - heartbeat) < 90)
+         return false;
+     }
+   GlobalVariableSet(ownerKey, (double)chartId);
+   GlobalVariableSet(beatKey, (double)now);
+   return true;
+  }
+
 void OnTimer()
   {
    datetime now = TimeCurrent();
@@ -1689,21 +1743,25 @@ void OnTimer()
    CheckHistoricalDataTask();
 
 //--- 新成交在下一次定时器立即同步；定期同步用于补偿网络或终端短暂异常
-   if(g_tradeHistorySyncPending && now >= g_nextTradeHistoryRetryTime)
+   bool accountOwner = ClaimAccountTaskOwner(now);
+   if(accountOwner)
      {
-      if(ReportTradeHistory())
+      if(g_tradeHistorySyncPending && now >= g_nextTradeHistoryRetryTime)
         {
-         g_tradeHistorySyncPending = false;
-         g_nextTradeHistoryRetryTime = 0;
+         if(ReportTradeHistory())
+           {
+            g_tradeHistorySyncPending = false;
+            g_nextTradeHistoryRetryTime = 0;
+           }
+         else
+            g_nextTradeHistoryRetryTime = now + TRADE_HISTORY_RETRY_DELAY_SECONDS;
+         g_lastTradeHistoryReportTime = now;
         }
-      else
-         g_nextTradeHistoryRetryTime = now + TRADE_HISTORY_RETRY_DELAY_SECONDS;
-      g_lastTradeHistoryReportTime = now;
-     }
-   else if(g_lastTradeHistoryReportTime == 0 || (now - g_lastTradeHistoryReportTime) >= g_tradeHistoryReportInterval)
-     {
-      ReportTradeHistory();
-      g_lastTradeHistoryReportTime = now;
+      else if(g_lastTradeHistoryReportTime == 0 || (now - g_lastTradeHistoryReportTime) >= g_tradeHistoryReportInterval)
+        {
+         ReportTradeHistory();
+         g_lastTradeHistoryReportTime = now;
+        }
      }
 
 //--- 检查是否需要推送增量K线数据
@@ -1712,19 +1770,18 @@ void OnTimer()
 //--- 检查持仓风险并平仓
    CheckAndCloseRiskyPositions();
 
-//--- 成交后立即由标志触发，固定周期兜底，不再随机上报
-   if(g_positionsSyncPending || g_lastPositionSyncTime == 0 ||
-      (now - g_lastPositionSyncTime) >= POSITION_SYNC_INTERVAL_SECONDS)
+//--- 全账户持仓只由主图表上报；当前品种图表仍各自处理自己的开平仓。
+   if(accountOwner && (g_positionsSyncPending || g_lastPositionSyncTime == 0 ||
+      (now - g_lastPositionSyncTime) >= POSITION_SYNC_INTERVAL_SECONDS))
      {
       SendPositionsToPython(true);  // 上报所有品种持仓
       g_lastPositionSyncTime = now;
       g_positionsSyncPending = false;
      }
 
-//--- 上报公共财经日历；服务端仅接受ADMIN实例，普通用户会被拒绝。
-//    不依赖EA缓存的角色标记，避免ADMIN旧凭证导致漏报。
-   if(g_lastCalendarSyncTime == 0 ||
-      (now - g_lastCalendarSyncTime) >= CALENDAR_SYNC_INTERVAL_SECONDS)
+//--- 财经日历是账户级公共数据。服务端只接受ADMIN，这里先避免每个图表都打一次。
+   if(accountOwner && (g_lastCalendarSyncTime == 0 ||
+      (now - g_lastCalendarSyncTime) >= CALENDAR_SYNC_INTERVAL_SECONDS))
      {
       SyncEconomicCalendar();
       g_lastCalendarSyncTime = now;
@@ -1734,7 +1791,7 @@ void OnTimer()
    if(g_lastHeartbeatTime == 0 ||
       (now - g_lastHeartbeatTime) >= HEARTBEAT_INTERVAL_SECONDS)
      {
-      SendMinuteStatistics();
+      SendMinuteStatistics(accountOwner);
       g_lastHeartbeatTime = now;
       g_lastStatisticTime = now;
       g_tickCount = 0;

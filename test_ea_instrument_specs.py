@@ -17,6 +17,7 @@ class _Request:
             "price_digits": 2,
             "tick_size": 0.01,
             "point_size": 0.01,
+            "tick_value": 1.0,
             "source": "mt5",
         }
 
@@ -49,6 +50,7 @@ class EAInstrumentSpecTests(unittest.TestCase):
         self.assertEqual(fake.calls[0][0:2], (42, "GOLD#"))
         self.assertEqual(fake.calls[0][2]["price_digits"], 2)
         self.assertEqual(fake.calls[0][2]["tick_size"], 0.01)
+        self.assertEqual(fake.calls[0][2]["tick_value"], 1.0)
 
 
 if __name__ == "__main__":

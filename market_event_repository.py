@@ -40,9 +40,23 @@ class MarketEventRepository:
         source: str,
     ) -> int:
         now = int(time.time())
+        incoming_ids = [str(event.get("id") or "") for event in events]
         with self.storage._lock, self.storage._connect() as conn:
             # Each provider owns only its own slice of a day.  An MT5 upload
             # must not erase official BLS/FOMC events (and vice versa).
+            existing = conn.execute(
+                f"SELECT event_id FROM {table} WHERE event_date = ? AND source = ? "
+                "ORDER BY event_id",
+                (event_date, source),
+            ).fetchall()
+            existing_ids = [str(row["event_id"] if isinstance(row, dict) else row[0]) for row in existing]
+            if existing_ids == incoming_ids:
+                conn.execute(
+                    f"UPDATE {table} SET updated_at = ? WHERE event_date = ? AND source = ?",
+                    (now, event_date, source),
+                )
+                conn.commit()
+                return len(events)
             conn.execute(
                 f"DELETE FROM {table} WHERE event_date = ? AND source = ?",
                 (event_date, source),

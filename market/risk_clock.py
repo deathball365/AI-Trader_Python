@@ -6,11 +6,11 @@ from zoneinfo import ZoneInfo
 
 
 BEIJING = ZoneInfo("Asia/Shanghai")
-RISK_DAY_START_HOUR = 7
+RISK_DAY_START_HOUR = 0
 
 
 def risk_day_key(timestamp: Optional[float] = None) -> str:
-    """Return the business date whose risk window starts at Beijing 07:00."""
+    """Return the business date whose risk window starts at Beijing 00:00."""
     now = (
         datetime.now(BEIJING)
         if timestamp is None
@@ -22,7 +22,7 @@ def risk_day_key(timestamp: Optional[float] = None) -> str:
 
 
 def risk_day_start_timestamp(timestamp: Optional[float] = None) -> int:
-    """Return the UTC epoch for the active Beijing 07:00 risk-day boundary."""
+    """Return the UTC epoch for the active Beijing 00:00 risk-day boundary."""
     business_date = datetime.strptime(
         risk_day_key(timestamp), "%Y-%m-%d"
     ).date()
