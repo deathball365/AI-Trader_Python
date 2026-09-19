@@ -24,3 +24,25 @@ const withoutToken = applyAuthToRequestConfig({ headers: {} }, '')
 assert.equal(withoutToken.headers.Authorization, undefined)
 
 console.log('auth-request-config test passed')
+
+const helperModule = await import('../src/api/auth-helpers.js')
+let redirectCalled = false
+const originalLocation = globalThis.window
+globalThis.window = {
+  localStorage: { removeItem() {} },
+  location: {
+    pathname: '/dashboard',
+    set href(value) {
+      redirectCalled = value
+    },
+  },
+}
+
+await helperModule.handleAuthError({
+  config: { skipAuthRedirect: true },
+  response: { status: 401 },
+}).catch(() => {})
+assert.equal(redirectCalled, false)
+globalThis.window = originalLocation
+
+console.log('auth 401 probe test passed')

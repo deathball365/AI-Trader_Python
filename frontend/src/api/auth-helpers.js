@@ -11,6 +11,12 @@ export function applyAuthToRequestConfig(config, token = getAuthToken()) {
 }
 
 export function handleAuthError(error) {
+  // A few auth endpoints use 401 as a normal capability probe. Those
+  // requests must be handled by their caller instead of logging the user out.
+  if (error.config?.skipAuthRedirect) {
+    return Promise.reject(error)
+  }
+
   if (error.response?.status === 401) {
     clearAuthSession()
     if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
