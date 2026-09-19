@@ -1141,7 +1141,7 @@ class MySQLStorage:
                     (
                         "system_event_logs",
                         "idx_system_event_user_type_time",
-                        "user_id, event_type, occurred_at",
+                        "user_id, event_type(64), occurred_at",
                     ),
                 )
                 for table, index_name, columns in compatibility_indexes:
