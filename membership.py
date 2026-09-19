@@ -6,6 +6,7 @@ import time
 from typing import Dict, Optional
 
 from mysql_repositories import MySQLStorage, get_storage
+from runtime_cache import invalidate
 
 
 MEMBERSHIP_LEVELS = ("normal", "silver", "gold", "diamond")
@@ -114,6 +115,7 @@ class MembershipService:
                     (int(user_id),),
                 )
             conn.commit()
+        invalidate({"users"})
         from system_event_log import SystemEventLogRepository
         SystemEventLogRepository(self.storage).add({
             "user_id": int(updated_by),

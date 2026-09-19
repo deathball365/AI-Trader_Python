@@ -446,6 +446,7 @@ class TradingAccountRepository:
                     (now, account_id),
                 )
             conn.commit()
+        invalidate({"accounts"})
         return self.get_by_id(user_id, account_id)
 
     def ensure_default(
@@ -490,6 +491,7 @@ class TradingAccountRepository:
                 (int(row["id"]), row["token_hash"], now, now),
             )
             conn.commit()
+        invalidate({"accounts"})
         account = self.get_default(user_id)
         if account is None:
             raise RuntimeError("创建 MT5 账户绑定失败")
@@ -533,6 +535,7 @@ class TradingAccountRepository:
                 (account.account_id, token_hash, now, now),
             )
             conn.commit()
+        invalidate({"accounts"})
         refreshed = self.get_default(user_id)
         if refreshed is None:
             raise RuntimeError("创建 MT5 账户绑定失败")
@@ -610,6 +613,7 @@ class TradingAccountRepository:
             if reference_account_id:
                 self._copy_instrument_specs(conn, int(reference_account_id), account_id, now)
             conn.commit()
+        invalidate({"accounts"})
         return self.get_by_id(user_id, account_id)
 
     def _copy_instrument_specs(self, conn, source_account_id: int, target_account_id: int, now: int) -> None:
@@ -704,6 +708,7 @@ class TradingAccountRepository:
                 (now, int(row["id"])),
             )
             conn.commit()
+        invalidate({"accounts"})
         return self.get_by_id(user_id, int(row["id"]))
 
     def update_financial_snapshot(
@@ -743,6 +748,7 @@ class TradingAccountRepository:
                     (now, now, int(account_id)),
                 )
                 conn.commit()
+                invalidate({"accounts"})
                 return True
             cursor = conn.execute(
                 """
@@ -771,7 +777,8 @@ class TradingAccountRepository:
                     (account_id, now, int(account_row["user_id"]), *values),
                 )
             conn.commit()
-            return cursor.rowcount == 1
+        invalidate({"accounts"})
+        return cursor.rowcount == 1
 
     def list_live_equity_points(
         self, user_id: int, account_id: int, count: int = 1440,
