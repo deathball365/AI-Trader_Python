@@ -1963,7 +1963,10 @@ class TradingServer:
         }
 
         deployed_ids = set(self._active_strategy_ids("live"))
-        decisions = self.get_decision_history(count=100)
+        # The dashboard only renders the latest decision per live strategy;
+        # keep the history query narrow and leave the full history to the
+        # execution-center endpoints.
+        decisions = self.get_decision_history(count=20)
         latest_decisions = {}
         for decision in decisions:
             latest_decisions.setdefault(decision.get("strategy_id", ""), decision)
@@ -2132,13 +2135,8 @@ class TradingServer:
                 "quote_only": True,
             })
 
-        ai_cards = [
-            card for card in self.get_ai_market_cards()
-            if any(
-                item.get("strategy_id") in deployed_ids
-                for item in card.get("linked_strategies", [])
-            ) and card.get("status") != "source_disabled"
-        ]
+        ai_cards = self.get_ai_market_cards(strategy_ids=deployed_ids)
+        ai_cards = [card for card in ai_cards if card.get("status") != "source_disabled"]
         ai_priority = {
             "analysis_ready": 0, "observing": 1,
             "waiting_analysis": 2, "expired": 3,
@@ -2487,7 +2485,9 @@ class TradingServer:
             ),
         }
 
-    def get_ai_market_cards(self, symbol: str = None) -> List[Dict]:
+    def get_ai_market_cards(
+        self, symbol: str = None, strategy_ids: Optional[Set[str]] = None,
+    ) -> List[Dict]:
         """Render exactly one market-analysis card per owned AI source."""
         analyses = self.get_llm_analysis() or {}
         cards = []
@@ -2504,6 +2504,11 @@ class TradingServer:
                     source, analyses.get(source.get("symbol")) or {},
                 )
                 card["linked_strategies"] = self._linked_ai_strategies(source_id)
+                if strategy_ids is not None and not any(
+                    item.get("strategy_id") in strategy_ids
+                    for item in card["linked_strategies"]
+                ):
+                    continue
                 cards.append(card)
         return cards
 

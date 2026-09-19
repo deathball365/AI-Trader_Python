@@ -1138,6 +1138,11 @@ class MySQLStorage:
                         "idx_runtime_entities_account_type_created",
                         "user_id, account_id, entity_type, created_at",
                     ),
+                    (
+                        "system_event_logs",
+                        "idx_system_event_user_type_time",
+                        "user_id, event_type, occurred_at",
+                    ),
                 )
                 for table, index_name, columns in compatibility_indexes:
                     try:
