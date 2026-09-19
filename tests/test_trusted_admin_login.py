@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from routes_auth import create_auth_routes
 
 
-TRUSTED = {"cee49f3d3d45cf3a", "115bbe9c6ad3b4a4"}
+TRUSTED = {"cee49f3d3d45cf3a", "115bbe9c6ad3b4a4", "8ee15032fcc0ddeb"}
 
 
 def fingerprint(accept_language: str) -> str:
@@ -21,6 +21,9 @@ class TrustedAdminLoginTests(unittest.TestCase):
             "115bbe9c6ad3b4a4",
         )
         self.assertTrue(fingerprint("zh-CN,zh;q=0.9") in TRUSTED)
+        self.assertTrue(
+            fingerprint("zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6") in TRUSTED
+        )
         self.assertTrue(fingerprint("zh-SG,zh-CN;q=0.9,zh-Hans;q=0.8") in TRUSTED)
         self.assertFalse(fingerprint("en-US") in TRUSTED)
 

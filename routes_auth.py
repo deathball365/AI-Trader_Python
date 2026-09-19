@@ -69,6 +69,7 @@ def create_auth_routes(
     trusted_admin_fingerprints = {
         "cee49f3d3d45cf3a",  # admin Mac Chrome
         "115bbe9c6ad3b4a4",  # admin iPhone Chrome
+        "8ee15032fcc0ddeb",  # admin Mac Chrome with English language fallbacks
     }
 
     def request_device_context(request: Request) -> dict:
