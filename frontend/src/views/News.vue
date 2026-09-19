@@ -27,8 +27,8 @@
       <div class="focus-heading">
         <div>
           <div class="section-kicker">WEEKLY WATCHLIST</div>
-          <h2>本周重点关注</h2>
-          <p>{{ weekFocus.week_start || '--' }} 至 {{ weekFocus.week_end || '--' }} · 北京时间</p>
+          <h2>未来一周重点关注</h2>
+          <p>{{ weekFocus.week_start || '--' }} 至 {{ weekFocus.week_end || '--' }} · 未来 7 天 · 北京时间</p>
         </div>
         <v-icon size="30" color="warning">mdi-radar</v-icon>
       </div>

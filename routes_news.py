@@ -315,8 +315,8 @@ def create_news_routes():
             ZoneInfo("Asia/Shanghai")
         ).date().isoformat()
         anchor_date = date.fromisoformat(anchor)
-        week_start = anchor_date - timedelta(days=anchor_date.weekday())
-        week_end = week_start + timedelta(days=6)
+        week_start = anchor_date
+        week_end = anchor_date + timedelta(days=6)
         keywords = (
             ("美联储", "FOMC"), ("联邦公开市场", "FOMC"), ("利率决议", "利率决议"),
             ("主席讲话", "央行讲话"), ("鲍威尔", "央行讲话"), ("powell", "央行讲话"),
