@@ -112,15 +112,15 @@ class MarketEventRiskTests(unittest.TestCase):
             "id": "nfp", "name": "US Nonfarm Payrolls", "importance": 2,
             "event_timestamp": at,
         }]
-        event = active_event(self.config, "BTCUSD", "M5", "range_upper_reversal", at - 30 * 60)
+        event = active_event(self.config, "BTCUSD", "M5", "range_upper_reversal", at - 3 * 60)
         self.assertIsNotNone(event)
         self.assertEqual(event["event_type"], "nfp")
         self.assertEqual(event["level"], "L4")
-        self.assertEqual(event["suppress_from"], at - 45 * 60)
+        self.assertEqual(event["suppress_from"], at - 5 * 60)
         self.assertIn("美国非农", event["reason"])
 
     @patch("market.services.market_event_risk_service._calendar_events")
-    def test_fomc_is_l4_and_trend_setup_is_not_paused_by_default(self, events):
+    def test_fomc_is_l4_and_pauses_all_gold_entries(self, events):
         at = int(datetime(2026, 9, 16, 18, 0, tzinfo=timezone.utc).timestamp())
         events.return_value = [{
             "id": "fomc", "title": "FOMC Interest Rate Decision", "importance": 1,
@@ -129,7 +129,10 @@ class MarketEventRiskTests(unittest.TestCase):
         event = active_event(self.config, "GOLD_", "M1", "liquidity_sweep_reclaim", at)
         self.assertEqual(event["event_type"], "fomc")
         self.assertEqual(event["level"], "L4")
-        self.assertIsNone(active_event(self.config, "GOLD_", "M1", "trend_continuation", at))
+        trend_event = active_event(self.config, "GOLD_", "M1", "trend_continuation", at)
+        self.assertIsNotNone(trend_event)
+        self.assertEqual(trend_event["suppress_from"], at - 5 * 60)
+        self.assertEqual(trend_event["resume_after"], at + 15 * 60 + 60)
 
     @patch("market.services.market_event_risk_service._calendar_events")
     def test_normal_high_impact_calendar_window_and_resume_bar(self, events):
@@ -139,6 +142,21 @@ class MarketEventRiskTests(unittest.TestCase):
         self.assertEqual(event["level"], "L4")
         self.assertEqual(event["resume_confirmation_bars"], 1)
         self.assertEqual(event["resume_after"], at + 45 * 60 + 5 * 60)
+
+    @patch("market.services.market_event_risk_service._calendar_events")
+    def test_energy_event_only_pauses_oil_all_entries(self, events):
+        at = int(datetime(2026, 9, 9, 14, 30, tzinfo=timezone.utc).timestamp())
+        events.return_value = [{
+            "id": "eia", "name": "EIA Crude Oil Inventories", "importance": 2,
+            "event_timestamp": at,
+        }]
+        oil = active_event(self.config, "OIL#", "M5", "trend_continuation", at)
+        gold = active_event(self.config, "GOLD#", "M5", "trend_continuation", at)
+        self.assertIsNotNone(oil)
+        self.assertEqual(oil["event_type"], "energy")
+        self.assertEqual(oil["suppress_from"], at - 5 * 60)
+        self.assertEqual(oil["resume_after"], at + 15 * 60 + 5 * 60)
+        self.assertIsNone(gold)
 
     def test_official_calendar_parsers_normalize_nfp_and_fomc(self):
         nfp = parse_bls_nfp_ics("""BEGIN:VCALENDAR

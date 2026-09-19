@@ -7,6 +7,7 @@ respect DST); dated macro events are stored in the public market configuration.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Dict, Iterable, Optional
 from zoneinfo import ZoneInfo
 
@@ -52,6 +53,31 @@ NFP_KEYWORDS = (
 FOMC_KEYWORDS = (
     "fomc", "federal reserve", "fed interest rate", "fed rate decision",
     "interest rate decision", "美联储", "联邦公开市场委员会", "利率决议",
+)
+
+# Market-level event taxonomy.  This is intentionally separate from strategy
+# configuration: the same event-to-symbol relationship is shared by all users
+# and all structure setups.
+EVENT_IMPACT_RULES = (
+    {"event_type": "fomc", "symbols": ("GOLD", "SILVER", "OIL", "US100", "US500", "BTCUSD", "AUDUSD"),
+     "keywords": FOMC_KEYWORDS, "before_minutes": 5, "after_minutes": 15},
+    {"event_type": "nfp", "symbols": ("GOLD", "SILVER", "US100", "US500", "BTCUSD", "AUDUSD"),
+     "keywords": NFP_KEYWORDS, "before_minutes": 5, "after_minutes": 15},
+    {"event_type": "us_inflation", "symbols": ("GOLD", "SILVER", "US100", "US500", "BTCUSD", "AUDUSD"),
+     "keywords": ("cpi", "core cpi", "pce", "core pce", "美国通胀", "消费者物价", "个人消费支出"),
+     "before_minutes": 5, "after_minutes": 15},
+    {"event_type": "energy", "symbols": ("OIL",),
+     "keywords": ("eia", "crude oil inventories", "原油库存", "opec", "欧佩克", "iea"),
+     "before_minutes": 5, "after_minutes": 15},
+    {"event_type": "rba", "symbols": ("AUDUSD",),
+     "keywords": ("rba", "reserve bank of australia", "澳洲联储", "澳大利亚利率"),
+     "before_minutes": 5, "after_minutes": 15},
+    {"event_type": "china_macro", "symbols": ("AUDUSD", "OIL", "SILVER"),
+     "keywords": ("china pmi", "中国pmi", "中国采购经理", "中国制造业"),
+     "before_minutes": 5, "after_minutes": 15},
+    {"event_type": "treasury_yield", "symbols": ("GOLD", "SILVER", "US100", "US500", "BTCUSD", "AUDUSD"),
+     "keywords": ("treasury yield", "10-year yield", "2-year yield", "美债收益率", "国债收益率"),
+     "before_minutes": 5, "after_minutes": 15},
 )
 
 
@@ -179,9 +205,24 @@ def _major_us_event(event: Dict) -> Optional[str]:
     return None
 
 
+def _canonical_symbol(symbol: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(symbol or "").upper())
+
+
+def _event_impact_rule(event: Dict, symbol: str) -> Optional[Dict]:
+    text = " ".join(str(event.get(field) or "") for field in (
+        "name", "title", "event", "description", "country", "currency",
+    )).casefold()
+    canonical = _canonical_symbol(symbol)
+    for rule in EVENT_IMPACT_RULES:
+        if canonical not in rule["symbols"]:
+            continue
+        if any(str(keyword).casefold() in text for keyword in rule["keywords"]):
+            return rule
+    return None
+
+
 def _calendar_event(config: Dict, symbol: str, setup_type: str, now: int) -> Optional[Dict]:
-    if not is_reversal_setup(setup_type):
-        return None
     min_importance = max(1, min(3, int(config.get("event_risk_min_importance") or 3)))
     for event in _calendar_events(now):
         try:
@@ -189,6 +230,11 @@ def _calendar_event(config: Dict, symbol: str, setup_type: str, now: int) -> Opt
         except (TypeError, ValueError):
             importance = 0
         major_type = _major_us_event(event)
+        impact_rule = _event_impact_rule(event, symbol)
+        if impact_rule and not major_type:
+            major_type = impact_rule["event_type"]
+        if not is_reversal_setup(setup_type) and not impact_rule:
+            continue
         # NFP and FOMC must always be protected, even when a calendar source
         # has not yet normalized its impact level.
         if not major_type and importance < min_importance:
@@ -198,14 +244,20 @@ def _calendar_event(config: Dict, symbol: str, setup_type: str, now: int) -> Opt
             continue
         event_time = _calendar_timestamp(event)
         major = bool(major_type)
-        before = max(0, int(config.get(
-            "event_risk_major_before_minutes" if major else "event_risk_calendar_before_minutes",
-            45 if major else 30,
-        ) or 0)) * 60
-        after = max(0, int(config.get(
-            "event_risk_major_after_minutes" if major else "event_risk_calendar_after_minutes",
-            90 if major else 45,
-        ) or 0)) * 60
+        if impact_rule:
+            before_minutes = impact_rule["before_minutes"]
+            after_minutes = impact_rule["after_minutes"]
+        else:
+            before_minutes = int(config.get(
+                "event_risk_major_before_minutes" if major else "event_risk_calendar_before_minutes",
+                45 if major else 30,
+            ) or 0)
+            after_minutes = int(config.get(
+                "event_risk_major_after_minutes" if major else "event_risk_calendar_after_minutes",
+                90 if major else 45,
+            ) or 0)
+        before = max(0, before_minutes) * 60
+        after = max(0, after_minutes) * 60
         if not event_time or not event_time - before <= now < event_time + after:
             continue
         label = str(event.get("name") or event.get("title") or "财经日历高影响事件")
@@ -214,11 +266,11 @@ def _calendar_event(config: Dict, symbol: str, setup_type: str, now: int) -> Opt
             "id": str(event.get("id") or f"calendar:{event_time}:{label}"),
             "label": label,
             "event_type": major_type or "economic_calendar",
-            "level": "L4" if major or importance >= 3 else "L3",
+            "level": "L4" if impact_rule or major or importance >= 3 else "L3",
             "event_time": event_time,
             "suppress_from": event_time - before,
             "resume_after": event_time + after,
-            "reason": f"重大宏观事件：{major_label}" if major else f"财经日历高影响事件：{label}",
+            "reason": f"重大宏观事件：{major_label or impact_rule['event_type']}" if impact_rule or major else f"财经日历高影响事件：{label}",
             "importance": importance,
             "major_event": major,
         }
