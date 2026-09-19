@@ -27,7 +27,7 @@ from market.utils.ws_manager import WebSocketManager
 from market_event_repository import MarketEventRepository
 from market.services.market_event_risk_service import (
     DEFAULT_EVENT_RISK_RULES,
-    EVENT_IMPACT_RULES,
+    MARKET_EVENT_RULES,
     _calendar_timestamp,
     _major_us_event,
 )
@@ -363,14 +363,17 @@ def create_news_routes():
             "treasury_yield": "美债收益率事件",
         }
         data = [{
+            "source_type": rule.get("source_type", "recurring_time"),
             "event_type": rule["event_type"],
-            "label": labels.get(rule["event_type"], rule["event_type"]),
-            "symbols": list(rule["symbols"]),
-            "before_minutes": rule["before_minutes"],
-            "after_minutes": rule["after_minutes"],
-            "action": "暂停全部新开仓",
-            "keywords": list(rule["keywords"]),
-        } for rule in EVENT_IMPACT_RULES]
+            "label": rule.get("label") or labels.get(rule["event_type"], rule["event_type"]),
+            "symbols": list(rule.get("symbols") or rule.get("symbol_scope") or ["*"]),
+            "before_minutes": rule.get("before_minutes", 5),
+            "after_minutes": rule.get("after_minutes", 10),
+            "action": "暂停全部新开仓" if rule.get("source_type") == "calendar_event" else "限制反转类 SETUP",
+            "keywords": list(rule.get("keywords") or []),
+            "timezone": rule.get("timezone", ""),
+            "time": rule.get("time", ""),
+        } for rule in MARKET_EVENT_RULES]
         return {"status": "ok", "data": data}
 
     @router.post("/flash")
@@ -415,7 +418,7 @@ def create_news_routes():
 
         # Recurring market opens are evaluated in their native time zones. This
         # automatically produces the correct Beijing time through DST changes.
-        for raw in DEFAULT_EVENT_RISK_RULES:
+        for raw in MARKET_EVENT_RULES:
             tz = ZoneInfo(str(raw.get("timezone") or "Asia/Shanghai"))
             hour, minute = (int(part) for part in str(raw.get("time", "00:00")).split(":", 1))
             occurrence = datetime(target.year, target.month, target.day, hour, minute, tzinfo=tz)

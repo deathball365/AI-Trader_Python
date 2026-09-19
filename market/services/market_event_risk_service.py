@@ -80,6 +80,14 @@ EVENT_IMPACT_RULES = (
      "before_minutes": 5, "after_minutes": 15},
 )
 
+# Unified market-event registry. Recurring session windows and dated calendar
+# events share one schema while retaining their distinct time resolvers.
+MARKET_EVENT_RULES = tuple(
+    {**rule, "source_type": "recurring_time"} for rule in DEFAULT_EVENT_RISK_RULES
+) + tuple(
+    {**rule, "source_type": "calendar_event"} for rule in EVENT_IMPACT_RULES
+)
+
 
 def is_reversal_setup(setup_type: str) -> bool:
     return str(setup_type or "").strip().lower() in REVERSAL_SETUPS
@@ -94,8 +102,8 @@ def effective_event_risk_rules(config: Dict) -> list[Dict]:
     """
     configured = config.get("event_risk_rules")
     if not isinstance(configured, list) or not configured:
-        return [dict(rule) for rule in DEFAULT_EVENT_RISK_RULES]
-    merged = [dict(rule) for rule in DEFAULT_EVENT_RISK_RULES]
+        return [dict(rule) for rule in MARKET_EVENT_RULES]
+    merged = [dict(rule) for rule in MARKET_EVENT_RULES]
     indexes = {
         str(rule.get("id") or ""): index
         for index, rule in enumerate(merged)
@@ -214,7 +222,9 @@ def _event_impact_rule(event: Dict, symbol: str) -> Optional[Dict]:
         "name", "title", "event", "description", "country", "currency",
     )).casefold()
     canonical = _canonical_symbol(symbol)
-    for rule in EVENT_IMPACT_RULES:
+    for rule in MARKET_EVENT_RULES:
+        if rule.get("source_type") != "calendar_event":
+            continue
         if canonical not in rule["symbols"]:
             continue
         if any(str(keyword).casefold() in text for keyword in rule["keywords"]):
