@@ -23,6 +23,36 @@
       {{ errorMessage }}
     </v-alert>
 
+    <section class="focus-section">
+      <div class="focus-heading">
+        <div>
+          <div class="section-kicker">WEEKLY WATCHLIST</div>
+          <h2>本周重点关注</h2>
+          <p>{{ weekFocus.week_start || '--' }} 至 {{ weekFocus.week_end || '--' }} · 北京时间</p>
+        </div>
+        <v-icon size="30" color="warning">mdi-radar</v-icon>
+      </div>
+      <div v-if="weekFocus.data?.length" class="focus-list">
+        <article v-for="item in weekFocus.data" :key="`focus-${item.id}`" class="focus-item">
+          <div class="focus-time">
+            <strong>{{ item.event_date }}</strong>
+            <span>{{ formatEventTime(item.event_time_beijing || item.event_time) }}</span>
+          </div>
+          <div class="focus-copy">
+            <div class="event-title-line">
+              <strong>{{ item.name || item.title }}</strong>
+              <v-chip size="x-small" color="error" variant="tonal">{{ item.focus_category }}</v-chip>
+            </div>
+            <span>{{ item.country || '美国/全球' }} · {{ item.currency || 'USD' }} · 可能影响美股、黄金和美元</span>
+          </div>
+          <v-chip size="small" :color="item.focus_level === 'critical' ? 'error' : 'warning'" variant="tonal">
+            {{ item.focus_level === 'critical' ? '重点' : '高影响' }}
+          </v-chip>
+        </article>
+      </div>
+      <EmptyState v-else icon="mdi-calendar-check-outline" text="本周暂无已录入的重大宏观事件" />
+    </section>
+
     <section class="metric-grid">
       <article class="metric-card calendar">
         <span>财经日历</span>
@@ -206,6 +236,7 @@ function localDateInput(date = new Date()) {
 const activeTab = ref('calendar')
 const selectedDate = ref(localDateInput())
 const status = ref({})
+const weekFocus = ref({ data: [] })
 const calendar = ref([])
 const keyEvents = ref([])
 const riskCalendar = ref([])
@@ -220,6 +251,10 @@ let unmounted = false
 async function loadStatus() {
   const response = await marketAPI.getMarketEventStatus()
   status.value = response.data || {}
+}
+
+async function loadWeekFocus() {
+  weekFocus.value = await marketAPI.getMarketWeekFocus(selectedDate.value)
 }
 
 async function loadCalendar() {
@@ -258,7 +293,7 @@ async function runLoad(loaders) {
 function loadDailyData() {
   return runLoad([
     activeTab.value === 'calendar' ? loadCalendar : activeTab.value === 'risk-calendar' ? loadRiskCalendar : loadKeyEvents,
-    loadStatus,
+    loadStatus, loadWeekFocus,
   ])
 }
 
@@ -337,7 +372,7 @@ function importanceColor(value) {
 }
 
 onMounted(() => {
-  runLoad([loadStatus, loadCalendar, loadRiskCalendar, loadKeyEvents, loadFlashNews])
+  runLoad([loadStatus, loadWeekFocus, loadCalendar, loadRiskCalendar, loadKeyEvents, loadFlashNews])
   connectRealtime()
 })
 
@@ -361,6 +396,18 @@ onUnmounted(() => {
     radial-gradient(circle at 92% 4%, rgba(211, 154, 57, .17), transparent 28%),
     linear-gradient(145deg, #f4f0e7 0%, #edf3ef 54%, #f8f6ef 100%);
 }
+.focus-section { margin-bottom: 18px; padding: 22px 24px; border: 1px solid rgba(122, 91, 35, .16); border-radius: 18px; background: linear-gradient(135deg, rgba(255,252,242,.96), rgba(255,255,255,.92)); box-shadow: 0 8px 22px rgba(86, 73, 43, .06); }
+.focus-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
+.section-kicker { color: #aa7930; font-size: .68rem; font-weight: 800; letter-spacing: .14em; }
+.focus-heading h2 { margin: 3px 0; color: #27473d; font: 700 1.35rem Georgia, serif; }
+.focus-heading p { margin: 0; color: #7c857f; font-size: .76rem; }
+.focus-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 9px; }
+.focus-item { display: grid; grid-template-columns: 78px minmax(0, 1fr) auto; align-items: center; gap: 13px; padding: 12px 13px; border: 1px solid #eadfca; border-radius: 11px; background: rgba(255,255,255,.82); }
+.focus-time strong, .focus-time span, .focus-copy strong, .focus-copy span { display: block; }
+.focus-time strong { color: #6d542b; font-size: .78rem; }
+.focus-time span { margin-top: 3px; color: #b47b2b; font: 700 1rem Georgia, serif; }
+.focus-copy span { margin-top: 4px; color: #818983; font-size: .68rem; }
+@media (max-width: 620px) { .focus-item { grid-template-columns: 1fr auto; }.focus-copy { grid-column: 1 / -1; grid-row: 2; }.focus-item > .v-chip { grid-column: 2; grid-row: 1; } }
 .event-hero { display: flex; justify-content: space-between; align-items: end; gap: 24px; padding: 34px 38px; margin-bottom: 20px; color: #f7f0df; border-radius: 24px; background: linear-gradient(120deg, #102f2a, #1f5d4e 72%, #8c652c); box-shadow: 0 20px 44px rgba(20, 61, 51, .2); }
 .eyebrow { color: #e4bd72; font-size: .72rem; font-weight: 800; letter-spacing: .17em; }
 .event-hero h1 { margin: 5px 0 8px; font-family: Georgia, serif; font-size: clamp(2.2rem, 5vw, 3.8rem); line-height: 1; }

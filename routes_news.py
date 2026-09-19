@@ -7,7 +7,7 @@ import asyncio
 import hashlib
 import json
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional
 
@@ -304,6 +304,51 @@ def create_news_routes():
         day = _validate_day(date_value) if date_value else None
         events = repository.list_key_events(day)
         return {"status": "ok", "date": day, "count": len(events), "data": events}
+
+    @router.get("/week-focus")
+    async def get_week_focus(
+        date_value: Optional[str] = Query(None, alias="date"),
+        user: AuthUser = Depends(require_auth),
+    ) -> Dict:
+        """Return high-impact US macro events worth watching this week."""
+        anchor = _validate_day(date_value) if date_value else datetime.now(
+            ZoneInfo("Asia/Shanghai")
+        ).date().isoformat()
+        anchor_date = date.fromisoformat(anchor)
+        week_start = anchor_date - timedelta(days=anchor_date.weekday())
+        week_end = week_start + timedelta(days=6)
+        keywords = (
+            ("美联储", "FOMC"), ("联邦公开市场", "FOMC"), ("利率决议", "利率决议"),
+            ("主席讲话", "央行讲话"), ("鲍威尔", "央行讲话"), ("powell", "央行讲话"),
+            ("总统讲话", "美国总统讲话"), ("总统", "美国总统讲话"),
+            ("非农", "非农就业"), ("nonfarm", "非农就业"), ("就业报告", "非农就业"),
+            ("国债收益率", "美债收益率"), ("美债", "美债收益率"),
+            ("cpi", "美国通胀"), ("核心pce", "美国通胀"), ("pce", "美国通胀"),
+        )
+        items = []
+        for offset in range(7):
+            day = (week_start + timedelta(days=offset)).isoformat()
+            for item in repository.list_calendar(day) + repository.list_key_events(day):
+                title = str(item.get("name") or item.get("title") or "")
+                lowered = title.casefold()
+                category = next((label for needle, label in keywords if needle.casefold() in lowered), "")
+                if not category and int(item.get("importance") or 0) < 3:
+                    continue
+                items.append({
+                    **item,
+                    "focus_category": category or "高影响事件",
+                    "focus_level": "critical" if category else "high",
+                    "event_date": day,
+                })
+        deduped = {str(item.get("id") or f"{item.get('event_date')}:{item.get('name')}"): item for item in items}
+        result = sorted(
+            deduped.values(),
+            key=lambda item: (str(item.get("event_timestamp") or "999999999999"), str(item.get("event_date") or "")),
+        )
+        return {
+            "status": "ok", "week_start": week_start.isoformat(),
+            "week_end": week_end.isoformat(), "count": len(result), "data": result,
+        }
 
     @router.post("/flash")
     async def upsert_flash_news(

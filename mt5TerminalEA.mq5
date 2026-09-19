@@ -93,6 +93,7 @@ const int TRADE_HISTORY_RETRY_DELAY_SECONDS = 15;
 datetime g_lastCalendarSyncTime = 0;
 const int CALENDAR_SYNC_INTERVAL_SECONDS = 60;
 int g_calendarDayOffset = 0;
+const int CALENDAR_DAYS_AHEAD = 7;
 datetime g_lastPositionSyncTime = 0;
 const int POSITION_SYNC_INTERVAL_SECONDS = 10;
 bool g_positionsSyncPending = false;
@@ -1588,7 +1589,7 @@ void SendToPythonServer(string jsonData)
   }
 
 //+------------------------------------------------------------------+
-//| ADMIN主EA上报MT5财经日历（按天覆盖，后端保存为全局公共数据）       |
+//| ADMIN主EA上报MT5财经日历（未来7天按天覆盖，后端保存为全局公共数据） |
 //+------------------------------------------------------------------+
 double CalendarScaledValue(long value)
   {
@@ -1670,9 +1671,11 @@ bool SendCalendarDay(int beijingDayOffset)
 
 void SyncEconomicCalendar()
   {
-   // 今天/明天交替同步，避免一次OnTimer连续执行两个阻塞请求。
+   // 未来7天循环同步，每次只发送一天，避免连续请求阻塞交易逻辑。
    SendCalendarDay(g_calendarDayOffset);
-   g_calendarDayOffset = 1 - g_calendarDayOffset;
+   g_calendarDayOffset++;
+   if(g_calendarDayOffset >= CALENDAR_DAYS_AHEAD)
+      g_calendarDayOffset = 0;
   }
 //+------------------------------------------------------------------+
 //| Expert tick function                                             |

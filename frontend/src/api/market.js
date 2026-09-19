@@ -49,6 +49,11 @@ export const marketAPI = {
     return response.data
   },
 
+  async getMarketWeekFocus(date) {
+    const response = await api.get('/news/week-focus', { params: { date } })
+    return response.data
+  },
+
   async getMarketFlashNews(limit = 100) {
     const response = await api.get('/news/flash', { params: { limit } })
     return response.data
