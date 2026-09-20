@@ -254,13 +254,6 @@
               <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('enable_triangle_prebreakout')" v-model="structureEngineConfig.enable_triangle_prebreakout" color="primary" inset hide-details label="启用三角形提前入场" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('require_location_reclaim')" v-model="structureEngineConfig.require_location_reclaim" color="primary" inset hide-details label="结构位置要求回收确认" /></v-col>
               <v-col cols="12"><div class="structure-zone-heading mt-2"><div class="text-subtitle-2">八、交易风控 · 事件与开盘窗口</div><div class="text-caption text-medium-emphasis">经济日历、各市场开盘和日切风险窗口，在计划生成后统一拦截高风险时段。</div></div></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('event_risk_enabled')" v-model="structureEngineConfig.event_risk_enabled" color="primary" inset hide-details label="重大事件风险保护" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('event_risk_min_importance')" v-model.number="structureEngineConfig.event_risk_min_importance" type="number" min="1" max="3" label="日历最低影响级别" hint="3=高影响；非农和FOMC始终按最高级别处理" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('event_risk_calendar_before_minutes')" v-model.number="structureEngineConfig.event_risk_calendar_before_minutes" type="number" min="0" max="240" label="普通事件前暂停（分钟）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('event_risk_calendar_after_minutes')" v-model.number="structureEngineConfig.event_risk_calendar_after_minutes" type="number" min="0" max="360" label="普通事件后暂停（分钟）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('event_risk_major_before_minutes')" v-model.number="structureEngineConfig.event_risk_major_before_minutes" type="number" min="0" max="240" label="非农/FOMC 前暂停（分钟）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('event_risk_major_after_minutes')" v-model.number="structureEngineConfig.event_risk_major_after_minutes" type="number" min="0" max="480" label="非农/FOMC 后暂停（分钟）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('event_risk_resume_confirmation_bars')" v-model.number="structureEngineConfig.event_risk_resume_confirmation_bars" type="number" min="0" max="10" label="事件后确认K线数" hint="风险窗口结束后，等待对应周期收盘再重新评估" persistent-hint density="compact" variant="outlined" /></v-col>
             </v-row>
             <v-alert type="info" variant="tonal" density="compact" class="mt-2">东京、上海、伦敦和纽约开盘会按当地时区自动处理夏令时/冬令时。财经日历中的美国非农（NFP）和美联储议息（FOMC）自动按 L4 重大事件处理，默认仅暂停反转类结构计划。</v-alert>
             <v-alert type="info" variant="tonal" density="compact" class="mt-4 mb-3">
@@ -1793,13 +1786,6 @@ export default {
       enable_choch: '启用 CHOCH 计划',
       enable_liquidity_sweep: '启用流动性扫单计划',
       enable_trend: '启用趋势计划',
-      event_risk_enabled: '启用事件风险规避',
-      event_risk_min_importance: '日历最低影响级别',
-      event_risk_calendar_before_minutes: '普通事件前暂停分钟',
-      event_risk_calendar_after_minutes: '普通事件后暂停分钟',
-      event_risk_major_before_minutes: '重大事件前暂停分钟',
-      event_risk_major_after_minutes: '重大事件后暂停分钟',
-      event_risk_resume_confirmation_bars: '事件后恢复确认 K 线数',
     }
     const structureSourceLabel = value => ({ default: '公共默认', setup_default: '公共 SETUP 默认', symbol_period: '品种/周期', setup: '品种/周期/SETUP' }[value] || value || '--')
     const formatStructureValue = value => {

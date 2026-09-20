@@ -122,9 +122,7 @@ def effective_event_risk_rules(config: Dict) -> list[Dict]:
     and New York opening windows.  Matching IDs override their built-in rule,
     which also lets administrators disable or tune an individual market open.
     """
-    configured = config.get("event_risk_rules")
-    if not isinstance(configured, list) or not configured:
-        return [dict(rule) for rule in MARKET_EVENT_RULES]
+    configured = []
     merged = [dict(rule) for rule in get_market_event_rules()]
     indexes = {
         str(rule.get("id") or ""): index
@@ -255,7 +253,7 @@ def _event_impact_rule(event: Dict, symbol: str) -> Optional[Dict]:
 
 
 def _calendar_event(config: Dict, symbol: str, setup_type: str, now: int) -> Optional[Dict]:
-    min_importance = max(1, min(3, int(config.get("event_risk_min_importance") or 3)))
+    min_importance = 3
     for event in _calendar_events(now):
         try:
             importance = int(event.get("importance") or 0)
@@ -280,14 +278,7 @@ def _calendar_event(config: Dict, symbol: str, setup_type: str, now: int) -> Opt
             before_minutes = impact_rule["before_minutes"]
             after_minutes = impact_rule["after_minutes"]
         else:
-            before_minutes = int(config.get(
-                "event_risk_major_before_minutes" if major else "event_risk_calendar_before_minutes",
-                45 if major else 30,
-            ) or 0)
-            after_minutes = int(config.get(
-                "event_risk_major_after_minutes" if major else "event_risk_calendar_after_minutes",
-                90 if major else 45,
-            ) or 0)
+            before_minutes, after_minutes = 5, 15
         before = max(0, before_minutes) * 60
         after = max(0, after_minutes) * 60
         if not event_time or not event_time - before <= now < event_time + after:
@@ -316,12 +307,10 @@ def active_event(config: Dict, symbol: str, period: str, setup_type: str, now: O
     ``affect_setups`` to override this behaviour for a particular event.
     """
     now = int(now or datetime.now(timezone.utc).timestamp())
-    if not bool(config.get("event_risk_enabled", True)):
-        return None
     setup = str(setup_type or "").strip().lower()
     calendar = _calendar_event(config, symbol, setup, now)
     if calendar:
-        confirmation_bars = max(0, int(config.get("event_risk_resume_confirmation_bars") or 1))
+        confirmation_bars = 1
         calendar["resume_confirmation_bars"] = confirmation_bars
         calendar["resume_after"] += confirmation_bars * {
             "M1": 60, "M5": 300, "M15": 900, "H1": 3600, "H4": 14400,
@@ -356,7 +345,7 @@ def active_event(config: Dict, symbol: str, period: str, setup_type: str, now: O
             "resume_after": suppress_until,
             "reason": f"{raw.get('label') or '市场事件'}风险窗口",
         }
-        confirmation_bars = max(0, int(config.get("event_risk_resume_confirmation_bars") or 1))
+        confirmation_bars = 1
         result["resume_confirmation_bars"] = confirmation_bars
         result["resume_after"] += confirmation_bars * {
             "M1": 60, "M5": 300, "M15": 900, "H1": 3600, "H4": 14400,

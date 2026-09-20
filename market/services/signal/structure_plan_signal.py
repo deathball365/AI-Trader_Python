@@ -128,14 +128,6 @@ STRUCTURE_PLAN_DEFAULT_CONFIG = {
     "min_trendline_touches": 2,
     # Reversal setups are paused around regular market opens and manually
     # configured macro events.  Times are evaluated in their native time zone.
-    "event_risk_enabled": True,
-    "event_risk_rules": [],
-    "event_risk_min_importance": 3,
-    "event_risk_calendar_before_minutes": 30,
-    "event_risk_calendar_after_minutes": 45,
-    "event_risk_major_before_minutes": 45,
-    "event_risk_major_after_minutes": 90,
-    "event_risk_resume_confirmation_bars": 1,
 }
 
 

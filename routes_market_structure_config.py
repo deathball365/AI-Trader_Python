@@ -32,13 +32,10 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         "pressure_min_rejections", "pivot_zone_min_points", "pivot_zone_target_count",
         "confirmation_bars", "max_plan_lifetime_bars",
         "max_entries_per_opportunity", "cooldown_minutes",
-        "event_risk_min_importance", "event_risk_calendar_before_minutes",
-        "event_risk_calendar_after_minutes", "event_risk_major_before_minutes",
-        "event_risk_major_after_minutes", "event_risk_resume_confirmation_bars",
     }
-    list_keys = {"allowed_setups", "blocked_setups", "allowed_directions", "blocked_hours", "event_risk_rules"}
+    list_keys = {"allowed_setups", "blocked_setups", "allowed_directions", "blocked_hours"}
     bool_keys = {
-        "enabled", "require_reclaim", "event_risk_enabled", "enable_zone_pressure",
+        "enabled", "require_reclaim", "enable_zone_pressure",
         "zone_pressure_enabled", "pivot_zone_enabled", "require_retest",
         "invalidate_on_zone_return",
     }

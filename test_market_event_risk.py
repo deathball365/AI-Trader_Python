@@ -72,7 +72,7 @@ class MarketEventRiskTests(unittest.TestCase):
         self.assertEqual(breakout["id"], "shanghai_futures_afternoon_open")
 
     @patch("market.services.market_event_risk_service._calendar_events", return_value=[])
-    def test_custom_rollover_supplements_market_open_rules(self, _events):
+    def test_market_open_rules_are_global_and_custom_structure_rules_are_ignored(self, _events):
         config = {
             **self.config,
             "event_risk_rules": [{
@@ -93,8 +93,7 @@ class MarketEventRiskTests(unittest.TestCase):
         rollover = active_event(
             config, "BTCUSD#", "M5", "pressure_zone_breakout", rollover_time,
         )
-        self.assertIsNotNone(rollover)
-        self.assertEqual(rollover["id"], "beijing_daily_rollover")
+        self.assertIsNone(rollover)
 
         new_york_open = int(datetime(
             2026, 9, 8, 9, 30, tzinfo=ZoneInfo("America/New_York")
@@ -141,7 +140,7 @@ class MarketEventRiskTests(unittest.TestCase):
         event = active_event(self.config, "BTCUSD", "M5", "range_lower_reversal", at)
         self.assertEqual(event["level"], "L4")
         self.assertEqual(event["resume_confirmation_bars"], 1)
-        self.assertEqual(event["resume_after"], at + 45 * 60 + 5 * 60)
+        self.assertEqual(event["resume_after"], at + 15 * 60 + 5 * 60)
 
     @patch("market.services.market_event_risk_service._calendar_events")
     def test_energy_event_only_pauses_oil_all_entries(self, events):
