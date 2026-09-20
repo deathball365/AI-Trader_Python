@@ -1207,6 +1207,30 @@ class TradingServer:
                 ),
             )
 
+            # Avoid sending broker-side SL mutations on every tick. A trailing
+            # stop may move by a tiny amount while the market is noisy; keep a
+            # 60-second per-position cadence unless the new stop improves by
+            # at least 0.1R, which is material enough to send immediately.
+            if action.action == "modify_sl" and action.stop_loss:
+                now_ts = int(time.time())
+                candidate = float(action.stop_loss)
+                last_ts = int(state.get("last_stop_update_at") or 0)
+                last_stop = float(state.get("last_stop_update_price") or 0)
+                initial_risk = abs(
+                    float(state.get("initial_risk") or 0)
+                )
+                improvement = (
+                    candidate - last_stop if position.is_buy
+                    else last_stop - candidate
+                ) if last_stop else initial_risk
+                if last_ts and now_ts - last_ts < 60 and improvement < initial_risk * 0.10:
+                    for event in action.events:
+                        if event.get("status") == "triggered" and event.get("candidate_stop_loss") is not None:
+                            event["status"] = "checked"
+                            event["message"] = "止损候选改善幅度较小，处于 60 秒调整节流窗口"
+                    action.action = "none"
+                    action.stop_loss = None
+
             # 将一次性管理动作写入内存状态，防止后续 TICK 重复触发。
             for event in action.events:
                 if event.get("status") != "triggered":
@@ -1230,6 +1254,8 @@ class TradingServer:
                     symbol, applied["stop_update"], events=action.events,
                 )
                 state["pending_stop_instruction_id"] = instruction["instruction_id"]
+                state["last_stop_update_at"] = int(time.time())
+                state["last_stop_update_price"] = float(instruction.get("sl") or 0)
             if applied["close"]:
                 self._managed_position_state.pop(ticket, None)
 
