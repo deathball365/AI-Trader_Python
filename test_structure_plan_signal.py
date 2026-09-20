@@ -994,6 +994,19 @@ class StructurePlanTests(unittest.TestCase):
         self.assertEqual(plans[0]["setup_type"], "no_trade")
         self.assertIn("CHOCH 位移", plans[0]["reason"])
 
+    def test_choch_against_healthy_major_trend_is_not_a_reversal_trade(self):
+        structure = _trend_structure("up")
+        structure["trend_phase"] = "weakening"
+        structure["internal_events"] = [{
+            "type": "choch", "direction": "down", "level": 119.0,
+            "confirmed_at": 39, "displacement_atr": 0.8,
+        }]
+        plans = StructurePlanBuilder().build(
+            "source-1", "BTCUSD", "M5", self.store.rows, structure,
+        )
+        self.assertEqual(plans[0]["setup_type"], "no_trade")
+        self.assertIn("趋势内回撤", plans[0]["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1659,6 +1659,24 @@ class StructurePlanBuilder:
             if direction_state not in {"up", "down"}:
                 self._reject("CHOCH 事件没有明确的反转方向")
                 return []
+            # A short-lived internal CHOCH inside a healthy higher-level up
+            # trend is a pullback, not a tradable short reversal.  Requiring
+            # the trend to fail (or the external structure to agree) avoids
+            # selling every M1 retracement in an otherwise rising market.
+            major_state = str(structure.get("major_state") or "").lower()
+            external_state = str(structure.get("external_state") or "").lower()
+            trend_phase = str(structure.get("trend_phase") or "").lower()
+            if (
+                major_state in {"up", "down"}
+                and direction_state != major_state
+                and trend_phase in {"strong", "mature", "weakening"}
+                and external_state == major_state
+            ):
+                self._reject(
+                    f"主结构仍为 {major_state}，当前 CHOCH={direction_state} 仅视为趋势内回撤，"
+                    "等待主结构失效或更高层级确认后再做反转"
+                )
+                return []
             displacement = _number(latest.get("displacement_atr"))
             minimum = max(0.0, _number(
                 self._param("min_choch_displacement_atr", 0.2)
