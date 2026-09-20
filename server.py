@@ -730,6 +730,18 @@ class TradingServer:
                 daily_risk_limit=account.daily_risk_limit,
                 daily_order_limit=account.daily_order_limit,
             )
+            # The EA owner sends the authoritative financial heartbeat, but a
+            # fresh snapshot is also persisted on the account record. Seed the
+            # in-process risk manager from that record before evaluating a
+            # tick, so a service restart or owner handoff cannot temporarily
+            # classify a funded account as uninitialized.
+            account_balance = float(getattr(account, "balance", 0) or 0)
+            account_equity = float(getattr(account, "equity", 0) or 0)
+            account_free_margin = float(getattr(account, "free_margin", 0) or 0)
+            if account_balance > 0 or account_equity > 0 or account_free_margin > 0:
+                self._risk_manager.update_account_info(
+                    account_balance, account_equity, account_free_margin,
+                )
 
         elif preflight.reason_code == "automation_disabled":
             return result
