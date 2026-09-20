@@ -25,9 +25,12 @@ from fastapi import (
 from auth import AuthUser, get_auth_manager, require_admin, require_auth
 from market.utils.ws_manager import WebSocketManager
 from market_event_repository import MarketEventRepository
+from repositories.runtime import RuntimeStateRepository
 from market.services.market_event_risk_service import (
     DEFAULT_EVENT_RISK_RULES,
     MARKET_EVENT_RULES,
+    get_market_event_rules,
+    invalidate_market_event_rules,
     _calendar_timestamp,
     _major_us_event,
 )
@@ -373,8 +376,29 @@ def create_news_routes():
             "keywords": list(rule.get("keywords") or []),
             "timezone": rule.get("timezone", ""),
             "time": rule.get("time", ""),
-        } for rule in MARKET_EVENT_RULES]
+        } for rule in get_market_event_rules()]
         return {"status": "ok", "data": data}
+
+    @router.put("/admin/impact-rules")
+    async def save_impact_rules(payload: Dict, user: AuthUser = Depends(require_admin)) -> Dict:
+        rules = payload.get("rules")
+        if not isinstance(rules, list) or not rules or len(rules) > 100:
+            raise HTTPException(400, "rules 必须是 1-100 项数组")
+        normalized = []
+        for item in rules:
+            if not isinstance(item, dict) or not item.get("event_type"):
+                raise HTTPException(400, "每条规则必须包含 event_type")
+            rule = dict(item)
+            rule["symbols"] = [str(value).strip().upper() for value in rule.get("symbols", []) if str(value).strip()]
+            rule["before_minutes"] = max(0, min(1440, int(rule.get("before_minutes", 5))))
+            rule["after_minutes"] = max(0, min(1440, int(rule.get("after_minutes", 15))))
+            rule["enabled"] = bool(rule.get("enabled", True))
+            normalized.append(rule)
+        RuntimeStateRepository(0, 0).upsert_entity(
+            "market_event_rules", "default", {"rules": normalized, "updated_by": int(user.user_id)}, status="active"
+        )
+        invalidate_market_event_rules()
+        return {"status": "ok", "data": normalized}
 
     @router.post("/flash")
     async def upsert_flash_news(

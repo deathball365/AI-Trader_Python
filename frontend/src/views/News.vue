@@ -68,9 +68,17 @@
           <div class="impact-symbols">
             <v-chip v-for="symbol in rule.symbols" :key="symbol" size="x-small" variant="outlined">{{ symbol }}</v-chip>
           </div>
-          <div class="impact-window">前 {{ rule.before_minutes }} 分钟 · 后 {{ rule.after_minutes }} 分钟</div>
+          <div v-if="isAdmin" class="impact-edit">
+            <v-text-field v-model.number="rule.before_minutes" type="number" min="0" max="1440" suffix="前" density="compact" hide-details />
+            <v-text-field v-model.number="rule.after_minutes" type="number" min="0" max="1440" suffix="后" density="compact" hide-details />
+          </div>
+          <div v-else class="impact-window">前 {{ rule.before_minutes }} 分钟 · 后 {{ rule.after_minutes }} 分钟</div>
           <v-chip size="small" color="error" variant="tonal">{{ rule.action }}</v-chip>
         </article>
+      </div>
+      <div v-if="isAdmin" class="impact-actions">
+        <v-btn color="primary" prepend-icon="mdi-content-save" :loading="impactSaving" @click="saveImpactRules">保存事件风控配置</v-btn>
+        <span>{{ impactMessage }}</span>
       </div>
     </section>
 
@@ -236,7 +244,8 @@
 </template>
 
 <script setup>
-import { defineComponent, h, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineComponent, h, onMounted, onUnmounted, ref, watch } from 'vue'
+import { authState } from '../auth'
 import { marketAPI } from '../api/market'
 
 const EmptyState = defineComponent({
@@ -259,6 +268,9 @@ const selectedDate = ref(localDateInput())
 const status = ref({})
 const weekFocus = ref({ data: [] })
 const impactRules = ref([])
+const impactSaving = ref(false)
+const impactMessage = ref('')
+const isAdmin = computed(() => authState.user?.role === 'admin')
 const calendar = ref([])
 const keyEvents = ref([])
 const riskCalendar = ref([])
@@ -282,6 +294,19 @@ async function loadWeekFocus() {
 async function loadImpactRules() {
   const response = await marketAPI.getMarketImpactRules()
   impactRules.value = response.data || []
+}
+
+async function saveImpactRules() {
+  impactSaving.value = true
+  impactMessage.value = ''
+  try {
+    await marketAPI.saveMarketImpactRules(impactRules.value)
+    impactMessage.value = '已保存，交易风控将在 30 秒内读取新配置'
+  } catch (error) {
+    impactMessage.value = error.response?.data?.detail || '保存失败'
+  } finally {
+    impactSaving.value = false
+  }
 }
 
 async function loadCalendar() {
@@ -432,6 +457,9 @@ onUnmounted(() => {
 .impact-event small { margin-top: 3px; color: #8a9690; font-size: .66rem; }
 .impact-symbols { display: flex; flex-wrap: wrap; gap: 4px; }
 .impact-window { color: #a35e32; font-size: .74rem; white-space: nowrap; }
+.impact-edit { display: flex; gap: 6px; min-width: 150px; }
+.impact-edit :deep(.v-field) { min-width: 72px; }
+.impact-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; color: #6d7e75; font-size: .76rem; }
 .focus-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
 .section-kicker { color: #aa7930; font-size: .68rem; font-weight: 800; letter-spacing: .14em; }
 .focus-heading h2 { margin: 3px 0; color: #27473d; font: 700 1.35rem Georgia, serif; }

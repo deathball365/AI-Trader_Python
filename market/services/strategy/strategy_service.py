@@ -21,6 +21,8 @@ from ..signal import SignalService
 from ..signal.signal_rules import constrain_pivot_levels_to_hundred_band, valid_exits
 from ..position_manager import PositionManager
 from .risk_manager import RiskManager
+from ..market_event_risk_service import active_event
+from ..signal.structure_plan_signal import STRUCTURE_PLAN_DEFAULT_CONFIG
 
 
 def _round_market_price(value: float, reference_price: float) -> float:
@@ -422,6 +424,27 @@ class StrategyService:
             return self._no_action_decision(
                 symbol, strategy, signals, analysis, execution_mode,
                 "没有满足策略启用条件的方向信号",
+                audit_no_action, consensus_key, decision_time,
+            )
+        event_period = str(getattr(best_signal, "source_period", "") or "M5").upper()
+        event_setup = str(getattr(best_signal, "setup_type", "") or "generic_entry")
+        # Event rules are market-wide.  Use the public defaults here so every
+        # signal source reaches the same gate without depending on a structure
+        # plan repository or creating a source-specific configuration path.
+        event_config = STRUCTURE_PLAN_DEFAULT_CONFIG
+        event_risk = active_event(
+            event_config, symbol, event_period, event_setup,
+            int((decision_time or datetime.now()).timestamp()),
+        )
+        if event_risk:
+            analysis = {
+                **analysis,
+                "event_risk": event_risk,
+                "event_risk_blocked_source": str(getattr(best_signal, "source", "") or "unknown"),
+            }
+            return self._no_action_decision(
+                symbol, strategy, signals, analysis, execution_mode,
+                str(event_risk.get("reason") or "市场事件风险窗口内，暂停新开仓"),
                 audit_no_action, consensus_key, decision_time,
             )
         market_direction = "up" if action == "buy" else "down"

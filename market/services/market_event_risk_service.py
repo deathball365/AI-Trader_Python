@@ -12,7 +12,8 @@ from typing import Dict, Iterable, Optional
 from zoneinfo import ZoneInfo
 
 from market_event_repository import MarketEventRepository
-from runtime_cache import TTLCache
+from runtime_cache import TTLCache, invalidate as invalidate_runtime_cache
+from repositories.runtime import RuntimeStateRepository
 
 
 REVERSAL_SETUPS = {
@@ -87,6 +88,27 @@ MARKET_EVENT_RULES = tuple(
 ) + tuple(
     {**rule, "source_type": "calendar_event"} for rule in EVENT_IMPACT_RULES
 )
+_market_rules_cache = TTLCache(ttl_seconds=30, max_items=1)
+
+
+def get_market_event_rules() -> list[Dict]:
+    """Return the persisted global rules, falling back to built-in defaults."""
+    cached = _market_rules_cache.get("default", "calendar")
+    if cached is not None:
+        return [dict(item) for item in cached]
+    rules = [dict(item) for item in MARKET_EVENT_RULES]
+    try:
+        saved = RuntimeStateRepository(0, 0).get_entity("market_event_rules", "default")
+        if isinstance(saved, dict) and isinstance(saved.get("rules"), list) and saved["rules"]:
+            rules = [dict(item) for item in saved["rules"] if isinstance(item, dict)]
+    except Exception as exc:
+        print(f"[EventRisk] 市场事件规则读取失败，使用默认规则: {exc}")
+    _market_rules_cache.set("default", rules, "calendar")
+    return [dict(item) for item in rules]
+
+
+def invalidate_market_event_rules() -> None:
+    invalidate_runtime_cache({"calendar"})
 
 
 def is_reversal_setup(setup_type: str) -> bool:
@@ -103,7 +125,7 @@ def effective_event_risk_rules(config: Dict) -> list[Dict]:
     configured = config.get("event_risk_rules")
     if not isinstance(configured, list) or not configured:
         return [dict(rule) for rule in MARKET_EVENT_RULES]
-    merged = [dict(rule) for rule in MARKET_EVENT_RULES]
+    merged = [dict(rule) for rule in get_market_event_rules()]
     indexes = {
         str(rule.get("id") or ""): index
         for index, rule in enumerate(merged)
@@ -222,7 +244,7 @@ def _event_impact_rule(event: Dict, symbol: str) -> Optional[Dict]:
         "name", "title", "event", "description", "country", "currency",
     )).casefold()
     canonical = _canonical_symbol(symbol)
-    for rule in MARKET_EVENT_RULES:
+    for rule in get_market_event_rules():
         if rule.get("source_type") != "calendar_event":
             continue
         if canonical not in rule["symbols"]:
