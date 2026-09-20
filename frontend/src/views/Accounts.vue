@@ -654,12 +654,12 @@
             <div v-for="report in liveDetail.execution_reports" :key="report.id" class="runtime-row order-row">
               <span>{{ formatTime(report.reported_at) }}</span>
               <span class="execution-strategy" :title="report.strategy_id || '无策略归属'">{{ report.strategy_name || report.strategy_id || '未归属策略' }}</span>
-              <b :class="['b', 'buy'].includes(report.action) ? 'positive' : 'negative'">{{ ['b', 'buy'].includes(report.action) ? '买入' : '卖出' }}</b>
+              <b :class="report.action === 'position_modify_sl' ? 'neutral' : (['b', 'buy'].includes(report.action) ? 'positive' : 'negative')">{{ report.action === 'position_modify_sl' ? '调整止损' : (['b', 'buy'].includes(report.action) ? '买入' : '卖出') }}</b>
               <span>{{ report.symbol }} · {{ report.executed_volume || report.requested_volume }} 手 · Position {{ report.mt5_position_id || '--' }}</span>
               <span>{{ price(report.executed_price || report.requested_price) }} · 初始 SL {{ price(report.initial_stop_loss) }} · TP {{ price(report.initial_take_profit) }}</span>
               <v-chip size="x-small" :color="report.success ? 'success' : 'error'" variant="tonal">{{ report.success ? '已成交' : '失败' }}</v-chip>
               <span v-if="report.setup_type">{{ setupLabel(report.setup_type) }} · {{ report.setup_profile_name || '默认持仓方案' }}</span>
-              <span class="reject-reason">{{ report.open_reason || report.error_message || `滑点 ${Number(report.slippage || 0).toFixed(5)}` }}</span>
+              <span class="reject-reason">{{ report.action === 'position_modify_sl' ? `实际 SL ${price(report.executed_price)}${report.retcode ? ` · retcode ${report.retcode}` : ''}` : (report.open_reason || report.error_message || `滑点 ${Number(report.slippage || 0).toFixed(5)}`) }}</span>
             </div>
           </section>
         </v-card-text>
@@ -1775,7 +1775,7 @@ onBeforeUnmount(() => {
 .paper-event-row { display: grid; grid-template-columns: 92px 72px 1fr auto; gap: 8px; align-items: center; color: #6f7d77; font-size: .63rem; }
 .paper-event-row b { color: #31554b; }
 .paper-event-row small { color: #8c9892; }
-.runtime-dialog .positive { color: #147b59; }.runtime-dialog .negative { color: #bd493c; }.reject-reason { color: #9a6258; }
+.runtime-dialog .positive { color: #147b59; }.runtime-dialog .negative { color: #bd493c; }.runtime-dialog .neutral { color: #6c7280; }.reject-reason { color: #9a6258; }
 .runtime-empty { display: grid; place-items: center; min-height: 130px; color: #919c97; font-size: .72rem; }.runtime-empty.compact { min-height: 62px; }
 .empty-state { padding: 65px 20px; color: #85918b; text-align: center; }
 .empty-state h3 { margin: 12px 0 5px; color: #4a625b; }.empty-state p { margin: 0; }

@@ -652,6 +652,9 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
         )
         strategy_names = {}
         for report in execution_reports:
+            if str(report.get("action") or "").strip().lower() == "position_modify_sl":
+                report["strategy_name"] = "持仓管理"
+                continue
             attribution = report.get("position_attribution") or {}
             strategy_id = str(
                 report.get("strategy_id") or attribution.get("strategy_id") or ""
