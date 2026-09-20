@@ -77,6 +77,8 @@ STRUCTURE_PLAN_DEFAULT_CONFIG = {
     "trend_hl_min_retrace_atr": 0.3,
     "trend_hl_level_tolerance_atr": 0.35,
     "trend_hl_confirmation_buffer_atr": 0.05,
+    "trend_pullback_zone_atr": 0.45,
+    "trend_hl_min_spacing_atr": 0.5,
     "enable_zone_pressure": True,
     # 成交密集区识别（市场层公共默认，可被品种/周期及 Setup 覆盖）
     "zone_pressure_enabled": True,
@@ -522,6 +524,53 @@ class StructurePlanBuilder:
                     }
         return "", 0.0, {"confirmation_mode": "higher_low_pending"}
 
+    def _ascending_pullback_confirmation(
+        self, rows: List[Dict], structure: Dict, atr: float, direction: str,
+    ) -> tuple[str, float, Dict]:
+        """Find a rising/falling structure pullback entry, not a new extreme."""
+        hierarchy = structure.get("structure_hierarchy") or {}
+        swing = hierarchy.get("swing") or {}
+        pivots = [p for p in swing.get("pivots") or [] if p.get("kind") == ("low" if direction == "up" else "high")]
+        expected_label = "HL" if direction == "up" else "LH"
+        pivots = [p for p in pivots if p.get("label") == expected_label]
+        if len(pivots) < 2 or not rows:
+            return "", 0.0, {"confirmation_mode": "trend_pullback_pending"}
+        previous, latest = pivots[-2], pivots[-1]
+        previous_price = _number(previous.get("price"))
+        latest_price = _number(latest.get("price"))
+        spacing = abs(latest_price - previous_price)
+        minimum_spacing = max(0.1, _number(self._param("trend_hl_min_spacing_atr", 0.5))) * max(atr, 1e-9)
+        rising = latest_price > previous_price if direction == "up" else latest_price < previous_price
+        if not rising or spacing < minimum_spacing:
+            return "", 0.0, {"confirmation_mode": "trend_pullback_pending", "hl_spacing": round(spacing, 8)}
+        current = _number(rows[-1].get("close") or rows[-1].get("close_price"))
+        zone = max(0.1, _number(self._param("trend_pullback_zone_atr", 0.45))) * max(atr, 1e-9)
+        # The entry is placed around the latest HL/LH. The tick gate later
+        # requires price to actually revisit this zone before execution.
+        near_support = (
+            abs(current - latest_price) <= zone if direction == "up"
+            else abs(current - latest_price) <= zone
+        )
+        internal = str(structure.get("internal_state") or "").lower()
+        latest_event = (structure.get("internal_events") or [])[-1:]
+        recovering = internal == direction or bool(
+            latest_event and str(latest_event[0].get("direction") or "") == direction
+        )
+        if not near_support or not recovering:
+            return "", 0.0, {
+                "confirmation_mode": "trend_pullback_pending",
+                "hl_spacing": round(spacing, 8),
+                "pullback_level": round(latest_price, 8),
+                "pullback_zone_atr": round(zone / max(atr, 1e-9), 3),
+            }
+        return "trend_pullback_reclaim", latest_price, {
+            "confirmation_mode": "trend_pullback_reclaim",
+            "pullback_level": round(latest_price, 8),
+            "previous_pullback_level": round(previous_price, 8),
+            "hl_spacing": round(spacing, 8),
+            "pullback_zone_atr": round(zone / max(atr, 1e-9), 3),
+        }
+
     def _location_reclaim_confirmation(
         self, rows: List[Dict], entry: float, direction: str, atr: float,
     ) -> tuple[bool, Dict, str]:
@@ -869,6 +918,9 @@ class StructurePlanBuilder:
         if ratio > retest:
             evidence["risk_tier"] = "new_structure_required"
             return "new_structure_required", 0.0, evidence
+        if entry_mode == "trend_pullback_reclaim":
+            evidence["risk_tier"] = "trend_pullback"
+            return entry_mode, entry, evidence
         if entry_mode == "breakout_retest":
             evidence["risk_tier"] = "retest"
             return entry_mode, entry, evidence
@@ -1873,11 +1925,33 @@ class StructurePlanBuilder:
         }:
             self._reject("趋势延续必须经过收盘突破确认")
             return []
-        if trend_phase in {"mature", "weakening"}:
-            entry_mode, entry, confirmation_evidence = self._higher_low_entry_confirmation(
-                rows, latest, atr, direction_state,
+        swing_pivots = [
+            p for p in (swing.get("pivots") or [])
+            if p.get("kind") == ("low" if direction_state == "up" else "high")
+            and p.get("label") == ("HL" if direction_state == "up" else "LH")
+        ]
+        ascending_context = False
+        if len(swing_pivots) >= 2:
+            spacing = abs(
+                _number(swing_pivots[-1].get("price"))
+                - _number(swing_pivots[-2].get("price"))
+            )
+            ascending_context = (
+                (
+                    _number(swing_pivots[-1].get("price"))
+                    > _number(swing_pivots[-2].get("price"))
+                    if direction_state == "up" else
+                    _number(swing_pivots[-1].get("price"))
+                    < _number(swing_pivots[-2].get("price"))
+                )
+                and spacing >= max(0.1, _number(self._param("trend_hl_min_spacing_atr", 0.5))) * atr
+            )
+        if trend_phase in {"mature", "weakening"} and ascending_context:
+            entry_mode, entry, confirmation_evidence = self._ascending_pullback_confirmation(
+                rows, structure, atr, direction_state,
             )
         else:
+            # Flat/range background keeps the simpler BOS -> retest entry.
             entry_mode, entry, confirmation_evidence = self._trend_entry_confirmation(
                 rows, latest, atr,
             )
@@ -1889,11 +1963,9 @@ class StructurePlanBuilder:
             else "trend_mature_retest_only",
             False if str(period).upper() == "M1" else True,
         ))
-        if trend_phase in {"mature", "weakening"} and entry_mode not in {
-            "higher_low_breakout", "lower_high_breakout",
-        }:
+        if trend_phase in {"mature", "weakening"} and ascending_context and entry_mode != "trend_pullback_reclaim":
             self._reject(
-                f"趋势阶段为 {trend_phase}，等待新的 HL/LH 形成后再突破确认，禁止突破后直接追入"
+                f"趋势阶段为 {trend_phase}，等待回到 HL/LH 支撑区并向上回收，禁止突破后直接追入"
             )
             return []
         direction = "buy" if major == "up" else "sell"
@@ -1901,11 +1973,11 @@ class StructurePlanBuilder:
         stop_buffer = atr * max(0.0, _number(self._param("stop_buffer_atr", 0.25)))
         expires = bar_time + seconds * max(1, int(self._param("event_plan_valid_bars", 6)))
         protected = self._protected_reference(hierarchy, direction, entry)
-        if entry_mode in {"higher_low_breakout", "lower_high_breakout"}:
+        if entry_mode == "trend_pullback_reclaim":
             if direction == "buy":
-                protected = float(confirmation_evidence.get("higher_low") or protected or 0)
+                protected = float(confirmation_evidence.get("pullback_level") or protected or 0)
             else:
-                protected = float(confirmation_evidence.get("lower_high") or protected or 0)
+                protected = float(confirmation_evidence.get("pullback_level") or protected or 0)
         if not protected or not entry:
             return []
         sl = protected-stop_buffer if direction == "buy" else protected+stop_buffer
@@ -1944,8 +2016,8 @@ class StructurePlanBuilder:
         confirmation_text = (
             "回踩突破位并守住"
             if entry_mode == "breakout_retest"
-            else "形成新的 HL/LH 后再次突破回撤结构"
-            if entry_mode in {"higher_low_breakout", "lower_high_breakout"}
+            else "回到上升/下降结构的 HL/LH 支撑区并完成方向回收"
+            if entry_mode == "trend_pullback_reclaim"
             else f"连续 {confirmation_evidence.get('held_bars') or confirmation_evidence.get('required_hold_bars')} 根K线收在突破位外"
         )
         confirmation_evidence = dict(confirmation_evidence)
@@ -2059,7 +2131,7 @@ class StructurePlanSignalGenerator:
                     self.repository.update_payload(plan.get("plan_id"), {"boundary_state": "left_boundary"})
             return False
         mode = str(plan.get("entry_mode") or "")
-        if mode in {"breakout_retest", "touch_or_near"}:
+        if mode in {"breakout_retest", "touch_or_near", "trend_pullback_reclaim"}:
             if str(plan.get("setup_type") or "").startswith("range_") and str(plan.get("boundary_state") or "") == "triggered":
                 return False
             if str(plan.get("setup_type") or "").startswith("range_"):

@@ -791,8 +791,8 @@ class StructurePlanTests(unittest.TestCase):
         plans = StructurePlanBuilder({"enable_structure_location": False}).build(
             "source-1", "BTCUSD", "M5", self.store.rows, structure,
         )
-        self.assertEqual(plans[0]["setup_type"], "no_trade")
-        self.assertIn("回踩确认", plans[0]["reason"])
+        self.assertEqual(plans[0]["setup_type"], "trend_continuation")
+        self.assertIn("回踩突破位", plans[0]["reason"])
 
     def test_mature_trend_requires_retest_instead_of_chasing(self):
         structure = _trend_structure("up")
@@ -811,8 +811,8 @@ class StructurePlanTests(unittest.TestCase):
         plans = StructurePlanBuilder({"enable_structure_location": False}).build(
             "source-1", "BTCUSD", "M5", self.store.rows, structure,
         )
-        self.assertEqual(plans[0]["setup_type"], "no_trade")
-        self.assertIn("回踩确认", plans[0]["reason"])
+        self.assertEqual(plans[0]["setup_type"], "trend_continuation")
+        self.assertIn("连续 2 根K线", plans[0]["reason"])
 
     def test_trend_continuation_default_displacement_is_point_six_atr(self):
         structure = _trend_structure("down")
