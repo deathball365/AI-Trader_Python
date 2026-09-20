@@ -15,7 +15,7 @@ RULE_TYPES = {
     "risk_reward", "none",
 }
 MANAGEMENT_RULE_TYPES = {
-    "break_even", "pivot_trailing", "trailing_stop",
+    "profit_protection", "break_even", "pivot_trailing", "trailing_stop",
     "structure_trailing",
     "partial_take_profit", "reverse_signal", "max_holding_bars",
 }
@@ -64,6 +64,8 @@ def default_position_management_config() -> Dict:
             {"type": "risk_reward", "value": 2.0},
         ],
         "management_rules": [
+            {"type": "profit_protection", "activation_r": 0.5,
+             "stop_r": -0.25},
             {"type": "break_even", "activation_r": 1.0, "offset_r": 0.0},
             {"type": "pivot_trailing", "period": "M5",
              "buffer": {"type": "fixed_points", "value": 0},
@@ -223,6 +225,14 @@ def normalize_position_management_config(config: Optional[Dict]) -> Dict:
             rule["min_improvement_atr"] = _positive(rule.get("min_improvement_atr", 0.10), "结构止损最小改善")
             rule["confirm_bars"] = max(1, min(10, int(rule.get("confirm_bars", 1))))
             rule["cooldown_seconds"] = max(0, min(86400, int(rule.get("cooldown_seconds", 30))))
+        elif rule_type == "profit_protection":
+            rule["activation_r"] = _positive(
+                rule.get("activation_r", 0.5), "盈利保护启动R"
+            )
+            stop_r = float(rule.get("stop_r", -0.25))
+            if stop_r >= 0:
+                raise ValueError("盈利保护止损位置必须小于0R")
+            rule["stop_r"] = max(-5.0, min(-0.01, stop_r))
         elif rule_type == "break_even":
             rule["activation_r"] = _positive(rule.get("activation_r", 1), "保本启动R")
             rule["offset_r"] = _positive(rule.get("offset_r", 0), "保本偏移R", True)

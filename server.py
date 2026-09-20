@@ -1090,7 +1090,11 @@ class TradingServer:
                 "direction": position.direction,
                 "entry_price": float(position.price_open),
                 "stop_loss": float(position.sl),
-                "take_profit": float(position.tp),
+                # MT5 may intentionally keep broker TP empty for dynamic
+                # exits. The strategy TP remains the server-side target.
+                "take_profit": float(
+                    position.tp or attribution.get("initial_take_profit") or 0
+                ),
                 "volume": float(position.volume),
                 "initial_volume": float(
                     attribution.get("initial_volume") or position.volume
@@ -1100,6 +1104,7 @@ class TradingServer:
                 "favorable_price": float(position.price_open),
                 "partial_levels_done": [],
                 "break_even_done": False,
+                "profit_protection_done": False,
                 "pending_stop_loss": 0.0,
                 "holding_bars": 0,
                 "opened_at": position.opened_at or datetime.now(),
@@ -1187,7 +1192,12 @@ class TradingServer:
                         state["pending_stop_loss"] = 0.0
             if state.get("pending_stop_loss"):
                 state["stop_loss"] = float(state["pending_stop_loss"])
-            state["take_profit"] = float(position.tp or state["take_profit"])
+            state["take_profit"] = float(
+                position.tp
+                or state.get("take_profit")
+                or attribution.get("initial_take_profit")
+                or 0
+            )
             state["favorable_price"] = (
                 max(state["favorable_price"], current_price)
                 if position.is_buy else min(state["favorable_price"], current_price)
@@ -1250,6 +1260,8 @@ class TradingServer:
                     continue
                 if event.get("rule_type") == "break_even":
                     state["break_even_done"] = True
+                if event.get("rule_type") == "profit_protection":
+                    state["profit_protection_done"] = True
             TradingServer._record_position_management_events(
                 self,
                 symbol, ticket, state, action.events

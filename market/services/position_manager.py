@@ -635,6 +635,32 @@ class PositionManager:
                 return PositionAction(
                     "close", reason="reverse_signal", events=events
                 )
+            if kind == "profit_protection" and risk > 0:
+                if position.get("profit_protection_done"):
+                    continue
+                activation_r = float(rule.get("activation_r", 0.5) or 0)
+                if profit_r >= activation_r:
+                    stop_r = float(rule.get("stop_r", -0.25) or -0.25)
+                    candidate = (
+                        entry + risk * stop_r
+                        if direction == "buy" else entry - risk * stop_r
+                    )
+                    can_tighten = (
+                        current_sl < candidate < price
+                        if direction == "buy" else price < candidate < current_sl
+                    )
+                    if can_tighten:
+                        candidates.append(candidate)
+                        add_event(
+                            kind, "triggered",
+                            f"浮盈 {profit_r:.2f}R 达到盈利保护 {activation_r:g}R，止损调整至 {stop_r:g}R",
+                            candidate_stop_loss=candidate,
+                        )
+                else:
+                    add_event(
+                        kind, "checked",
+                        f"浮盈 {profit_r:.2f}R，未达到盈利保护 {activation_r:g}R",
+                    )
             if kind == "max_holding_bars":
                 holding_bars = int(position.get("holding_bars", 0))
                 opened_at = position.get("opened_at")
