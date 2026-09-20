@@ -121,7 +121,11 @@ def create_auth_routes(
 
     def login_response(user: AuthUser) -> LoginResponse:
         auth_manager = get_auth_manager()
-        user = auth_manager.start_session(user)
+        # Do not rotate token_version on every login. Users commonly keep the
+        # desktop browser and phone open at the same time; rotating here
+        # invalidates the first device immediately and makes its next API
+        # request redirect the user back to /login. Password changes and
+        # explicit security actions still rotate the version.
         return LoginResponse(
             status="ok",
             token=auth_manager.create_token(user),
