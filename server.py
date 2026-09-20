@@ -1126,40 +1126,53 @@ class TradingServer:
                         restored_levels.update(event_levels)
                 state["partial_levels_done"] = sorted(restored_levels)
                 policy_snapshot = attribution.get("position_policy_snapshot") or {}
-                self._position_event_repository.record(
-                    int(self.user_id or 0), int(self.account_id or 0), str(ticket),
-                    "initial_plan", "实盘持仓已纳入持仓管理，记录初始止损止盈保护",
-                    symbol=symbol, ticket=ticket, rule_type="initial_plan",
-                    status="triggered", price=float(position.price_open),
-                    stop_loss=float(position.sl or 0),
-                    take_profit=float(position.tp or 0),
-                    volume=float(position.volume),
-                    payload={
-                        "policy_id": str(
-                            attribution.get("position_policy_id")
-                            or policy_snapshot.get("policy_id")
-                            or (policy.policy_id if policy else "")
-                        ),
-                        "policy_name": str(
-                            attribution.get("position_policy_name")
-                            or policy_snapshot.get("name")
-                            or (policy.name if policy else "")
-                        ),
-                        "initial_risk": abs(
-                            float(position.price_open) - float(position.sl or 0)
-                        ),
-                        "exit_levels": copy.deepcopy(
-                            attribution.get("exit_levels") or []
-                        ),
-                        "disaster_stop_loss": float(
-                            attribution.get("disaster_stop_loss") or position.sl or 0
-                        ),
-                        "setup_type": attribution.get("setup_type", ""),
-                        "setup_family": attribution.get("setup_family", ""),
-                        "setup_profile_id": attribution.get("setup_profile_id", ""),
-                        "setup_profile_name": attribution.get("setup_profile_name", ""),
-                    },
+                # The in-memory state can be rebuilt by a restart, reconnect,
+                # or another account worker. The position event is durable, so
+                # use it as the idempotency check for the initial lifecycle
+                # marker instead of emitting the same marker again.
+                initial_event_exists = any(
+                    str(item.get("rule_type") or "") == "initial_plan"
+                    and str(item.get("status") or "") == "triggered"
+                    for item in self._position_event_repository.list_for_position(
+                        int(self.user_id or 0), int(self.account_id or 0),
+                        str(ticket), limit=100,
+                    )
                 )
+                if not initial_event_exists:
+                    self._position_event_repository.record(
+                        int(self.user_id or 0), int(self.account_id or 0), str(ticket),
+                        "initial_plan", "实盘持仓已纳入持仓管理，记录初始止损止盈保护",
+                        symbol=symbol, ticket=ticket, rule_type="initial_plan",
+                        status="triggered", price=float(position.price_open),
+                        stop_loss=float(position.sl or 0),
+                        take_profit=float(position.tp or 0),
+                        volume=float(position.volume),
+                        payload={
+                            "policy_id": str(
+                                attribution.get("position_policy_id")
+                                or policy_snapshot.get("policy_id")
+                                or (policy.policy_id if policy else "")
+                            ),
+                            "policy_name": str(
+                                attribution.get("position_policy_name")
+                                or policy_snapshot.get("name")
+                                or (policy.name if policy else "")
+                            ),
+                            "initial_risk": abs(
+                                float(position.price_open) - float(position.sl or 0)
+                            ),
+                            "exit_levels": copy.deepcopy(
+                                attribution.get("exit_levels") or []
+                            ),
+                            "disaster_stop_loss": float(
+                                attribution.get("disaster_stop_loss") or position.sl or 0
+                            ),
+                            "setup_type": attribution.get("setup_type", ""),
+                            "setup_family": attribution.get("setup_family", ""),
+                            "setup_profile_id": attribution.get("setup_profile_id", ""),
+                            "setup_profile_name": attribution.get("setup_profile_name", ""),
+                        },
+                    )
             state["remaining_volume"] = float(position.volume)
             broker_sl = float(position.sl or 0)
             pending_sl = float(state.get("pending_stop_loss") or 0)
