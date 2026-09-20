@@ -1353,7 +1353,20 @@ class StructurePlanBuilder:
             target_buffer = atr * max(0.0, _number(self._param("target_buffer_atr", 0.1)))
             entry = top if direction == "buy" else bottom
             stop_inside = atr * max(0.1, _number(self._param("breakout_stop_inside_atr", 0.3)))
-            sl = entry - stop_inside if direction == "buy" else entry + stop_inside
+            # A breakout-retest order is entered after the market has tested
+            # the boundary. Protect the retest structure, not the original
+            # breakout line, so a normal retest wick does not stop the trade.
+            retest_bars = max(1, int(self._param("breakout_retest_valid_bars", 6)))
+            retest_rows = rows[max(0, len(rows) - retest_bars):]
+            retest_lows = [_number(item.get("low") or item.get("low_price")) for item in retest_rows]
+            retest_highs = [_number(item.get("high") or item.get("high_price")) for item in retest_rows]
+            retest_buffer = atr * max(0.0, _number(self._param("stop_buffer_atr", 0.25)))
+            if direction == "buy" and any(value > 0 for value in retest_lows):
+                sl = min(value for value in retest_lows if value > 0) - retest_buffer
+            elif direction == "sell" and any(value > 0 for value in retest_highs):
+                sl = max(value for value in retest_highs if value > 0) + retest_buffer
+            else:
+                sl = entry - stop_inside if direction == "buy" else entry + stop_inside
             measured = top + (top-bottom) if direction == "buy" else bottom - (top-bottom)
             obstacle = self._next_target(
                 structure.get("structure_hierarchy") or {}, direction, entry

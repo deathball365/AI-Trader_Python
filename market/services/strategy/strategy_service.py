@@ -661,11 +661,10 @@ class StrategyService:
 
         # 计算风险
         risk_points = abs(entry_price - sl)
-        reward_points = (
-            abs(plan.reference_take_profit - entry_price)
-            if plan.reference_take_profit else
-            (abs(tp - entry_price) if has_fixed_take_profit else 0)
-        )
+        # RR must use the prices that will actually be sent to the broker.
+        # Signal/reference targets are useful provenance, but must not allow
+        # a later SL/TP adjustment to bypass the strategy's minimum RR.
+        reward_points = abs(tp - entry_price) if has_fixed_take_profit else 0
         rr_ratio = (
             plan.risk_reward
             if plan.exit_levels else
@@ -674,10 +673,14 @@ class StrategyService:
         )
 
         # 检查风险回报比
-        if has_fixed_take_profit and rr_ratio < strategy.min_risk_reward:
+        final_minimum_rr = max(
+            float(strategy.min_risk_reward or 0),
+            float(analysis.get("position_management", {}).get("minimum_risk_reward") or 0),
+        )
+        if has_fixed_take_profit and rr_ratio < final_minimum_rr:
             reason = (
                 f"风险回报比 {rr_ratio:.2f} 低于策略最小要求 "
-                f"{strategy.min_risk_reward:.2f}"
+                f"{final_minimum_rr:.2f}"
             )
             print(f"[StrategyService] {reason}")
             return self._rejected_decision(
