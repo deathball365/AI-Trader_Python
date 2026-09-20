@@ -650,6 +650,25 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
         execution_reports = repositories.trade_execution.list_for_account(
             user.user_id, account_id, 30,
         )
+        strategy_names = {}
+        for report in execution_reports:
+            attribution = report.get("position_attribution") or {}
+            strategy_id = str(
+                report.get("strategy_id") or attribution.get("strategy_id") or ""
+            ).strip()
+            if not strategy_id:
+                report["strategy_name"] = "未归属策略"
+                continue
+            strategy = strategy_names.get(strategy_id)
+            if strategy is None:
+                strategy = strategy_repository.get_strategy_by_id(user.user_id, strategy_id)
+                strategy_names[strategy_id] = strategy or False
+            report["strategy_id"] = strategy_id
+            report["strategy_name"] = (
+                strategy.strategy_name if strategy else str(
+                    attribution.get("strategy_name") or strategy_id
+                )
+            )
         trades = LiveTradeDealRepository(repositories.storage).list_for_account(
             user.user_id, account_id, 20,
         )
