@@ -799,7 +799,7 @@
                   <td><v-text-field v-model="item.quotaDraft.max_datasets" :disabled="item.role === 'admin'" placeholder="等级默认" type="number" min="0" max="1000" density="compact" hide-details /></td>
                   <td><v-text-field v-model="item.quotaDraft.max_strategies" :disabled="item.role === 'admin'" placeholder="等级默认" type="number" min="0" max="1000" density="compact" hide-details /></td>
                   <td><v-text-field v-model="item.quotaDraft.max_signal_sources" :disabled="item.role === 'admin'" placeholder="等级默认" type="number" min="0" max="1000" density="compact" hide-details /></td>
-                  <td><div class="d-flex ga-1"><v-btn size="small" color="primary" :disabled="item.role === 'admin'" :loading="quotaSaving === item.user_id" @click="saveUserQuota(item)">保存</v-btn><v-btn size="small" variant="tonal" :disabled="item.role === 'admin'" @click="setUserPassword(item)">设置密码</v-btn><v-btn size="small" variant="tonal" :disabled="item.role === 'admin'" @click="viewAsUser(item)">查看页面</v-btn></div></td>
+                  <td><div class="d-flex ga-1"><v-btn size="small" color="primary" :disabled="item.role === 'admin'" :loading="quotaSaving === item.user_id" @click="saveUserQuota(item)">保存</v-btn><v-btn size="small" variant="tonal" @click="setUserPassword(item)">设置密码</v-btn><v-btn size="small" variant="tonal" :disabled="item.role === 'admin'" @click="viewAsUser(item)">查看页面</v-btn></div></td>
                 </tr>
               </tbody>
             </v-table>
