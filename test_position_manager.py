@@ -614,6 +614,24 @@ class PositionManagerTests(unittest.TestCase):
         self.assertEqual(action.action, "none")
         self.assertFalse(any(event.get("status") == "triggered" for event in action.events))
 
+    def test_target_trailing_uses_atr_with_r_bounds(self):
+        action = PositionManager().evaluate({"management_rules": [{
+            "type": "target_trailing", "distance_r": 0.3,
+            "min_distance_r": 0.5, "max_distance_r": 1.0,
+            "atr_multiple_by_setup": {"range_breakout": 1.0},
+        }]}, {
+            "direction": "buy", "entry_price": 100, "stop_loss": 95,
+            "initial_risk": 5, "favorable_price": 112,
+            "take_profit": 110, "setup_type": "range_breakout",
+        }, {"price": 111, "atr": 2})
+
+        self.assertEqual(action.action, "modify_sl")
+        self.assertEqual(action.stop_loss, 109.5)
+        self.assertEqual(
+            next(e for e in action.events if e.get("rule_type") == "target_trailing")["distance_r"],
+            0.5,
+        )
+
     def test_partial_take_profit_can_move_stop_to_break_even(self):
         manager = PositionManager()
         action = manager.evaluate({

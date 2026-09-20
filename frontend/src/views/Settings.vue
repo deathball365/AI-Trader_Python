@@ -1255,7 +1255,7 @@
           <v-select v-model="newStrategyPolicyId" :items="positionPolicyOptions" :loading="positionPoliciesLoading" :disabled="positionPoliciesLoading || !!positionPoliciesError" label="持仓管理方案" prepend-inner-icon="mdi-shield-check-outline" no-data-text="暂无可用持仓管理方案"></v-select>
           <v-alert v-if="positionPoliciesError" type="error" variant="tonal" density="compact" class="mb-2">{{ positionPoliciesError }} <v-btn size="small" variant="text" @click="loadPositionPolicies">重试</v-btn></v-alert>
           <v-alert v-else-if="!positionPoliciesLoading && !positionPolicyOptions.length" type="warning" variant="tonal" density="compact" class="mb-2">暂无启用的持仓管理方案，请先在交易账户页面检查账户配置。</v-alert>
-              <v-alert type="info" variant="tonal" density="compact">新策略默认为私有草稿，不会立即参与交易。持仓管理方案只需在这里选择一次，创建后在风控选项卡中只展示当前绑定。当前默认保护：盈利 0.25R 时止损移至 -0.25R，盈利 0.5R 时移至 -0.1R；达到 1R 后以 0.6R 距离移动止损；到达策略止盈后切换为 0.3R 目标跟踪。</v-alert>
+              <v-alert type="info" variant="tonal" density="compact">新策略默认为私有草稿，不会立即参与交易。持仓管理方案只需在这里选择一次，创建后在风控选项卡中只展示当前绑定。当前默认保护：盈利 0.25R 时止损移至 -0.25R，盈利 0.5R 时移至 -0.1R；达到 1R 后以 0.6R 距离移动止损；到达策略止盈后按品种结构使用 ATR 目标跟踪，距离限制在 0.3R 至 1R 之间。</v-alert>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>

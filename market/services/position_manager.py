@@ -675,11 +675,27 @@ class PositionManager:
                     or (position.get("position_attribution") or {}).get("setup_type")
                     or ""
                 ).strip().lower()
-                distance_r = float(
+                fixed_distance_r = float(
                     (rule.get("distance_by_setup") or {}).get(
                         setup_type, rule.get("distance_r", 0.3)
                     ) or 0.3
                 )
+                min_distance_r = float(
+                    (rule.get("min_distance_by_setup") or {}).get(
+                        setup_type, rule.get("min_distance_r", fixed_distance_r)
+                    ) or fixed_distance_r
+                )
+                max_distance_r = max(
+                    min_distance_r, float(rule.get("max_distance_r", 1.0) or 1.0)
+                )
+                atr_multiple = float(
+                    (rule.get("atr_multiple_by_setup") or {}).get(setup_type, 0) or 0
+                )
+                atr = float(market.get("atr", 0) or 0)
+                if atr_multiple > 0 and atr > 0:
+                    distance_r = max(min_distance_r, min(max_distance_r, atr * atr_multiple / risk))
+                else:
+                    distance_r = max(min_distance_r, min(max_distance_r, fixed_distance_r))
                 distance = risk * distance_r
                 target_reached = (
                     target > 0 and favorable <= target if direction == "sell"
@@ -694,7 +710,14 @@ class PositionManager:
                     )
                     if can_tighten:
                         candidates.append(candidate)
-                        add_event(kind, "triggered", f"达到策略止盈，启用 {distance_r:g}R 目标跟踪", candidate_stop_loss=candidate)
+                        add_event(
+                            kind, "triggered",
+                            f"达到策略止盈，启用 {distance_r:g}R 目标跟踪",
+                            candidate_stop_loss=candidate,
+                            distance_r=distance_r,
+                            atr=atr,
+                            atr_multiple=atr_multiple,
+                        )
             if kind == "max_holding_bars":
                 holding_bars = int(position.get("holding_bars", 0))
                 opened_at = position.get("opened_at")

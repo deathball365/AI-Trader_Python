@@ -79,10 +79,24 @@ def default_position_management_config() -> Dict:
             {"type": "trailing_stop", "activation_r": 1.0,
              "distance_r": 0.6},
             {"type": "target_trailing", "distance_r": 0.3,
-             "distance_by_setup": {
-                 "range_lower_reversal": 0.6,
-                 "range_upper_reversal": 0.6,
-                 "range_false_breakout": 0.6,
+             "min_distance_r": 0.3, "max_distance_r": 1.0,
+             "atr_multiple_by_setup": {
+                 "range_lower_reversal": 0.8,
+                 "range_upper_reversal": 0.8,
+                 "range_false_breakout": 0.8,
+                 "range_breakout": 1.0,
+                 "triangle_breakout": 1.0,
+                 "structure_location_pullback": 0.8,
+                 "trend_continuation": 0.8,
+                 "structure_reversal": 0.8,
+                 "choch_reversal": 0.8,
+                 "pressure_reversal": 0.8,
+                 "pressure_zone_breakout": 1.0,
+             },
+             "min_distance_by_setup": {
+                 "range_lower_reversal": 0.5,
+                 "range_upper_reversal": 0.5,
+                 "range_false_breakout": 0.5,
                  "range_breakout": 0.6,
                  "triangle_breakout": 0.6,
                  "structure_location_pullback": 0.5,
@@ -256,9 +270,27 @@ def normalize_position_management_config(config: Optional[Dict]) -> Dict:
             rule["stages"] = sorted(stages, key=lambda item: item["activation_r"])
         elif rule_type == "target_trailing":
             rule["distance_r"] = _positive(rule.get("distance_r", 0.3), "目标跟踪距离R")
+            rule["min_distance_r"] = _positive(
+                rule.get("min_distance_r", rule["distance_r"]), "目标跟踪最小距离R"
+            )
+            rule["max_distance_r"] = max(
+                rule["min_distance_r"], _positive(
+                    rule.get("max_distance_r", 1.0), "目标跟踪最大距离R"
+                )
+            )
             rule["distance_by_setup"] = {
                 str(key): _positive(value, f"{key}目标跟踪距离R")
                 for key, value in (rule.get("distance_by_setup") or {}).items()
+                if str(key).strip()
+            }
+            rule["atr_multiple_by_setup"] = {
+                str(key): _positive(value, f"{key}目标跟踪ATR倍数")
+                for key, value in (rule.get("atr_multiple_by_setup") or {}).items()
+                if str(key).strip()
+            }
+            rule["min_distance_by_setup"] = {
+                str(key): _positive(value, f"{key}目标跟踪最小距离R")
+                for key, value in (rule.get("min_distance_by_setup") or {}).items()
                 if str(key).strip()
             }
         elif rule_type == "break_even":
