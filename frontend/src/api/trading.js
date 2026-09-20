@@ -54,6 +54,12 @@ export const authAPI = {
     return response.data
   },
 
+  async loginWithPassword(credentials) {
+    const response = await api.post('/auth/login/password', credentials)
+    setAuthSession({ token: response.data.token, user: response.data.user })
+    return response.data
+  },
+
   async loginWithTrustedDevice(email) {
     const response = await api.post(
       '/auth/login/trusted-device',
@@ -135,6 +141,13 @@ export const authAPI = {
   async setUserFreeze(userId, frozen, reason = '') {
     const response = await api.patch(
       `/auth/admin/users/${encodeURIComponent(userId)}/freeze`, { frozen, reason }
+    )
+    return response.data
+  },
+
+  async setUserPassword(userId, password) {
+    const response = await api.put(
+      `/auth/admin/users/${encodeURIComponent(userId)}/password`, { password }
     )
     return response.data
   },

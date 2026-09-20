@@ -769,8 +769,8 @@
             <v-chip color="success" variant="tonal" size="small">新用户默认白银会员</v-chip>
           </v-card-title>
           <v-card-text>
-            <v-alert type="info" variant="tonal" density="compact" class="mb-4">
-              等级决定默认资源额度；留空表示跟随会员等级。实盘必须同时满足黄金/钻石等级和管理员授权，管理员账号不受限制。
+              <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+              等级决定默认资源额度；留空表示跟随会员等级。登录默认使用邮箱验证码，管理员也可为用户设置密码作为备用登录方式。实盘必须同时满足黄金/钻石等级和管理员授权，管理员账号不受限制。
             </v-alert>
             <v-alert v-if="quotaLoading" type="info" variant="tonal" density="compact" class="mb-3">正在加载用户与会员数据…</v-alert>
             <v-alert v-else-if="quotaError" type="error" variant="tonal" density="compact" class="mb-3">{{ quotaError }}</v-alert>
@@ -799,7 +799,7 @@
                   <td><v-text-field v-model="item.quotaDraft.max_datasets" :disabled="item.role === 'admin'" placeholder="等级默认" type="number" min="0" max="1000" density="compact" hide-details /></td>
                   <td><v-text-field v-model="item.quotaDraft.max_strategies" :disabled="item.role === 'admin'" placeholder="等级默认" type="number" min="0" max="1000" density="compact" hide-details /></td>
                   <td><v-text-field v-model="item.quotaDraft.max_signal_sources" :disabled="item.role === 'admin'" placeholder="等级默认" type="number" min="0" max="1000" density="compact" hide-details /></td>
-                  <td><div class="d-flex ga-1"><v-btn size="small" color="primary" :disabled="item.role === 'admin'" :loading="quotaSaving === item.user_id" @click="saveUserQuota(item)">保存</v-btn><v-btn size="small" variant="tonal" :disabled="item.role === 'admin'" @click="viewAsUser(item)">查看页面</v-btn></div></td>
+                  <td><div class="d-flex ga-1"><v-btn size="small" color="primary" :disabled="item.role === 'admin'" :loading="quotaSaving === item.user_id" @click="saveUserQuota(item)">保存</v-btn><v-btn size="small" variant="tonal" :disabled="item.role === 'admin'" @click="setUserPassword(item)">设置密码</v-btn><v-btn size="small" variant="tonal" :disabled="item.role === 'admin'" @click="viewAsUser(item)">查看页面</v-btn></div></td>
                 </tr>
               </tbody>
             </v-table>
@@ -2836,6 +2836,19 @@ export default {
       }
     }
 
+    const setUserPassword = async (item) => {
+      const password = window.prompt(`为 ${item.username} 设置登录密码（8-128 位，必须包含字母和数字）`)
+      if (password === null) return
+      try {
+        await authAPI.setUserPassword(item.user_id, password)
+        successMessage.value = `已设置 ${item.username} 的登录密码`
+        showSuccess.value = true
+      } catch (err) {
+        errorMessage.value = err.response?.data?.detail || '设置用户密码失败'
+        showError.value = true
+      }
+    }
+
     const viewAsUser = async (item) => {
       if (item.role === 'admin') return
       try {
@@ -4719,6 +4732,7 @@ export default {
       deleteInstrumentMapping,
       quotaUsers,
       freezeSaving,
+      setUserPassword,
       toggleUserFreeze,
       quotaLoading,
       quotaError,

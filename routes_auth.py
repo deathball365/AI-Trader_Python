@@ -34,6 +34,8 @@ from models import (
     TestSystemEmailRequest,
     UserMembershipUpdateRequest,
     UserQuotaOverrideRequest,
+    PasswordLoginRequest,
+    AdminSetPasswordRequest,
 )
 from invitations import InvitationError, InvitationService
 from email_verification import (
@@ -201,6 +203,20 @@ def create_auth_routes(
                 detail=f"验证码发送失败: {exc}",
             ) from exc
 
+    @router.post("/login/password", response_model=LoginResponse)
+    async def login_with_password(payload: PasswordLoginRequest, request: Request) -> LoginResponse:
+        auth_manager = get_auth_manager()
+        email = str(payload.email or "").strip().lower()
+        user = auth_manager.authenticate_email(email, payload.password)
+        if user is None:
+            audit_login(request, None, False, "邮箱或密码不正确", "password")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="邮箱或密码不正确")
+        if user.is_frozen:
+            audit_login(request, user, False, "用户登录已被冻结", "password")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户登录已被冻结")
+        result = login_response(user)
+        audit_login(request, user, True, method="password")
+        return result
     @router.post("/login/trusted-device", response_model=LoginResponse)
     async def login_with_trusted_device(
         payload: SendEmailCodeRequest, request: Request,
@@ -385,6 +401,18 @@ def create_auth_routes(
                 "freeze_reason": updated.freeze_reason,
             },
         }
+
+    @router.put("/admin/users/{user_id}/password")
+    async def set_user_password(
+        user_id: int,
+        payload: AdminSetPasswordRequest,
+        user: AuthUser = Depends(require_admin),
+    ):
+        try:
+            updated = get_auth_manager().set_password_by_admin(user_id, payload.password)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"status": "ok", "message": "用户登录密码已设置", "user_id": updated.user_id}
 
     @router.post("/admin/users/{user_id}/view-token")
     async def create_user_view_token(

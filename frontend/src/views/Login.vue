@@ -7,7 +7,7 @@
             <div class="login-mark">PRIVATE LAB</div>
             <v-card-title class="text-h4 font-weight-bold">AI Trader</v-card-title>
             <v-card-subtitle class="login-subtitle">
-              受邀成员使用邮箱验证码登录
+              受邀成员使用邮箱验证码或登录密码
             </v-card-subtitle>
 
             <v-card-text>
@@ -15,7 +15,12 @@
                 {{ errorMessage }}
               </v-alert>
 
-              <v-form @submit.prevent="handleEmailLogin">
+              <v-tabs v-model="loginMode" color="primary" class="mb-5" grow>
+                <v-tab value="email">邮箱验证码</v-tab>
+                <v-tab value="password">密码登录</v-tab>
+              </v-tabs>
+
+              <v-form v-if="loginMode === 'email'" @submit.prevent="handleEmailLogin">
                 <v-text-field
                   v-model="email"
                   label="注册邮箱"
@@ -46,9 +51,14 @@
                     {{ resendCountdown ? `${resendCountdown}s` : '获取验证码' }}
                   </v-btn>
                 </div>
-                <v-btn type="submit" color="primary" size="large" block :loading="loading || trustedChecking" :disabled="!emailValid" class="mt-3">
+                <v-btn type="submit" color="primary" size="large" block :loading="loading" :disabled="!emailValid" class="mt-3">
                   邮箱验证登录
                 </v-btn>
+              </v-form>
+              <v-form v-else @submit.prevent="handlePasswordLogin">
+                <v-text-field v-model="email" label="注册邮箱" prepend-inner-icon="mdi-email-outline" variant="outlined" autocomplete="email" :disabled="loading" required />
+                <v-text-field v-model="password" label="登录密码" prepend-inner-icon="mdi-lock-outline" variant="outlined" autocomplete="current-password" type="password" :disabled="loading" required />
+                <v-btn type="submit" color="primary" size="large" block :loading="loading" :disabled="!emailValid || !password" class="mt-3">密码登录</v-btn>
               </v-form>
 
             </v-card-text>
@@ -72,12 +82,13 @@ import { authAPI } from '../api/trading'
 const route = useRoute()
 const router = useRouter()
 const email = ref('')
+const password = ref('')
+const loginMode = ref('email')
 const verificationCode = ref('')
 const loading = ref(false)
 const codeSending = ref(false)
 const resendCountdown = ref(0)
 const errorMessage = ref('')
-const trustedChecking = ref(false)
 let timer = null
 
 const normalizedEmail = computed(() => email.value.trim().toLowerCase())
@@ -87,22 +98,8 @@ function finishLogin(result) {
   router.push(route.query.redirect || result.next_path || '/')
 }
 
-async function tryTrustedDeviceLogin() {
-  if (!emailValid.value || loading.value) return false
-  trustedChecking.value = true
-  try {
-    finishLogin(await authAPI.loginWithTrustedDevice(normalizedEmail.value))
-    return true
-  } catch {
-    return false
-  } finally {
-    trustedChecking.value = false
-  }
-}
-
 async function sendCode() {
   if (!emailValid.value) return
-  if (await tryTrustedDeviceLogin()) return
   codeSending.value = true
   errorMessage.value = ''
   try {
@@ -125,7 +122,6 @@ async function handleEmailLogin() {
     errorMessage.value = '请输入有效邮箱'
     return
   }
-  if (!verificationCode.value && await tryTrustedDeviceLogin()) return
   if (!/^\d{6}$/.test(verificationCode.value)) {
     errorMessage.value = '请输入有效邮箱和 6 位验证码'
     return
@@ -139,6 +135,22 @@ async function handleEmailLogin() {
     }))
   } catch (error) {
     errorMessage.value = error.response?.data?.detail || '登录失败，请检查验证码'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function handlePasswordLogin() {
+  if (!emailValid.value || !password.value) {
+    errorMessage.value = '请输入有效邮箱和登录密码'
+    return
+  }
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    finishLogin(await authAPI.loginWithPassword({ email: normalizedEmail.value, password: password.value }))
+  } catch (error) {
+    errorMessage.value = error.response?.data?.detail || '密码登录失败'
   } finally {
     loading.value = false
   }

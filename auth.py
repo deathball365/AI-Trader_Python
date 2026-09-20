@@ -200,6 +200,18 @@ class AuthManager:
 
         return self._to_auth_user(updated)
 
+    def set_password_by_admin(self, user_id: int, new_password: str) -> AuthUser:
+        """Set a user's password without requiring the old password."""
+        self._validate_password(new_password)
+        with self._lock:
+            record = self.user_repo.get_by_id(user_id)
+            if record is None:
+                raise ValueError("用户不存在")
+            salt, password_hash = self._build_password_credentials(new_password)
+            updated = self.user_repo.update_password(user_id, password_hash, salt)
+            updated = self.user_repo.rotate_token_version(user_id)
+        return self._to_auth_user(updated)
+
     def create_token(self, user: AuthUser) -> str:
         with self._lock:
             secret = self.meta_repo.get("auth_secret") or ""

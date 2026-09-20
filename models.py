@@ -38,6 +38,17 @@ class EmailLoginRequest(BaseModel):
     verification_code: str
 
 
+class PasswordLoginRequest(BaseModel):
+    """用户邮箱密码登录。"""
+    email: str
+    password: str
+
+
+class AdminSetPasswordRequest(BaseModel):
+    """管理员为用户设置登录密码。"""
+    password: str
+
+
 class RegisterRequest(BaseModel):
     """受邀请用户注册。"""
     username: str
