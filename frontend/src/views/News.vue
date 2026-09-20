@@ -66,7 +66,17 @@
         <article v-for="rule in impactRules" :key="rule.event_type" class="impact-row">
           <div class="impact-event"><strong>{{ rule.label }}</strong><small>{{ rule.event_type }}</small></div>
           <div class="impact-symbols">
-            <v-chip v-for="symbol in rule.symbols" :key="symbol" size="x-small" variant="outlined">{{ symbol }}</v-chip>
+            <v-text-field
+              v-if="isAdmin"
+              :model-value="(rule.symbols || []).join(', ')"
+              label="影响品种"
+              density="compact"
+              hide-details
+              @update:model-value="rule.symbols = $event.split(',').map(item => item.trim().toUpperCase()).filter(Boolean)"
+            />
+            <template v-else>
+              <v-chip v-for="symbol in rule.symbols" :key="symbol" size="x-small" variant="outlined">{{ symbol }}</v-chip>
+            </template>
           </div>
           <div v-if="isAdmin" class="impact-edit">
             <v-text-field v-model.number="rule.before_minutes" type="number" min="0" max="1440" suffix="前" density="compact" hide-details />
@@ -74,6 +84,7 @@
           </div>
           <div v-else class="impact-window">前 {{ rule.before_minutes }} 分钟 · 后 {{ rule.after_minutes }} 分钟</div>
           <v-chip size="small" color="error" variant="tonal">{{ rule.action }}</v-chip>
+          <v-switch v-if="isAdmin" v-model="rule.enabled" color="success" density="compact" hide-details label="启用" />
         </article>
       </div>
       <div v-if="isAdmin" class="impact-actions">
