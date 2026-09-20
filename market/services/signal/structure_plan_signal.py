@@ -74,6 +74,9 @@ STRUCTURE_PLAN_DEFAULT_CONFIG = {
     "trend_retest_tolerance_atr": 0.25,
     "trend_min_retest_bars": 1,
     "trend_continuation_hold_bars": 2,
+    "trend_hl_min_retrace_atr": 0.3,
+    "trend_hl_level_tolerance_atr": 0.35,
+    "trend_hl_confirmation_buffer_atr": 0.05,
     "enable_zone_pressure": True,
     # 成交密集区识别（市场层公共默认，可被品种/周期及 Setup 覆盖）
     "zone_pressure_enabled": True,
@@ -469,6 +472,55 @@ class StructurePlanBuilder:
                 return "touch_or_near", close, evidence
         evidence["held_bars"] = held_count
         return "", 0.0, evidence
+
+    def _higher_low_entry_confirmation(
+        self, rows: List[Dict], event: Dict, atr: float, direction: str,
+    ) -> tuple[str, float, Dict]:
+        """Wait for a post-BOS pullback structure before entering.
+
+        In mature or weakening trends the breakout level is only an
+        observation anchor.  The actual entry is the break of the pullback
+        swing high/low after a valid HL/LH has formed.
+        """
+        level = _number(event.get("level"))
+        event_index = int(event.get("confirmed_at", event.get("index", -1)) or -1)
+        if level <= 0 or event_index < 0 or event_index >= len(rows) - 1:
+            return "", 0.0, {"confirmation_mode": "higher_low_pending"}
+        minimum_pullback = max(0.25, _number(self._param("trend_hl_min_retrace_atr", 0.3))) * max(atr, 1e-9)
+        level_tolerance = max(0.15, _number(self._param("trend_hl_level_tolerance_atr", 0.35))) * max(atr, 1e-9)
+        confirmation_buffer = max(0.05, _number(self._param("trend_hl_confirmation_buffer_atr", 0.05))) * max(atr, 1e-9)
+        post = rows[event_index:]
+        extreme = _number(post[0].get("high") or post[0].get("high_price")) if direction == "up" else _number(post[0].get("low") or post[0].get("low_price"))
+        pullback = None
+        for offset, row in enumerate(post[1:], start=1):
+            high = _number(row.get("high") or row.get("high_price"))
+            low = _number(row.get("low") or row.get("low_price"))
+            close = _number(row.get("close") or row.get("close_price"))
+            if direction == "up":
+                extreme = max(extreme, high)
+                if pullback is None and extreme - low >= minimum_pullback and low >= level - level_tolerance:
+                    pullback = {"index": event_index + offset, "price": low, "trigger": extreme}
+                if pullback and close >= pullback["trigger"] + confirmation_buffer:
+                    return "higher_low_breakout", pullback["trigger"], {
+                        "confirmation_mode": "higher_low_breakout",
+                        "confirmation_bar_index": event_index + offset,
+                        "higher_low_index": pullback["index"],
+                        "higher_low": round(pullback["price"], 8),
+                        "pullback_trigger": round(pullback["trigger"], 8),
+                    }
+            else:
+                extreme = min(extreme, low)
+                if pullback is None and high - extreme >= minimum_pullback and high <= level + level_tolerance:
+                    pullback = {"index": event_index + offset, "price": high, "trigger": extreme}
+                if pullback and close <= pullback["trigger"] - confirmation_buffer:
+                    return "lower_high_breakout", pullback["trigger"], {
+                        "confirmation_mode": "lower_high_breakout",
+                        "confirmation_bar_index": event_index + offset,
+                        "lower_high_index": pullback["index"],
+                        "lower_high": round(pullback["price"], 8),
+                        "pullback_trigger": round(pullback["trigger"], 8),
+                    }
+        return "", 0.0, {"confirmation_mode": "higher_low_pending"}
 
     def _location_reclaim_confirmation(
         self, rows: List[Dict], entry: float, direction: str, atr: float,
@@ -1797,9 +1849,7 @@ class StructurePlanBuilder:
         direction_state = str(latest.get("direction") or "")
         major = str(structure.get("major_state") or "")
         trend_phase = str(structure.get("trend_phase") or "strong").lower()
-        if self._param("trend_require_healthy_phase", True) and trend_phase in {
-            "weakening", "failed",
-        }:
+        if self._param("trend_require_healthy_phase", True) and trend_phase == "failed":
             self._reject(
                 f"趋势阶段为 {trend_phase}，推进力度衰减或保护点已失效，"
                 "暂停趋势延续计划"
@@ -1823,9 +1873,14 @@ class StructurePlanBuilder:
         }:
             self._reject("趋势延续必须经过收盘突破确认")
             return []
-        entry_mode, entry, confirmation_evidence = self._trend_entry_confirmation(
-            rows, latest, atr,
-        )
+        if trend_phase in {"mature", "weakening"}:
+            entry_mode, entry, confirmation_evidence = self._higher_low_entry_confirmation(
+                rows, latest, atr, direction_state,
+            )
+        else:
+            entry_mode, entry, confirmation_evidence = self._trend_entry_confirmation(
+                rows, latest, atr,
+            )
         if not entry_mode or entry <= 0:
             self._reject("趋势延续尚未完成回踩确认或连续收盘站稳")
             return []
@@ -1834,14 +1889,23 @@ class StructurePlanBuilder:
             else "trend_mature_retest_only",
             False if str(period).upper() == "M1" else True,
         ))
-        if trend_phase == "mature" and mature_retest_only and entry_mode != "breakout_retest":
-            self._reject("趋势已进入成熟阶段，只允许回踩突破位确认，不追价延续")
+        if trend_phase in {"mature", "weakening"} and entry_mode not in {
+            "higher_low_breakout", "lower_high_breakout",
+        }:
+            self._reject(
+                f"趋势阶段为 {trend_phase}，等待新的 HL/LH 形成后再突破确认，禁止突破后直接追入"
+            )
             return []
         direction = "buy" if major == "up" else "sell"
         entry_buffer = atr * max(0.0, _number(self._param("entry_zone_atr", 0.35)))
         stop_buffer = atr * max(0.0, _number(self._param("stop_buffer_atr", 0.25)))
         expires = bar_time + seconds * max(1, int(self._param("event_plan_valid_bars", 6)))
         protected = self._protected_reference(hierarchy, direction, entry)
+        if entry_mode in {"higher_low_breakout", "lower_high_breakout"}:
+            if direction == "buy":
+                protected = float(confirmation_evidence.get("higher_low") or protected or 0)
+            else:
+                protected = float(confirmation_evidence.get("lower_high") or protected or 0)
         if not protected or not entry:
             return []
         sl = protected-stop_buffer if direction == "buy" else protected+stop_buffer
@@ -1880,6 +1944,8 @@ class StructurePlanBuilder:
         confirmation_text = (
             "回踩突破位并守住"
             if entry_mode == "breakout_retest"
+            else "形成新的 HL/LH 后再次突破回撤结构"
+            if entry_mode in {"higher_low_breakout", "lower_high_breakout"}
             else f"连续 {confirmation_evidence.get('held_bars') or confirmation_evidence.get('required_hold_bars')} 根K线收在突破位外"
         )
         confirmation_evidence = dict(confirmation_evidence)

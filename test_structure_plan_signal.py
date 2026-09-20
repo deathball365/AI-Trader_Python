@@ -774,7 +774,7 @@ class StructurePlanTests(unittest.TestCase):
         self.assertEqual(plans[0]["setup_type"], "no_trade")
         self.assertIn("主结构、Swing", plans[0]["reason"])
 
-    def test_trend_continuation_rejects_weakening_phase(self):
+    def test_trend_continuation_waits_for_hl_in_weakening_phase(self):
         structure = _trend_structure("up")
         structure["trend_phase"] = "weakening"
         structure["trend_phase_evidence"] = {
@@ -792,7 +792,7 @@ class StructurePlanTests(unittest.TestCase):
             "source-1", "BTCUSD", "M5", self.store.rows, structure,
         )
         self.assertEqual(plans[0]["setup_type"], "no_trade")
-        self.assertIn("推进力度衰减", plans[0]["reason"])
+        self.assertIn("回踩确认", plans[0]["reason"])
 
     def test_mature_trend_requires_retest_instead_of_chasing(self):
         structure = _trend_structure("up")
@@ -812,7 +812,7 @@ class StructurePlanTests(unittest.TestCase):
             "source-1", "BTCUSD", "M5", self.store.rows, structure,
         )
         self.assertEqual(plans[0]["setup_type"], "no_trade")
-        self.assertIn("成熟阶段", plans[0]["reason"])
+        self.assertIn("回踩确认", plans[0]["reason"])
 
     def test_trend_continuation_default_displacement_is_point_six_atr(self):
         structure = _trend_structure("down")
