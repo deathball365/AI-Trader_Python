@@ -22,6 +22,7 @@ DEFAULT_CONFIG = {
     "range_max_atr": 8.0, "range_min_bars": 24, "min_segment_bars": 12,
     "trendline_touch_atr": 0.5, "trendline_min_touches": 2,
     "trendline_min_bars": 18,
+    "trendline_regime_min_slope_atr": 0.05,
     "trend_min_direction_ratio": 0.62,
     "trend_relaxed_direction_ratio": 0.55,
     "trend_min_efficiency": 0.30,
@@ -560,6 +561,44 @@ def _local_patterns(rows: List[Dict], box: Optional[Dict], trendlines: List[Dict
     return patterns
 
 
+def _trend_regime(
+    trendlines: List[Dict], levels: Dict[str, List[Dict]], atr: float,
+    config: Dict, box: Optional[Dict],
+) -> Tuple[str, Dict]:
+    """Classify the local background using normalized trendline slopes."""
+    threshold = max(0.0, float(config.get("trendline_regime_min_slope_atr", 0.05)))
+    medium = levels.get("medium") or []
+    highs = [p for p in medium if p.get("kind") == "high"][-3:]
+    lows = [p for p in medium if p.get("kind") == "low"][-3:]
+    support = [line for line in trendlines if line.get("kind") == "support" and not line.get("broken_at")]
+    resistance = [line for line in trendlines if line.get("kind") == "resistance" and not line.get("broken_at")]
+    support_slope = max((float(line.get("slope") or 0) for line in support), default=0.0) / max(atr, 1e-9)
+    resistance_slope = max((float(line.get("slope") or 0) for line in resistance), default=0.0) / max(atr, 1e-9)
+    high_rising = len(highs) >= 2 and highs[-1]["price"] > highs[-2]["price"]
+    low_rising = len(lows) >= 2 and lows[-1]["price"] > lows[-2]["price"]
+    high_falling = len(highs) >= 2 and highs[-1]["price"] < highs[-2]["price"]
+    low_falling = len(lows) >= 2 and lows[-1]["price"] < lows[-2]["price"]
+    ascending = support_slope >= threshold and resistance_slope >= threshold and high_rising and low_rising
+    descending = support_slope <= -threshold and resistance_slope <= -threshold and high_falling and low_falling
+    if ascending:
+        regime = "ascending_range"
+    elif descending:
+        regime = "descending_range"
+    elif box and box.get("active"):
+        regime = "range"
+    else:
+        regime = "transition"
+    return regime, {
+        "support_slope_atr": round(support_slope, 5),
+        "resistance_slope_atr": round(resistance_slope, 5),
+        "minimum_slope_atr": round(threshold, 5),
+        "higher_highs": high_rising,
+        "higher_lows": low_rising,
+        "lower_highs": high_falling,
+        "lower_lows": low_falling,
+    }
+
+
 def _anchor_confirmed_segments(rows: List[Dict], segments: List[Dict],
                                pivots: Optional[List[Dict]] = None,
                                max_backdate_bars: int = 48) -> List[Dict]:
@@ -883,6 +922,9 @@ def analyze(symbol: str, period: str, rows: List[Dict], config: Dict = None) -> 
     # it must never overwrite the directional bias.
     current_state = major_state
     trendlines = _trendlines(rows, levels, atr, cfg)
+    trend_regime, trend_regime_evidence = _trend_regime(
+        trendlines, levels, atr, cfg, box,
+    )
     hierarchy = _hierarchy(
         levels,
         {"internal": internal_state, "swing": major_state, "external": external_state},
@@ -948,6 +990,7 @@ def analyze(symbol: str, period: str, rows: List[Dict], config: Dict = None) -> 
             "segment_history": segments[-50:], "current_state": current_state, "state_detail": state_detail,
             "internal_state": internal_state, "major_state": major_state, "external_state": external_state,
             "trend_phase": trend_phase, "trend_phase_evidence": trend_phase_evidence,
+            "trend_regime": trend_regime, "trend_regime_evidence": trend_regime_evidence,
             "active_candidate": active_candidate,
             "evidence": evidence,
             "structure_levels": {name: {"pivot_count": len(items), "latest": items[-1] if items else None}

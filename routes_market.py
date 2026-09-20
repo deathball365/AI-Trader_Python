@@ -86,6 +86,7 @@ def _compact_market_structure_snapshot(result: Dict) -> Dict:
         "structure_levels", "machine_context", "swings", "pivot_levels",
         "trendlines", "events", "internal_events", "major_events", "external_events",
         "candidates", "structure_hierarchy", "local_patterns", "evidence", "state_detail",
+        "trend_regime", "trend_regime_evidence",
     }
     snapshot = {key: value for key, value in result.items() if key in keep}
     # Keep enough chart facts for a refresh, but never persist the full

@@ -1930,13 +1930,13 @@ class StructurePlanBuilder:
             if p.get("kind") == ("low" if direction_state == "up" else "high")
             and p.get("label") == ("HL" if direction_state == "up" else "LH")
         ]
-        ascending_context = False
+        ascending_context = str(structure.get("trend_regime") or "").lower() == "ascending_range"
         if len(swing_pivots) >= 2:
             spacing = abs(
                 _number(swing_pivots[-1].get("price"))
                 - _number(swing_pivots[-2].get("price"))
             )
-            ascending_context = (
+            pivot_ascending_context = (
                 (
                     _number(swing_pivots[-1].get("price"))
                     > _number(swing_pivots[-2].get("price"))
@@ -1946,6 +1946,7 @@ class StructurePlanBuilder:
                 )
                 and spacing >= max(0.1, _number(self._param("trend_hl_min_spacing_atr", 0.5))) * atr
             )
+            ascending_context = ascending_context and pivot_ascending_context
         if trend_phase in {"mature", "weakening"} and ascending_context:
             entry_mode, entry, confirmation_evidence = self._ascending_pullback_confirmation(
                 rows, structure, atr, direction_state,
