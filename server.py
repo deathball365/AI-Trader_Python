@@ -1109,6 +1109,7 @@ class TradingServer:
                 "holding_bars": 0,
                 "opened_at": position.opened_at or datetime.now(),
                 "position_attribution": attribution,
+                "setup_type": str(attribution.get("setup_type") or ""),
                 "position_policy_snapshot": attribution.get(
                     "position_policy_snapshot", {}
                 ),

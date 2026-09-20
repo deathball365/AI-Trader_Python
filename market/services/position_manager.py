@@ -670,7 +670,17 @@ class PositionManager:
                     )
             if kind == "target_trailing" and risk > 0:
                 target = float(position.get("take_profit") or 0)
-                distance = risk * float(rule.get("distance_r", 0.3) or 0.3)
+                setup_type = str(
+                    position.get("setup_type")
+                    or (position.get("position_attribution") or {}).get("setup_type")
+                    or ""
+                ).strip().lower()
+                distance_r = float(
+                    (rule.get("distance_by_setup") or {}).get(
+                        setup_type, rule.get("distance_r", 0.3)
+                    ) or 0.3
+                )
+                distance = risk * distance_r
                 target_reached = (
                     target > 0 and favorable <= target if direction == "sell"
                     else target > 0 and favorable >= target if direction == "buy"
@@ -684,7 +694,7 @@ class PositionManager:
                     )
                     if can_tighten:
                         candidates.append(candidate)
-                        add_event(kind, "triggered", f"达到策略止盈，启用 {float(rule.get('distance_r', 0.3)):g}R 目标跟踪", candidate_stop_loss=candidate)
+                        add_event(kind, "triggered", f"达到策略止盈，启用 {distance_r:g}R 目标跟踪", candidate_stop_loss=candidate)
             if kind == "max_holding_bars":
                 holding_bars = int(position.get("holding_bars", 0))
                 opened_at = position.get("opened_at")

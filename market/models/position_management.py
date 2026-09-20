@@ -78,7 +78,20 @@ def default_position_management_config() -> Dict:
              "cooldown_seconds": 30},
             {"type": "trailing_stop", "activation_r": 1.0,
              "distance_r": 0.6},
-            {"type": "target_trailing", "distance_r": 0.3},
+            {"type": "target_trailing", "distance_r": 0.3,
+             "distance_by_setup": {
+                 "range_lower_reversal": 0.6,
+                 "range_upper_reversal": 0.6,
+                 "range_false_breakout": 0.6,
+                 "range_breakout": 0.6,
+                 "triangle_breakout": 0.6,
+                 "structure_location_pullback": 0.5,
+                 "trend_continuation": 0.4,
+                 "structure_reversal": 0.5,
+                 "choch_reversal": 0.5,
+                 "pressure_reversal": 0.5,
+                 "pressure_zone_breakout": 0.6,
+             }},
             {"type": "partial_take_profit", "levels": [
                 {"trigger_r": 1.0, "close_percent": 30,
                  "move_sl": "break_even"},
@@ -243,6 +256,11 @@ def normalize_position_management_config(config: Optional[Dict]) -> Dict:
             rule["stages"] = sorted(stages, key=lambda item: item["activation_r"])
         elif rule_type == "target_trailing":
             rule["distance_r"] = _positive(rule.get("distance_r", 0.3), "目标跟踪距离R")
+            rule["distance_by_setup"] = {
+                str(key): _positive(value, f"{key}目标跟踪距离R")
+                for key, value in (rule.get("distance_by_setup") or {}).items()
+                if str(key).strip()
+            }
         elif rule_type == "break_even":
             rule["activation_r"] = _positive(rule.get("activation_r", 1), "保本启动R")
             rule["offset_r"] = _positive(rule.get("offset_r", 0), "保本偏移R", True)
