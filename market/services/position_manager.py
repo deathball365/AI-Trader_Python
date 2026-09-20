@@ -636,11 +636,17 @@ class PositionManager:
                     "close", reason="reverse_signal", events=events
                 )
             if kind == "profit_protection" and risk > 0:
-                if position.get("profit_protection_done"):
-                    continue
-                activation_r = float(rule.get("activation_r", 0.5) or 0)
-                if profit_r >= activation_r:
-                    stop_r = float(rule.get("stop_r", -0.25) or -0.25)
+                stages = rule.get("stages") or [{
+                    "activation_r": rule.get("activation_r", 0.5),
+                    "stop_r": rule.get("stop_r", -0.25),
+                }]
+                applied_stage = int(position.get("profit_protection_stage") or 0)
+                eligible = [(index, stage) for index, stage in enumerate(stages, start=1)
+                            if profit_r >= float(stage.get("activation_r", 0) or 0)]
+                if eligible and eligible[-1][0] > applied_stage:
+                    stage_index, stage = eligible[-1]
+                    activation_r = float(stage.get("activation_r", 0.5) or 0)
+                    stop_r = float(stage.get("stop_r", -0.25) or -0.25)
                     candidate = (
                         entry + risk * stop_r
                         if direction == "buy" else entry - risk * stop_r
@@ -655,12 +661,30 @@ class PositionManager:
                             kind, "triggered",
                             f"浮盈 {profit_r:.2f}R 达到盈利保护 {activation_r:g}R，止损调整至 {stop_r:g}R",
                             candidate_stop_loss=candidate,
+                            protection_stage=stage_index,
                         )
                 else:
                     add_event(
                         kind, "checked",
-                        f"浮盈 {profit_r:.2f}R，未达到盈利保护 {activation_r:g}R",
+                        "浮盈尚未达到下一档盈利保护",
                     )
+            if kind == "target_trailing" and risk > 0:
+                target = float(position.get("take_profit") or 0)
+                distance = risk * float(rule.get("distance_r", 0.3) or 0.3)
+                target_reached = (
+                    target > 0 and favorable <= target if direction == "sell"
+                    else target > 0 and favorable >= target if direction == "buy"
+                    else False
+                )
+                if target_reached:
+                    candidate = favorable - distance if direction == "buy" else favorable + distance
+                    can_tighten = (
+                        current_sl < candidate < price if direction == "buy"
+                        else price < candidate < current_sl
+                    )
+                    if can_tighten:
+                        candidates.append(candidate)
+                        add_event(kind, "triggered", f"达到策略止盈，启用 {float(rule.get('distance_r', 0.3)):g}R 目标跟踪", candidate_stop_loss=candidate)
             if kind == "max_holding_bars":
                 holding_bars = int(position.get("holding_bars", 0))
                 opened_at = position.get("opened_at")

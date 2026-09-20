@@ -1104,7 +1104,7 @@ class TradingServer:
                 "favorable_price": float(position.price_open),
                 "partial_levels_done": [],
                 "break_even_done": False,
-                "profit_protection_done": False,
+                "profit_protection_stage": 0,
                 "pending_stop_loss": 0.0,
                 "holding_bars": 0,
                 "opened_at": position.opened_at or datetime.now(),
@@ -1261,7 +1261,10 @@ class TradingServer:
                 if event.get("rule_type") == "break_even":
                     state["break_even_done"] = True
                 if event.get("rule_type") == "profit_protection":
-                    state["profit_protection_done"] = True
+                    state["profit_protection_stage"] = max(
+                        int(state.get("profit_protection_stage") or 0),
+                        int(event.get("protection_stage") or 0),
+                    )
             TradingServer._record_position_management_events(
                 self,
                 symbol, ticket, state, action.events
