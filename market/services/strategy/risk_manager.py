@@ -316,7 +316,8 @@ class RiskManager:
 
     def check_position_limit(self, symbol: str, strategy: TradingStrategy,
                             current_positions: int, same_direction: int,
-                            opposite_direction: int, action: str) -> Dict:
+                            opposite_direction: int, action: str,
+                            account_current_positions: int = None) -> Dict:
         """
         检查持仓限制
 
@@ -341,6 +342,15 @@ class RiskManager:
         if current_positions >= effective_max_positions:
             allowed = False
             warnings.append(f"已达到最大持仓数 {effective_max_positions}")
+
+        account_position_count = (
+            current_positions if account_current_positions is None
+            else int(account_current_positions)
+        )
+        account_limit_allowed = account_position_count < self._account_max_positions
+        if not account_limit_allowed:
+            allowed = False
+            warnings.append(f"账户已达到最大总持仓数 {self._account_max_positions}")
 
         # 检查同向持仓
         new_same_direction = same_direction + 1
@@ -367,6 +377,9 @@ class RiskManager:
             "opposite_direction": opposite_direction,
             "max_positions": effective_max_positions,
             "max_same_direction": strategy.max_same_direction,
+            "account_current_positions": account_position_count,
+            "account_max_positions": self._account_max_positions,
+            "strategy_current_positions": current_positions,
             "warnings": warnings,
         }
 

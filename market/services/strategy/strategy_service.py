@@ -917,24 +917,53 @@ class StrategyService:
     def _check_position_limits(self, symbol: str, strategy: TradingStrategy,
                                action: str) -> Dict:
         """检查持仓限制"""
-        current_positions = 0
-        same_direction = 0
-        opposite_direction = 0
+        account_positions = []
+        symbol_positions = []
+        strategy_positions = []
 
         if self._position_service:
-            positions = self._position_service.get_positions(symbol)
-            current_positions = len(positions)
-            for pos in positions:
-                # PositionData.to_dict() 返回 direction 字段
-                pos_direction = pos.get('direction', '')
-                if pos_direction == action:
-                    same_direction += 1
-                else:
-                    opposite_direction += 1
+            try:
+                account_positions = self._position_service.get_positions() or []
+            except TypeError as exc:
+                # Compatibility with lightweight position services that only
+                # expose symbol-scoped reads.
+                if "missing" not in str(exc):
+                    raise
+                account_positions = self._position_service.get_positions(symbol) or []
+            symbol_positions = self._position_service.get_positions(symbol) or []
+            strategy_id = str(strategy.strategy_id or "")
+            for pos in symbol_positions:
+                # New AIT positions carry AIT|<strategy_id>|<source_id> in
+                # the MT5 comment. Unattributed/history positions remain
+                # account-level only and must not consume this strategy's cap.
+                comment = str(pos.get("comment") or "")
+                parts = comment.split("|")
+                if len(parts) == 3 and parts[0] == "AIT" and parts[1] == strategy_id:
+                    strategy_positions.append(pos)
 
-        return self.risk_manager.check_position_limit(
-            symbol, strategy, current_positions, same_direction, opposite_direction, action
+        current_positions = len(strategy_positions)
+        same_direction = sum(
+            1 for pos in strategy_positions if pos.get("direction", "") == action
         )
+        opposite_direction = sum(
+            1 for pos in strategy_positions if pos.get("direction", "") != action
+        )
+
+        try:
+            return self.risk_manager.check_position_limit(
+                symbol, strategy, current_positions, same_direction,
+                opposite_direction, action,
+                account_current_positions=len(account_positions),
+            )
+        except TypeError as exc:
+            # Keep lightweight/custom risk managers compatible while the
+            # built-in manager supports the separate account-level count.
+            if "account_current_positions" not in str(exc):
+                raise
+            return self.risk_manager.check_position_limit(
+                symbol, strategy, current_positions, same_direction,
+                opposite_direction, action,
+            )
 
     def _generate_decision_reason(self, analysis: Dict, signal: TradingSignal) -> str:
         """生成决策理由"""
