@@ -665,6 +665,8 @@ void SendPositionsToPython(bool allSymbols = true)
       // 构建JSON请求体
       string jsonBody = "{";
       jsonBody += "\"symbol\":\"" + _Symbol + "\",";  // 当前品种
+      if(allSymbols)
+         jsonBody += "\"full_account_snapshot\":true,";
       jsonBody += "\"positions\":" + positions;
       jsonBody += "}";
 

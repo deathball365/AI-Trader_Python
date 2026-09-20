@@ -148,19 +148,29 @@ def create_position_routes(engine_manager: TradingEngineManager) -> APIRouter:
             data = await request.json()
             symbol = data.get('symbol', '')
             positions = data.get('positions', [])
+            full_account_snapshot = bool(data.get('full_account_snapshot', False))
 
             if not symbol:
                 return {"status": "error", "message": "缺少品种信息"}
 
-            # 使用新的持仓服务
             trading_server = engine_manager.get_engine_for_ea(identity)
-            result = trading_server.position_service.update_positions(symbol, positions)
+            if full_account_snapshot:
+                # The account-owner EA sends every open position across all
+                # symbols. Replace the complete snapshot so closed symbols
+                # are removed instead of lingering in the runtime cache.
+                result = trading_server.position_service.replace_all_positions(positions)
+            else:
+                result = trading_server.position_service.update_positions(symbol, positions)
+            symbol_positions = [
+                item for item in positions
+                if str(item.get("symbol") or symbol) == str(symbol)
+            ]
             loss_limit_tickets = _apply_single_position_loss_limit(
                 trading_server,
                 user_id=identity.user_id,
                 account_id=identity.account_id,
                 symbol=symbol,
-                positions=positions,
+                positions=symbol_positions,
                 account_repository=TradingAccountRepository(repositories.storage),
                 event_repository=repositories.position_events,
             )
@@ -169,7 +179,7 @@ def create_position_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 result["loss_limit_close_tickets"] = loss_limit_tickets
             try:
                 StructureTradePlanRepository().confirm_protection_for_account(
-                    identity.user_id, identity.account_id, symbol, positions,
+                    identity.user_id, identity.account_id, symbol, symbol_positions,
                 )
             except Exception as exc:
                 logger.warning("结构计划保护止损确认失败: %s", exc)
