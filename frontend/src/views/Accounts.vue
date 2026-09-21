@@ -1318,9 +1318,13 @@ async function loadPaperRuntimeLogs(accountId) {
   try {
     const data = await accountAPI.getPaperRuntimeLogs(accountId, 1, 30)
     if (!paperDetail.value || paperDetail.value.account?.account_id !== accountId) return
+    const current = paperDetail.value
     paperDetail.value = {
-      ...paperDetail.value,
+      ...current,
       runtime_logs: data.runtime_logs || [],
+      today_trade_stats: current.today_trade_stats || {},
+      execution_funnel: current.execution_funnel || {},
+      strategy_performance: current.strategy_performance || [],
     }
   } catch (error) {
     messageType.value = 'error'
@@ -1356,16 +1360,22 @@ async function openPaperRuntime(account) {
     const data = await accountAPI.getPaperDetail(
       account.account_id, 1, 30, ...equityRangeParams(paperEquityRange.value)
     )
-    paperDetail.value = data.detail
+    paperDetail.value = {
+      ...data.detail,
+      today_trade_stats: {},
+      execution_funnel: {},
+      strategy_performance: [],
+    }
     expandedPaperPositions.value = new Set()
     selectedStrategyId.value = ''
     paperReport.value = null
     reportStrategyId.value = ''
     paperDialog.value = true
     await nextTick()
-    // 策略上下文只服务于绑定/筛选，不阻塞运行台首屏；后台加载失败也不影响账户详情。
+    // 策略上下文只服务于绑定/筛选，不阻塞运行台首屏。
     loadPaperContext().catch(() => {})
-    applyRuntimeStats(paperDetail, account.account_id).catch(() => {})
+    // 漏斗来自 runtime-stats；必须等待，失败时给出明确提示，避免假 0。
+    await applyRuntimeStats(paperDetail, account.account_id)
     loadPaperRuntimeLogs(account.account_id).catch(() => {})
   } catch (error) {
     messageType.value = 'error'
@@ -1379,13 +1389,18 @@ async function openLiveRuntime(account) {
   runtimeLoadingId.value = account.account_id
   try {
     const data = await accountAPI.getLiveMonitoring(account.account_id, ...equityRangeParams(liveEquityRange.value))
-    liveDetail.value = data.detail
+    liveDetail.value = {
+      ...data.detail,
+      today_trade_stats: {},
+      execution_funnel: {},
+      strategy_performance: [],
+    }
     expandedLivePositions.value = new Set()
     liveDialog.value = true
     clearInterval(liveRefreshTimer)
     liveRefreshTimer = setInterval(refreshLiveDetail, 6000)
     await nextTick()
-    applyRuntimeStats(liveDetail, account.account_id).catch(() => {})
+    await applyRuntimeStats(liveDetail, account.account_id)
   } catch (error) {
     messageType.value = 'error'
     message.value = error.response?.data?.detail || '加载实盘运行台失败'

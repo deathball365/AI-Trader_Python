@@ -5,9 +5,12 @@ from routes_accounts import _execution_funnel
 
 
 class _Storage:
-    def __init__(self, plans=None, audits=None):
+    def __init__(self, plans=None, audits=None, deployments=None):
         self.plans = plans or {"plans": 12, "directions": 8}
         self.audits = audits or []
+        self.deployments = deployments if deployments is not None else [
+            {"symbol": "GOLD#", "strategy_id": "s1"},
+        ]
 
     def fetchone(self, sql, params=()):
         if "FROM structure_trade_plans" in sql:
@@ -15,6 +18,8 @@ class _Storage:
         raise AssertionError(sql)
 
     def fetchall(self, sql, params=()):
+        if "FROM strategy_deployments" in sql:
+            return list(self.deployments)
         if "FROM execution_gate_audits" in sql and "GROUP BY status, reason_code" in sql:
             return list(self.audits)
         raise AssertionError(sql)

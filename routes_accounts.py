@@ -43,30 +43,57 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
     beijing = ZoneInfo("Asia/Shanghai")
     today_beijing = datetime.now(beijing).date()
     since = int(datetime.combine(today_beijing, datetime_time.min, tzinfo=beijing).timestamp())
-    # 结构计划由行情/结构层按用户公共作用域生成（account_id=0），
-    # 执行记录才按具体账户落库。漏斗需要把公共计划纳入当前账户的候选
-    # 统计，否则实盘账户明明有计划，页面却会显示计划数=0。
-    plan_account_clause = (
-        "p.account_id = 0 AND EXISTS ("
-        "SELECT 1 FROM strategy_deployments d "
-        "WHERE d.user_id = p.user_id AND d.account_id = ? "
-        # 结构层公共计划可能没有 strategy_id；此时按精确品种匹配当前账户
-        # 的部署。若计划带有策略 ID，则继续要求部署策略一致。
-        "AND d.symbol = p.symbol "
-        "AND (p.strategy_id = '' OR d.strategy_id = p.strategy_id) "
-        "AND d.status IN ('active','paused','pending'))"
-    )
-    # SQL 中第一个占位符是公共计划的 user_id，第二个才是当前账户的
-    # deployment.account_id。此前顺序反了，导致所有账户的计划数都被查成 0。
-    plan_params = (int(user_id), int(account_id), since)
-    funnel_row = storage.fetchone(
-        "SELECT "
-        "COUNT(DISTINCT CASE WHEN p.plan_id<>'' THEN p.plan_id END) AS plans, "
-        "COUNT(DISTINCT CASE WHEN p.direction IN ('buy','sell') THEN p.plan_id END) AS directions "
-        "FROM structure_trade_plans p "
-        f"WHERE p.user_id=? AND {plan_account_clause} AND p.created_at>=?",
-        plan_params,
-    ) or {}
+    user_id = int(user_id)
+    account_id = int(account_id)
+    # 结构计划由行情/结构层按用户公共作用域生成（account_id=0）。
+    # 先取出本账户部署品种，再统计公共计划，避免对大表逐行 EXISTS。
+    deployment_rows = storage.fetchall(
+        """
+        SELECT DISTINCT symbol, strategy_id
+        FROM strategy_deployments
+        WHERE user_id=? AND account_id=?
+          AND status IN ('active','paused','pending')
+        """,
+        (user_id, account_id),
+    ) or []
+    symbols = sorted({
+        str(row.get("symbol") or "").strip().upper()
+        for row in deployment_rows
+        if str(row.get("symbol") or "").strip()
+    })
+    strategy_ids = sorted({
+        str(row.get("strategy_id") or "").strip()
+        for row in deployment_rows
+        if str(row.get("strategy_id") or "").strip()
+    })
+    funnel_row = {"plans": 0, "directions": 0}
+    if symbols:
+        symbol_placeholders = ", ".join("?" for _ in symbols)
+        # Public market-structure plans use empty strategy_id. Strategy-scoped
+        # rows, if any, still match only when this account deploys that strategy.
+        strategy_clause = "p.strategy_id = ''"
+        plan_params: list = [user_id, *symbols, since]
+        if strategy_ids:
+            strategy_placeholders = ", ".join("?" for _ in strategy_ids)
+            strategy_clause = (
+                f"(p.strategy_id = '' OR p.strategy_id IN ({strategy_placeholders}))"
+            )
+            plan_params = [user_id, *symbols, *strategy_ids, since]
+        funnel_row = storage.fetchone(
+            f"""
+            SELECT
+              COUNT(DISTINCT CASE WHEN p.plan_id<>'' THEN p.plan_id END) AS plans,
+              COUNT(DISTINCT CASE
+                WHEN p.direction IN ('buy','sell') THEN p.plan_id END) AS directions
+            FROM structure_trade_plans p
+            WHERE p.user_id=?
+              AND p.account_id=0
+              AND p.symbol IN ({symbol_placeholders})
+              AND {strategy_clause}
+              AND p.created_at>=?
+            """,
+            tuple(plan_params),
+        ) or funnel_row
     params = (int(user_id), int(account_id), since)
     # Trigger/order counts come from execution_gate_audits, not
     # structure_plan_executions.  Live/Paper persist every actionable Tick
