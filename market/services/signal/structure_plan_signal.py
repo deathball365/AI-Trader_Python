@@ -18,7 +18,8 @@ from .structure_plan.price_calculator import (
 )
 from .structure_plan.lifecycle import (
     invalidate_reason, close_invalidate_reason, opportunity_still_valid,
-    resolve_conflicts, stage_for,
+    resolve_conflicts, stage_for, distance_invalidate_reason,
+    next_outside_zone_closes, max_entry_zone_widths,
 )
 from .structure_plan.config_resolver import resolve as resolve_plan_config
 from ..market_event_risk_service import active_event
@@ -53,6 +54,9 @@ STRUCTURE_PLAN_DEFAULT_CONFIG = {
     "location_reclaim_min_close_extension_atr": 0.1,
     "stop_buffer_atr": 0.25, "target_buffer_atr": 0.1,
     "max_entry_distance_pct": 0.8,
+    # Waiting plans retire once price drifts too far from the frozen entry.
+    # 3.5 zone-widths keeps nearby pullbacks alive without parking stale FX plans.
+    "max_entry_zone_widths": 3.5,
     "min_real_risk_reward": 1.2, "trend_min_real_risk_reward": 0.5,
     # Hidden safety ceiling; normal lifecycle is governed by structure events.
     "max_plan_lifetime_bars": 100,
@@ -2097,9 +2101,17 @@ class StructurePlanSignalGenerator:
             plans = self._apply_event_risk(plans, resolved_config, symbol, period, int(time.time()))
             close_price = _number(rows[-1].get("close") or rows[-1].get("close_price"))
             atr = _number((result or {}).get("atr"))
-            self._invalidate_stale_closed_plans(
+            dead_opportunity_ids = self._invalidate_stale_closed_plans(
                 symbol, period, source_id, result, close_price, atr, plans,
             )
+            if dead_opportunity_ids:
+                # A frozen same-opportunity waiter can fail closed-bar checks
+                # while the builder still emits the same opportunity_id. Drop
+                # those ids so replace_scope cannot recreate the dead thesis.
+                plans = [
+                    plan for plan in plans
+                    if str(plan.get("opportunity_id") or "") not in dead_opportunity_ids
+                ]
             plans = self.repository.replace_scope(
                 self.user_id, 0, "",
                 source_id, symbol, period, plans, bar_time,
@@ -2113,35 +2125,50 @@ class StructurePlanSignalGenerator:
     def _invalidate_stale_closed_plans(
         self, symbol: str, period: str, source_id: str, structure: Dict,
         close_price: float, atr: float, incoming_plans: List[Dict],
-    ) -> None:
-        """Retire waiting plans whose entry thesis died on this closed bar."""
+    ) -> set:
+        """Retire waiting plans whose entry thesis died on this closed bar.
+
+        Same-opportunity retention may keep plan_id/entry frozen, but every
+        closed bar still re-checks protection, distance and entry thesis. Dead
+        opportunity ids are returned so replace_scope cannot resurrect them.
+        """
         current = self.repository.list_current(
             self.user_id, 0, "", source_id, symbol, period,
         )
-        incoming_active_ids = {
-            str(plan.get("opportunity_id") or "")
-            for plan in incoming_plans
-            if str(plan.get("status") or "") == "active"
-            and str(plan.get("direction") or "") in {"buy", "sell"}
-            and str(plan.get("opportunity_id") or "")
-        }
+        dead_opportunity_ids = set()
+        period_name = str(period or "").upper()
         for plan in current:
             status = str(plan.get("status") or "")
-            if status not in {"active", "event_suppressed"}:
+            direction = str(plan.get("direction") or "")
+            # Directional watching plans share the same retirement rules as
+            # actionable waiters. Pure no_trade snapshots are observations only.
+            if status not in {"active", "event_suppressed", "watching"}:
+                continue
+            if direction not in {"buy", "sell"}:
                 continue
             plan_id = str(plan.get("plan_id") or "")
             opportunity_id = str(plan.get("opportunity_id") or "")
-            if opportunity_id and opportunity_id in incoming_active_ids:
-                # Same opportunity is being refreshed; keep/replace via scope.
-                continue
-            reason = close_invalidate_reason(plan, structure, close_price, atr)
+            plan = dict(plan)
+            plan.setdefault("period", period_name)
+            # Evaluate against the already-persisted outside streak, then decide
+            # whether this close increments or clears it.
+            probe = dict(plan)
+            reason = close_invalidate_reason(probe, structure, close_price, atr)
+            if not reason and not opportunity_still_valid(
+                probe, structure, close_price, atr,
+            ):
+                reason = "买点已不再成立，取消等待中的结构计划"
             if reason:
                 self.repository.invalidate_plan(plan_id, reason)
+                if opportunity_id:
+                    dead_opportunity_ids.add(opportunity_id)
                 continue
-            if not opportunity_still_valid(plan, structure, close_price, atr):
-                self.repository.invalidate_plan(
-                    plan_id, "买点已不再成立，取消等待中的结构计划",
-                )
+            streak = next_outside_zone_closes(plan, close_price)
+            changes = {"outside_zone_closes": streak, "period": period_name}
+            if streak != int(plan.get("outside_zone_closes") or 0):
+                plan.update(changes)
+                self.repository.update_payload(plan_id, changes)
+        return dead_opportunity_ids
 
     def _plans(self, symbol: str, strategy, config: Dict) -> List[Dict]:
         period = str(config.get("period") or "M5").upper()
@@ -2173,6 +2200,20 @@ class StructurePlanSignalGenerator:
                 if price < lower or price > upper:
                     plan["boundary_state"] = "left_boundary"
                     self.repository.update_payload(plan.get("plan_id"), {"boundary_state": "left_boundary"})
+            # A reclaim that has drifted well outside its zone must re-touch.
+            if str(plan.get("entry_mode") or "") == "touch_and_reclaim" and (
+                plan.get("touch_seen")
+                or str(plan.get("touch_state") or "") in {"touched", "reclaimed"}
+            ):
+                if distance_invalidate_reason(plan, price):
+                    changes = {
+                        "touch_seen": False,
+                        "touch_state": "unvisited",
+                        "boundary_state": "left_boundary",
+                    }
+                    plan.update(changes)
+                    self._tick_state[str(plan.get("plan_id") or "")] = {"touched": False}
+                    self.repository.update_payload(plan.get("plan_id"), changes)
             return False
         mode = str(plan.get("entry_mode") or "")
         if mode in {"breakout_retest", "touch_or_near", "trend_pullback_reclaim"}:
@@ -2188,23 +2229,53 @@ class StructurePlanSignalGenerator:
         if mode != "touch_and_reclaim":
             return False
         plan_id = str(plan.get("plan_id") or "")
-        state = self._tick_state.setdefault(plan_id, {"touched": False})
         entry = _number(plan.get("entry_price"))
         direction = str(plan.get("direction") or "")
+        if entry <= 0 or direction not in {"buy", "sell"}:
+            return False
+        # Persist touch progress on the plan itself. Process memory is only a
+        # hot cache; restarts and multi-engine hosts must not lose "already
+        # touched" evidence for an active reclaim waiter.
+        memory = self._tick_state.setdefault(plan_id, {})
+        touched = bool(
+            memory.get("touched")
+            or plan.get("touch_seen")
+            or str(plan.get("touch_state") or "") in {"touched", "reclaimed"}
+            or str(plan.get("boundary_state") or "") in {"touched", "reclaimed", "triggered"}
+        )
         if direction == "buy" and price <= entry:
-            state["touched"] = True
-            if str(plan.get("setup_type") or "").startswith("range_"):
-                self.repository.update_payload(plan.get("plan_id"), {"boundary_state": "touched"})
+            touched = True
         elif direction == "sell" and price >= entry:
-            state["touched"] = True
-            if str(plan.get("setup_type") or "").startswith("range_"):
-                self.repository.update_payload(plan.get("plan_id"), {"boundary_state": "touched"})
-        result = bool(state["touched"] and (
+            touched = True
+        if touched and not (
+            memory.get("touched") or plan.get("touch_seen")
+            or str(plan.get("touch_state") or "") in {"touched", "reclaimed"}
+        ):
+            changes = {
+                "touch_seen": True,
+                "touch_state": "touched",
+                "touched_price": float(price),
+                "boundary_state": "touched",
+            }
+            plan.update(changes)
+            memory["touched"] = True
+            self.repository.update_payload(plan_id, changes)
+        else:
+            memory["touched"] = bool(touched)
+            plan["touch_seen"] = bool(touched)
+        result = bool(touched and (
             (direction == "buy" and price >= entry)
             or (direction == "sell" and price <= entry)
         ))
-        if result and str(plan.get("setup_type") or "").startswith("range_"):
-            self.repository.update_payload(plan.get("plan_id"), {"boundary_state": "triggered"})
+        if result:
+            changes = {
+                "touch_seen": True,
+                "touch_state": "reclaimed",
+                "boundary_state": "triggered",
+            }
+            plan.update(changes)
+            memory["touched"] = True
+            self.repository.update_payload(plan_id, changes)
         return result
 
     def _triggered_pressure_breakout(self, plan: Dict, price: float) -> bool:
@@ -2326,46 +2397,8 @@ class StructurePlanSignalGenerator:
 
     def _event_invalidated(self, plan: Dict, price: float) -> str:
         """Evaluate cheap Tick-time invalidations from the persisted snapshot."""
-        reason = invalidate_reason(plan, price)
-        if reason:
-            return reason
-        # Drop plans that have drifted too far from their entry to remain a
-        # realistic waiting opportunity. This prevents stale BTC/US100/OIL
-        # plans from occupying the active set after price has already left.
-        entry = _number(plan.get("entry_price"))
-        if entry > 0 and price > 0:
-            zone = plan.get("entry_zone") or {}
-            lower = _number(zone.get("lower"))
-            upper = _number(zone.get("upper"))
-            zone_width = abs(upper - lower) if upper > lower > 0 else 0.0
-            # Prefer zone-relative distance so high-priced instruments and
-            # test fixtures with wide structural zones are not false-staled.
-            if zone_width > 0:
-                distance_ratio = abs(price - entry) / zone_width
-                max_ratio = max(
-                    3.0,
-                    _number((plan.get("validation_evidence") or {}).get("max_entry_zone_widths"))
-                    or _number(STRUCTURE_PLAN_DEFAULT_CONFIG.get("max_entry_zone_widths", 8.0)),
-                )
-                if distance_ratio > max_ratio:
-                    return (
-                        f"价格距离计划入场 {distance_ratio:.1f} 倍入场区宽度，"
-                        f"超过最大等待距离 {max_ratio:.1f} 倍"
-                    )
-            else:
-                distance_pct = abs(price - entry) / entry * 100.0
-                configured = _number((plan.get("validation_evidence") or {}).get("max_entry_distance_pct"))
-                if configured <= 0:
-                    configured = _number(STRUCTURE_PLAN_DEFAULT_CONFIG.get("max_entry_distance_pct", 0.8))
-                if configured <= 0:
-                    configured = 0.8
-                max_distance_pct = max(0.3, configured)
-                if distance_pct > max_distance_pct:
-                    return (
-                        f"价格距离计划入场 {distance_pct:.2f}% ，"
-                        f"超过最大等待距离 {max_distance_pct:.2f}%"
-                    )
-        return ""
+        # invalidate_reason already includes the shared distance rule.
+        return invalidate_reason(plan, price)
 
     def _tick_stop_gate(
         self, plan: Dict, price: float, effective_config: Optional[Dict] = None,

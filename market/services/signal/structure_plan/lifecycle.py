@@ -4,6 +4,18 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 
+DEFAULT_MAX_ENTRY_ZONE_WIDTHS = 3.5
+DEFAULT_MAX_ENTRY_DISTANCE_PCT = 0.8
+OUTSIDE_ZONE_CLOSE_LIMITS = {
+    "M1": 5,
+    "M5": 3,
+    "M15": 2,
+    "H1": 2,
+    "H4": 2,
+    "D1": 2,
+}
+
+
 def invalidate_reason(plan: Dict, price: float) -> str:
     """Return the event that invalidates a plan at Tick time, if any."""
     rules = set(plan.get("tick_invalidation_rules") or [])
@@ -33,6 +45,9 @@ def invalidate_reason(plan: Dict, price: float) -> str:
     if "triangle_pattern_break" in rules and setup.startswith("triangle_") and top > bottom > 0:
         if (direction == "buy" and price < bottom) or (direction == "sell" and price > top):
             return "triangle_pattern_broken"
+    distance_reason = distance_invalidate_reason(plan, price)
+    if distance_reason:
+        return distance_reason
     return ""
 
 
@@ -42,6 +57,61 @@ def _as_float(value, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return float(default)
     return number if number == number else float(default)
+
+
+def max_entry_zone_widths(plan: Optional[Dict] = None) -> float:
+    plan = plan or {}
+    evidence = plan.get("validation_evidence") or {}
+    configured = _as_float(evidence.get("max_entry_zone_widths"))
+    if configured <= 0:
+        configured = _as_float(plan.get("max_entry_zone_widths"))
+    if configured <= 0:
+        configured = DEFAULT_MAX_ENTRY_ZONE_WIDTHS
+    return max(1.0, configured)
+
+
+def max_entry_distance_pct(plan: Optional[Dict] = None) -> float:
+    plan = plan or {}
+    evidence = plan.get("validation_evidence") or {}
+    configured = _as_float(evidence.get("max_entry_distance_pct"))
+    if configured <= 0:
+        configured = _as_float(plan.get("max_entry_distance_pct"))
+    if configured <= 0:
+        configured = DEFAULT_MAX_ENTRY_DISTANCE_PCT
+    return max(0.3, configured)
+
+
+def outside_zone_close_limit(period: str = "") -> int:
+    return int(OUTSIDE_ZONE_CLOSE_LIMITS.get(str(period or "").upper(), 3))
+
+
+def distance_invalidate_reason(plan: Dict, price: float) -> str:
+    """Shared far-from-entry retirement rule for Tick and closed-bar paths."""
+    entry = _as_float(plan.get("entry_price"))
+    price = _as_float(price)
+    if entry <= 0 or price <= 0:
+        return ""
+    zone = plan.get("entry_zone") or {}
+    lower = _as_float(zone.get("lower"))
+    upper = _as_float(zone.get("upper"))
+    zone_width = abs(upper - lower) if upper > lower > 0 else 0.0
+    if zone_width > 0:
+        distance_ratio = abs(price - entry) / zone_width
+        max_ratio = max_entry_zone_widths(plan)
+        if distance_ratio > max_ratio:
+            return (
+                f"价格距离计划入场 {distance_ratio:.1f} 倍入场区宽度，"
+                f"超过最大等待距离 {max_ratio:.1f} 倍"
+            )
+        return ""
+    distance_pct = abs(price - entry) / entry * 100.0
+    max_distance_pct = max_entry_distance_pct(plan)
+    if distance_pct > max_distance_pct:
+        return (
+            f"价格距离计划入场 {distance_pct:.2f}% ，"
+            f"超过最大等待距离 {max_distance_pct:.2f}%"
+        )
+    return ""
 
 
 def close_invalidate_reason(
@@ -112,8 +182,24 @@ def close_invalidate_reason(
         # Segment change means the original trade thesis belongs to a finished
         # structure. Keep only if a newer active opportunity replaces it via
         # supersede; otherwise retire the orphaned waiter.
-        if str(plan.get("status") or "") in {"active", "event_suppressed"}:
+        if str(plan.get("status") or "") in {"active", "event_suppressed", "watching"}:
             return "结构段已切换，原交易机会失效"
+
+    distance_reason = distance_invalidate_reason(plan, close_price)
+    if distance_reason:
+        return distance_reason
+
+    zone = plan.get("entry_zone") or {}
+    lower = _as_float(zone.get("lower"))
+    upper = _as_float(zone.get("upper"))
+    if upper > lower > 0 and not (lower <= close_price <= upper):
+        streak = int(plan.get("outside_zone_closes") or 0) + 1
+        limit = outside_zone_close_limit(str(plan.get("period") or ""))
+        if streak >= limit:
+            return (
+                f"连续 {streak} 根收盘离开入场区，"
+                f"超过等待上限 {limit} 根"
+            )
 
     return ""
 
@@ -134,16 +220,6 @@ def opportunity_still_valid(
     close_price = _as_float(close_price)
     if entry <= 0 or close_price <= 0:
         return False
-    zone = plan.get("entry_zone") or {}
-    lower = _as_float(zone.get("lower"))
-    upper = _as_float(zone.get("upper"))
-    zone_width = abs(upper - lower) if upper > lower > 0 else 0.0
-    if zone_width > 0:
-        if abs(close_price - entry) / zone_width > 8.0:
-            return False
-    else:
-        if abs(close_price - entry) / entry * 100.0 > 0.8:
-            return False
     structure = structure or {}
     plan_segment = str(
         plan.get("structure_segment_id")
@@ -154,6 +230,19 @@ def opportunity_still_valid(
     if plan_segment and current_segment and plan_segment != current_segment:
         return False
     return True
+
+
+def next_outside_zone_closes(plan: Dict, close_price: float) -> int:
+    """Update helper for consecutive closes outside the entry zone."""
+    zone = plan.get("entry_zone") or {}
+    lower = _as_float(zone.get("lower"))
+    upper = _as_float(zone.get("upper"))
+    close_price = _as_float(close_price)
+    if not (upper > lower > 0 and close_price > 0):
+        return 0
+    if lower <= close_price <= upper:
+        return 0
+    return int(plan.get("outside_zone_closes") or 0) + 1
 
 
 def resolve_conflicts(plans: List[Dict]) -> List[Dict]:

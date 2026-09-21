@@ -14,9 +14,18 @@ from typing import Dict, List, Optional
 
 class ExecutionGateAuditRepository:
     INACTIVE_REASON_CODES = frozenset({"no_direction", "no_new_trigger"})
+    # Account-level blocks can fire on every Tick across many symbols. Keep one
+    # durable episode, but do not rewrite MySQL on every quote while unchanged.
+    THROTTLED_REASON_CODES = frozenset({
+        "trading_disabled",
+        "account_disabled",
+        "automation_disabled",
+    })
+    THROTTLE_SECONDS = 60
 
     def __init__(self, storage):
         self.storage = storage
+        self._last_write_at = {}
 
     @staticmethod
     def audit_id(
@@ -63,6 +72,13 @@ class ExecutionGateAuditRepository:
             status=normalized_status, reason_code=normalized_reason,
             aggregate=aggregate,
         )
+        if (
+            aggregate
+            and normalized_reason in self.THROTTLED_REASON_CODES
+        ):
+            last_write = int(self._last_write_at.get(audit_id) or 0)
+            if last_write and now - last_write < self.THROTTLE_SECONDS:
+                return audit_id
         occurrence_update = (
             "occurrence_count=execution_gate_audits.occurrence_count + 1,"
             if aggregate else
@@ -98,6 +114,7 @@ class ExecutionGateAuditRepository:
                 now, now, 1, str(tick_id), now, now,
             ),
         )
+        self._last_write_at[audit_id] = now
         return audit_id
 
     def list_for_plans(self, user_id: int, plan_ids: List[str]) -> List[Dict]:

@@ -1324,11 +1324,25 @@ class TradingServer:
                     symbol, period, strategy, structure
                 )
                 refreshed += len(plans)
-                self.event_bus.publish(ApplicationEvent(
-                    STRUCTURE_PLAN_CREATED,
-                    {"period": period, "count": len(plans), "strategy_id": strategy.strategy_id},
-                    int(self.user_id or 0), 0, str(symbol or ""),
-                ))
+                actionable = [
+                    plan for plan in (plans or [])
+                    if str(plan.get("status") or "") == "active"
+                    and str(plan.get("direction") or "") in {"buy", "sell"}
+                    and float(plan.get("entry_price") or 0) > 0
+                ]
+                # no_trade / watch-only refreshes are normal and high frequency.
+                # Persist audit events only when an actionable waiter exists.
+                if actionable:
+                    self.event_bus.publish(ApplicationEvent(
+                        STRUCTURE_PLAN_CREATED,
+                        {
+                            "period": period,
+                            "count": len(actionable),
+                            "strategy_id": strategy.strategy_id,
+                            "actionable": True,
+                        },
+                        int(self.user_id or 0), 0, str(symbol or ""),
+                    ))
             except Exception as exc:
                 print(
                     f"[TradingServer] 刷新结构交易计划失败: "
