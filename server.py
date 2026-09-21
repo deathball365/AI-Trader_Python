@@ -1755,6 +1755,11 @@ class TradingServer:
         with self.lock:
             raw_items = self._close_position_instructions.get(symbol, [])
             self._close_position_instructions[symbol] = []
+            open_tickets = {
+                int(position.ticket)
+                for position in self.position_service.get_position_objects(symbol)
+                if int(getattr(position, "ticket", 0) or 0) > 0
+            }
             tickets = []
             for raw_item in raw_items:
                 if isinstance(raw_item, dict):
@@ -1778,8 +1783,23 @@ class TradingServer:
                         "instruction_id": f"position-close-{ticket}",
                         "run_id": "",
                     }
-                if ticket > 0:
-                    tickets.append(item)
+                if ticket <= 0:
+                    continue
+                if ticket not in open_tickets:
+                    if self._runtime_repository:
+                        instruction_id = str(
+                            item.get("instruction_id")
+                            or f"position-close-{ticket}"
+                        )
+                        self._runtime_repository.upsert_entity(
+                            "close_instruction",
+                            instruction_id,
+                            dict(item, status="canceled", error_message="持仓已平，停止重复平仓"),
+                            symbol=symbol,
+                            status="canceled",
+                        )
+                    continue
+                tickets.append(item)
             if self._runtime_repository:
                 now_ts = int(__import__("time").time())
                 for item in tickets:
