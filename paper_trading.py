@@ -1280,18 +1280,31 @@ class PaperTradingService:
             self._quotes[(user_id, symbol)] = (bid, ask)
             account_rows = self.storage.fetchall(
                 """
-                SELECT DISTINCT a.id
+                SELECT a.id
                 FROM trading_accounts a
-                LEFT JOIN strategy_deployments d ON d.account_id = a.id
-                LEFT JOIN paper_orders o ON o.account_id = a.id
-                    AND o.symbol = ? AND o.status = 'pending'
-                LEFT JOIN paper_positions p ON p.account_id = a.id
-                    AND p.symbol = ? AND p.status = 'open'
                 WHERE a.user_id = ? AND a.account_type = 'paper'
                   AND a.status = 'active' AND a.enabled = 1
-                  AND (d.symbol = ? OR o.order_id IS NOT NULL OR p.position_id IS NOT NULL)
+                  AND (
+                    EXISTS (
+                        SELECT 1 FROM paper_orders o
+                        WHERE o.account_id = a.id
+                          AND o.symbol = ? AND o.status = 'pending'
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM paper_positions p
+                        WHERE p.account_id = a.id
+                          AND p.symbol = ? AND p.status = 'open'
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM strategy_deployments d
+                        WHERE d.account_id = a.id
+                          AND d.status = 'active'
+                          AND d.execution_mode = 'paper'
+                          AND d.symbol = ?
+                    )
+                  )
                 """,
-                (symbol, symbol, user_id, symbol),
+                (user_id, symbol, symbol, symbol),
             )
             summary = {"filled": 0, "closed": 0, "rejected": 0}
             for row in account_rows:

@@ -78,11 +78,20 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 identity.user_id, symbol, float(price), float(price),
                 pivots=pivots, structures=structures,
             )
-            engine_manager.paper_trading.process_strategy_signals(
+            created = engine_manager.paper_trading.process_strategy_signals(
                 identity.user_id, symbol, price, server.strategy_service,
                 quote_account_id=identity.account_id,
                 execution_context=tick_context,
             )
+            # Paper orders are created as pending and previously waited for the
+            # next EA quote. If that quote was missed or the account selector
+            # skipped the pending row, the order timed out in 60s. Fill on the
+            # same quote immediately after creation.
+            if created:
+                engine_manager.paper_trading.process_tick(
+                    identity.user_id, symbol, float(price), float(price),
+                    pivots=pivots, structures=structures,
+                )
         except Exception as exc:
             print(f"[EA] 后台模拟Tick处理失败: {exc}")
 
