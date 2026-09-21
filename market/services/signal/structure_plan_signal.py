@@ -49,6 +49,7 @@ STRUCTURE_PLAN_DEFAULT_CONFIG = {
     "location_reclaim_min_body_atr": 0.3,
     "location_reclaim_min_close_extension_atr": 0.1,
     "stop_buffer_atr": 0.25, "target_buffer_atr": 0.1,
+    "max_entry_distance_pct": 0.8,
     "min_real_risk_reward": 1.2, "trend_min_real_risk_reward": 0.5,
     # Hidden safety ceiling; normal lifecycle is governed by structure events.
     "max_plan_lifetime_bars": 100,
@@ -2133,9 +2134,12 @@ class StructurePlanSignalGenerator:
             return False
         mode = str(plan.get("entry_mode") or "")
         if mode in {"breakout_retest", "touch_or_near", "trend_pullback_reclaim"}:
-            if str(plan.get("setup_type") or "").startswith("range_") and str(plan.get("boundary_state") or "") == "triggered":
-                return False
-            if str(plan.get("setup_type") or "").startswith("range_"):
+            # Boundary state is progress metadata for the UI/lifecycle, not a
+            # one-shot latch. A range plan must keep triggering while price
+            # remains inside the entry zone until an account successfully
+            # claims/orders it; otherwise a transient Tick marks it triggered
+            # and every subsequent Tick refuses the same still-active plan.
+            if str(plan.get("setup_type") or "").startswith("range_") and str(plan.get("boundary_state") or "") != "triggered":
                 plan["boundary_state"] = "triggered"
                 self.repository.update_payload(plan.get("plan_id"), {"boundary_state": "triggered"})
             return True
@@ -2280,7 +2284,46 @@ class StructurePlanSignalGenerator:
 
     def _event_invalidated(self, plan: Dict, price: float) -> str:
         """Evaluate cheap Tick-time invalidations from the persisted snapshot."""
-        return invalidate_reason(plan, price)
+        reason = invalidate_reason(plan, price)
+        if reason:
+            return reason
+        # Drop plans that have drifted too far from their entry to remain a
+        # realistic waiting opportunity. This prevents stale BTC/US100/OIL
+        # plans from occupying the active set after price has already left.
+        entry = _number(plan.get("entry_price"))
+        if entry > 0 and price > 0:
+            zone = plan.get("entry_zone") or {}
+            lower = _number(zone.get("lower"))
+            upper = _number(zone.get("upper"))
+            zone_width = abs(upper - lower) if upper > lower > 0 else 0.0
+            # Prefer zone-relative distance so high-priced instruments and
+            # test fixtures with wide structural zones are not false-staled.
+            if zone_width > 0:
+                distance_ratio = abs(price - entry) / zone_width
+                max_ratio = max(
+                    3.0,
+                    _number((plan.get("validation_evidence") or {}).get("max_entry_zone_widths"))
+                    or _number(STRUCTURE_PLAN_DEFAULT_CONFIG.get("max_entry_zone_widths", 8.0)),
+                )
+                if distance_ratio > max_ratio:
+                    return (
+                        f"价格距离计划入场 {distance_ratio:.1f} 倍入场区宽度，"
+                        f"超过最大等待距离 {max_ratio:.1f} 倍"
+                    )
+            else:
+                distance_pct = abs(price - entry) / entry * 100.0
+                configured = _number((plan.get("validation_evidence") or {}).get("max_entry_distance_pct"))
+                if configured <= 0:
+                    configured = _number(STRUCTURE_PLAN_DEFAULT_CONFIG.get("max_entry_distance_pct", 0.8))
+                if configured <= 0:
+                    configured = 0.8
+                max_distance_pct = max(0.3, configured)
+                if distance_pct > max_distance_pct:
+                    return (
+                        f"价格距离计划入场 {distance_pct:.2f}% ，"
+                        f"超过最大等待距离 {max_distance_pct:.2f}%"
+                    )
+        return ""
 
     def _tick_stop_gate(
         self, plan: Dict, price: float, effective_config: Optional[Dict] = None,
