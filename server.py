@@ -1483,10 +1483,27 @@ class TradingServer:
         queued = self._position_update_instructions.get(symbol, {})
         if not self._runtime_repository:
             return list(self._position_update_instructions.pop(symbol, {}).values())
+        open_tickets = {
+            int(position.ticket)
+            for position in self.position_service.get_position_objects(symbol)
+            if int(getattr(position, "ticket", 0) or 0) > 0
+        }
         result = []
         for ticket, raw in list(queued.items()):
             item = dict(raw)
             if item.get("status") not in {"pending", "delivered"}:
+                continue
+            ticket_id = int(item.get("ticket") or ticket or 0)
+            if ticket_id and ticket_id not in open_tickets:
+                item["status"] = "canceled"
+                item["error_message"] = "持仓已平，停止重复改止损"
+                item["canceled_at"] = now_ts
+                self._runtime_repository.upsert_entity(
+                    "position_update_instruction", item["instruction_id"], item,
+                    symbol=symbol, status="canceled",
+                )
+                queued.pop(int(ticket), None)
+                self._managed_position_state.pop(ticket_id, None)
                 continue
             last_delivered_at = int(item.get("last_delivered_at") or 0)
             if last_delivered_at and now_ts - last_delivered_at < retry_seconds:
@@ -1522,12 +1539,20 @@ class TradingServer:
         if success and str(item.get("status") or "") == "executed":
             return item
         retcode = int(report.get("retcode") or 0)
+        error_message = str(report.get("error_message") or "").lower()
         # INVALID_STOPS can be temporary: a correctly normalized trailing stop
         # may still be inside the broker's freeze/stops level at this Tick and
         # become valid as price moves. Keep that instruction durable as well.
         transient_retcodes = {10004, 10012, 10016, 10020, 10021, 10031}
-        status = "executed" if success else (
-            "pending" if retcode in transient_retcodes else "failed"
+        no_change = retcode in {10025} or "no changes" in error_message
+        missing_position = any(
+            token in error_message
+            for token in ("not found", "no position", "position not exist", "invalid ticket")
+        )
+        status = "executed" if success or no_change else (
+            "canceled" if missing_position else (
+                "pending" if retcode in transient_retcodes else "failed"
+            )
         )
         actual_sl = float(report.get("executed_price") or 0)
         now_ts = int(time.time())
@@ -1548,7 +1573,7 @@ class TradingServer:
         ticket = int(item.get("ticket") or report.get("mt5_position_id") or 0)
         symbol = str(item.get("symbol") or report.get("symbol") or "")
         state = self._managed_position_state.get(ticket) or {}
-        if success:
+        if success or status in {"executed", "canceled"}:
             if actual_sl > 0:
                 state["stop_loss"] = actual_sl
             state["pending_stop_loss"] = 0.0
@@ -1556,6 +1581,8 @@ class TradingServer:
             queued = self._position_update_instructions.get(symbol, {})
             if str((queued.get(ticket) or {}).get("instruction_id") or "") == instruction_id:
                 queued.pop(ticket, None)
+            if status == "canceled":
+                self._managed_position_state.pop(ticket, None)
         elif status == "failed":
             if actual_sl > 0:
                 state["stop_loss"] = actual_sl
