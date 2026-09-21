@@ -22,6 +22,9 @@ from runtime_cache import TTLCache
 
 class MarketDataSourcePolicy:
     CACHE_SECONDS = 30
+    # A market source must keep sending EA heartbeats. Once it is stale, a
+    # healthy same-broker account may take over the shared quote stream.
+    SOURCE_HEARTBEAT_TTL = 180
 
     def __init__(self):
         self.storage = get_storage()
@@ -124,6 +127,39 @@ class MarketDataSourcePolicy:
             "WHERE user_id = ? AND canonical_symbol = ?",
             (user_id, canonical),
         )
+        if row:
+            current_source = self.accounts.get_by_id(
+                user_id, int(row.get("primary_account_id") or 0)
+            )
+            source_last_seen = int(getattr(current_source, "last_seen_at", 0) or 0)
+            current_last_seen = int(getattr(
+                self.accounts.get_by_id(user_id, primary_account_id),
+                "last_seen_at", 0,
+            ) or 0)
+            source_is_stale = (
+                current_source is None
+                or current_source.status != "active"
+                or not current_source.enabled
+                or source_last_seen <= 0
+                or now - source_last_seen > self.SOURCE_HEARTBEAT_TTL
+            )
+            current_is_healthy = (
+                current_last_seen > 0
+                and now - current_last_seen <= self.SOURCE_HEARTBEAT_TTL
+            )
+            if source_is_stale and current_is_healthy:
+                self.storage.execute(
+                    "UPDATE market_data_sources SET primary_account_id=?, "
+                    "broker_name=?, native_symbol=?, updated_at=? "
+                    "WHERE user_id=? AND canonical_symbol=?",
+                    (primary_account_id, broker_name, str(native_symbol).upper(),
+                     now, user_id, canonical),
+                )
+                row = self.storage.fetchone(
+                    "SELECT * FROM market_data_sources "
+                    "WHERE user_id = ? AND canonical_symbol = ?",
+                    (user_id, canonical),
+                )
         return dict(row) if row else {}
 
     def _block(
