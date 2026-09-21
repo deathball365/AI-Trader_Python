@@ -16,7 +16,10 @@ from .structure_plan.price_calculator import (
     calculate_next_target, protected_reference, exit_candidates,
     location_reclaim_confirmation,
 )
-from .structure_plan.lifecycle import invalidate_reason, resolve_conflicts, stage_for
+from .structure_plan.lifecycle import (
+    invalidate_reason, close_invalidate_reason, opportunity_still_valid,
+    resolve_conflicts, stage_for,
+)
 from .structure_plan.config_resolver import resolve as resolve_plan_config
 from ..market_event_risk_service import active_event
 
@@ -2092,6 +2095,11 @@ class StructurePlanSignalGenerator:
             )
             plans = self._resolve_plan_conflicts(plans)
             plans = self._apply_event_risk(plans, resolved_config, symbol, period, int(time.time()))
+            close_price = _number(rows[-1].get("close") or rows[-1].get("close_price"))
+            atr = _number((result or {}).get("atr"))
+            self._invalidate_stale_closed_plans(
+                symbol, period, source_id, result, close_price, atr, plans,
+            )
             plans = self.repository.replace_scope(
                 self.user_id, 0, "",
                 source_id, symbol, period, plans, bar_time,
@@ -2100,6 +2108,40 @@ class StructurePlanSignalGenerator:
             self._last_bar[key] = bar_time
             all_plans.extend(plans)
         return all_plans
+
+
+    def _invalidate_stale_closed_plans(
+        self, symbol: str, period: str, source_id: str, structure: Dict,
+        close_price: float, atr: float, incoming_plans: List[Dict],
+    ) -> None:
+        """Retire waiting plans whose entry thesis died on this closed bar."""
+        current = self.repository.list_current(
+            self.user_id, 0, "", source_id, symbol, period,
+        )
+        incoming_active_ids = {
+            str(plan.get("opportunity_id") or "")
+            for plan in incoming_plans
+            if str(plan.get("status") or "") == "active"
+            and str(plan.get("direction") or "") in {"buy", "sell"}
+            and str(plan.get("opportunity_id") or "")
+        }
+        for plan in current:
+            status = str(plan.get("status") or "")
+            if status not in {"active", "event_suppressed"}:
+                continue
+            plan_id = str(plan.get("plan_id") or "")
+            opportunity_id = str(plan.get("opportunity_id") or "")
+            if opportunity_id and opportunity_id in incoming_active_ids:
+                # Same opportunity is being refreshed; keep/replace via scope.
+                continue
+            reason = close_invalidate_reason(plan, structure, close_price, atr)
+            if reason:
+                self.repository.invalidate_plan(plan_id, reason)
+                continue
+            if not opportunity_still_valid(plan, structure, close_price, atr):
+                self.repository.invalidate_plan(
+                    plan_id, "买点已不再成立，取消等待中的结构计划",
+                )
 
     def _plans(self, symbol: str, strategy, config: Dict) -> List[Dict]:
         period = str(config.get("period") or "M5").upper()

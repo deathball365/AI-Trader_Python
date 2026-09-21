@@ -1,7 +1,7 @@
 """Pure lifecycle and conflict rules for structure trade plans."""
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 def invalidate_reason(plan: Dict, price: float) -> str:
@@ -34,6 +34,126 @@ def invalidate_reason(plan: Dict, price: float) -> str:
         if (direction == "buy" and price < bottom) or (direction == "sell" and price > top):
             return "triangle_pattern_broken"
     return ""
+
+
+def _as_float(value, default: float = 0.0) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return number if number == number else float(default)
+
+
+def close_invalidate_reason(
+    plan: Dict,
+    structure: Optional[Dict],
+    close_price: float,
+    atr: float = 0.0,
+) -> str:
+    """Return why a live plan should die on a closed bar, if it should.
+
+    Destruction is close-confirmed. Wicks alone do not kill a waiting plan.
+    """
+    direction = str(plan.get("direction") or "")
+    if direction not in {"buy", "sell"}:
+        return ""
+    close_price = _as_float(close_price)
+    if close_price <= 0:
+        return ""
+    rules = set(plan.get("close_invalidation_rules") or plan.get("invalidation_rules") or [])
+    atr = max(0.0, _as_float(atr))
+    buffer = atr * 0.1
+    invalid = _as_float(plan.get("invalidation_price") or plan.get("stop_loss"))
+    metadata = plan.get("structure_metadata") or {}
+    top = _as_float(metadata.get("range_top"))
+    bottom = _as_float(metadata.get("range_bottom"))
+    setup = str(plan.get("setup_type") or "")
+    structure = structure or {}
+    current_segment = str(structure.get("structure_segment_id") or "")
+    plan_segment = str(
+        plan.get("structure_segment_id")
+        or metadata.get("segment_id")
+        or ""
+    )
+
+    if "protected_level_break" in rules and invalid > 0:
+        if direction == "buy" and close_price <= invalid - buffer:
+            return "保护低点被收盘破坏"
+        if direction == "sell" and close_price >= invalid + buffer:
+            return "保护高点被收盘破坏"
+
+    if "range_structure_break" in rules:
+        box = structure.get("range") or {}
+        box_status = str(box.get("status") or "")
+        broken = False
+        if invalid > 0:
+            broken = (
+                (direction == "buy" and close_price <= invalid - buffer)
+                or (direction == "sell" and close_price >= invalid + buffer)
+            )
+        elif top > bottom > 0:
+            broken = (
+                (direction == "buy" and close_price < bottom - buffer)
+                or (direction == "sell" and close_price > top + buffer)
+            )
+        if broken or box_status in {"breakout_confirmed", "failed"} and (
+            (direction == "buy" and str(box.get("breakout_direction") or "") == "down")
+            or (direction == "sell" and str(box.get("breakout_direction") or "") == "up")
+        ):
+            return "区间结构被收盘破坏"
+
+    if "triangle_pattern_break" in rules and "triangle" in setup and top > bottom > 0:
+        if direction == "buy" and close_price < bottom - buffer:
+            return "三角形结构被收盘破坏"
+        if direction == "sell" and close_price > top + buffer:
+            return "三角形结构被收盘破坏"
+
+    if plan_segment and current_segment and plan_segment != current_segment:
+        # Segment change means the original trade thesis belongs to a finished
+        # structure. Keep only if a newer active opportunity replaces it via
+        # supersede; otherwise retire the orphaned waiter.
+        if str(plan.get("status") or "") in {"active", "event_suppressed"}:
+            return "结构段已切换，原交易机会失效"
+
+    return ""
+
+
+def opportunity_still_valid(
+    plan: Dict,
+    structure: Optional[Dict],
+    close_price: float,
+    atr: float = 0.0,
+) -> bool:
+    """Whether a waiting plan's entry thesis is still worth keeping."""
+    if close_invalidate_reason(plan, structure, close_price, atr):
+        return False
+    direction = str(plan.get("direction") or "")
+    if direction not in {"buy", "sell"}:
+        return False
+    entry = _as_float(plan.get("entry_price"))
+    close_price = _as_float(close_price)
+    if entry <= 0 or close_price <= 0:
+        return False
+    zone = plan.get("entry_zone") or {}
+    lower = _as_float(zone.get("lower"))
+    upper = _as_float(zone.get("upper"))
+    zone_width = abs(upper - lower) if upper > lower > 0 else 0.0
+    if zone_width > 0:
+        if abs(close_price - entry) / zone_width > 8.0:
+            return False
+    else:
+        if abs(close_price - entry) / entry * 100.0 > 0.8:
+            return False
+    structure = structure or {}
+    plan_segment = str(
+        plan.get("structure_segment_id")
+        or (plan.get("structure_metadata") or {}).get("segment_id")
+        or ""
+    )
+    current_segment = str(structure.get("structure_segment_id") or "")
+    if plan_segment and current_segment and plan_segment != current_segment:
+        return False
+    return True
 
 
 def resolve_conflicts(plans: List[Dict]) -> List[Dict]:
