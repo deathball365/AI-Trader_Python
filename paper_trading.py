@@ -109,7 +109,7 @@ class PaperTradingService:
 
     # paper_orders.pending 只是等待下一次 Tick 撮合的短暂状态，不是长期限价单。
     # 报价链路中断时必须释放风险额度，避免旧订单永久阻塞后续信号。
-    PENDING_ORDER_TIMEOUT_SECONDS = 60
+    PENDING_ORDER_TIMEOUT_SECONDS = 180
 
     def __init__(self, storage: Optional[MySQLStorage] = None):
         self.storage = storage or get_storage()
@@ -985,12 +985,10 @@ class PaperTradingService:
     ) -> int:
         """Use one signal snapshot per strategy, then apply account-level checks."""
         self._expire_deployments(user_id)
-        # 清理账户下所有品种的过期 Pending 订单。此前只按当前 Tick 的
-        # symbol 清理，某个品种停止上报后，其“等待模拟撮合”订单会永久挂着，
-        # 既污染运行台，也可能占用持仓/下单额度。
-        self.matching_engine.expire_stale_pending_orders(
-            user_id, None, int(time.time())
-        )
+        # Do not wall-clock-expire pending orders before this quote is matched.
+        # Delayed background paper tasks previously cancelled orders here before
+        # process_tick could fill them. Expiry stays in process_tick after match,
+        # plus a final sweep below after signal handling.
         deployments = self.storage.fetchall(
             """
             SELECT d.*, a.status AS account_status,
@@ -1230,6 +1228,11 @@ class PaperTradingService:
                         "position_check": decision.position_check or {},
                     },
                 )
+        # After this symbol's signals are handled, sweep abandoned pending
+        # orders on quiet symbols so they cannot occupy risk slots forever.
+        self.matching_engine.expire_stale_pending_orders(
+            user_id, None, int(time.time()),
+        )
         return created
 
     def _strategy_matches_quote(
@@ -1276,7 +1279,9 @@ class PaperTradingService:
         symbol = str(symbol)
         with self._lock:
             self._expire_deployments(user_id)
-            self.matching_engine.expire_stale_pending_orders(user_id, symbol, now)
+            # Match first, expire later. Background paper tasks can run tens of
+            # seconds late; expiring before matching cancelled every pending
+            # order that had already waited ~60s wall-clock.
             self._quotes[(user_id, symbol)] = (bid, ask)
             account_rows = self.storage.fetchall(
                 """
@@ -1313,6 +1318,7 @@ class PaperTradingService:
                 )
                 for key in summary:
                     summary[key] += result[key]
+            self.matching_engine.expire_stale_pending_orders(user_id, symbol, now)
             return summary
 
     def _equity_curve(self, account_id: int, page_size: int, offset: int,

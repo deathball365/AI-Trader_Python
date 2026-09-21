@@ -57,6 +57,13 @@ class PaperMatchingEngine:
             bid = midpoint - configured_spread / 2
             ask = midpoint + configured_spread / 2
         quote = TickQuote.create(bid, ask, now)
+        # Paper market orders are created from this quote's signal snapshot.
+        # The shared pending core forbids same-timestamp fills so backtests do
+        # not peek the decision bar; paper would then wait for another EA tick
+        # and often expire when background work runs late. Advance pending with
+        # a one-second-forward timestamp so this quote can fill immediately
+        # while still using the real bid/ask for execution price.
+        pending_quote = TickQuote.create(bid, ask, int(now) + 1)
         result = {"filled": 0, "closed": 0, "rejected": 0}
         decision_updates = []
         with self.paper_service.storage._lock, self.paper_service.storage._connect() as conn:
@@ -81,14 +88,10 @@ class PaperMatchingEngine:
                 "SELECT COUNT(*) AS count FROM paper_positions WHERE account_id = ? AND status = 'open'",
                 (account_id,),
             ).fetchone()["count"])
-            # The Paper persistence adapter consumes the same quote partition
-            # as historical replay. Timeout persistence happens immediately
-            # before matching in PaperTradingService; only eligible orders are
-            # allowed to reach validation and fill logic here.
             pending_adapter = _PaperPendingExecutionAdapter(
                 self.paper_service.PENDING_ORDER_TIMEOUT_SECONDS,
             )
-            TickExecutionCore.advance_pending(pending_adapter, pending, quote)
+            TickExecutionCore.advance_pending(pending_adapter, pending, pending_quote)
             for order in pending_adapter.eligible:
                 if order["deployment_status"] != "active":
                     self.paper_service._reject_order(conn, order["order_id"], "策略运行已暂停", now)
@@ -344,8 +347,8 @@ class PaperMatchingEngine:
             "SELECT order_id,account_id,decision_id,deployment_id,strategy_id,"
             "position_attribution_json FROM paper_orders "
             # Keep the persistence boundary identical to TickExecutionCore:
-            # the quote exactly 60 seconds after a request is still eligible;
-            # only a later quote times out the Pending order.
+            # quotes inside the timeout window stay eligible; only later wall-clock
+            # sweeps cancel abandoned Pending orders.
             f"WHERE user_id=?{symbol_clause} AND status='pending' AND requested_at<?",
             tuple(params),
         )
