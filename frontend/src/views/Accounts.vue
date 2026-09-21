@@ -991,10 +991,14 @@ function deploymentStatusColor(status) {
   return { active: 'success', paused: 'warning', completed: 'grey' }[status] || 'grey'
 }
 function marketSourceMeta(source) {
+  const primaryCount = Number(source?.primary_symbol_count || 0)
+  const reuseCount = Number(source?.reuse_symbol_count || 0)
+  const blockedCount = Number(source?.blocked_symbol_count || 0)
+  const withCount = (label, count) => (count > 0 ? `${label} · ${count}品种` : label)
   return {
-    primary: { label: '行情主源', color: 'success' },
-    reuse: { label: '复用行情', color: 'info' },
-    blocked: { label: '行情冲突', color: 'error' },
+    primary: { label: withCount('行情主源', primaryCount), color: 'success' },
+    reuse: { label: withCount('复用行情', reuseCount), color: 'info' },
+    blocked: { label: withCount('行情冲突', blockedCount), color: 'error' },
     pending: { label: '待识别行情', color: 'grey' },
   }[source?.mode] || { label: '待识别行情', color: 'grey' }
 }

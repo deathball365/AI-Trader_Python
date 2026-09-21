@@ -246,25 +246,13 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
             int(account.account_id) for account in accounts
             if account.account_type == "mt5"
         ]
-        if mt5_ids:
-            placeholders = ",".join("?" for _ in mt5_ids)
-            policy_rows = repository.storage.fetchall(
-                f"""
-                SELECT p.*
-                FROM market_data_symbol_policies p
-                WHERE p.user_id = ? AND p.account_id IN ({placeholders})
-                ORDER BY p.account_id, p.updated_at DESC
-                """,
-                (int(user.user_id), *mt5_ids),
+        # Account cards must summarize symbol-level primary/reuse roles.
+        # Taking only the newest symbol row can keep showing a stale reuse
+        # label after failover has already moved market_data_sources.
+        for account_id in mt5_ids:
+            market_sources_by_account[account_id] = (
+                market_source_policy.summarize_account(user.user_id, account_id)
             )
-            for row in policy_rows:
-                account_id = int(row["account_id"])
-                # account_status() returns the newest policy for a no-symbol
-                # request.  Keep only that row per account after one batch read.
-                if account_id not in market_sources_by_account:
-                    market_sources_by_account[account_id] = (
-                        MarketDataSourcePolicy._policy_payload(row)
-                    )
         payloads = []
         for account in accounts:
             deployments = deployments_by_account.get(int(account.account_id), [])
