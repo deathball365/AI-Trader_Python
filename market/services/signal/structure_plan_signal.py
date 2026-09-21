@@ -49,6 +49,7 @@ STRUCTURE_PLAN_DEFAULT_CONFIG = {
     "location_reclaim_min_body_atr": 0.3,
     "location_reclaim_min_close_extension_atr": 0.1,
     "stop_buffer_atr": 0.25, "target_buffer_atr": 0.1,
+    "min_stop_percent": 0.1,
     "min_real_risk_reward": 1.2, "trend_min_real_risk_reward": 0.5,
     # Hidden safety ceiling; normal lifecycle is governed by structure events.
     "max_plan_lifetime_bars": 100,
@@ -860,6 +861,14 @@ class StructurePlanBuilder:
             self._reject("结构止损、入场和止盈价格关系无效")
             return None
         risk = abs(entry - sl)
+        min_stop_percent = max(0.0, _number(self._param("min_stop_percent", 0.1)))
+        minimum_stop_distance = abs(entry) * min_stop_percent / 100.0
+        if minimum_stop_distance > 0 and risk < minimum_stop_distance:
+            self._reject(
+                f"结构止损距离 {risk:.8f} 小于最低要求 "
+                f"{minimum_stop_distance:.8f}（{min_stop_percent:.2f}%）"
+            )
+            return None
         rr = abs(tp - entry) / risk if risk else 0
         minimum_rr = (
             max(0.1, _number(minimum_override))
