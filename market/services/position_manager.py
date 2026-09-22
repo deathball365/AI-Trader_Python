@@ -334,7 +334,7 @@ class PositionManager:
             reference_stop = stop
         risk = abs(entry_price - stop)
         percent_floor = entry_price * float(config.get("min_stop_percent", 0.1) or 0) / 100.0
-        atr_multiple = float(config.get("min_stop_atr", 0.5) or 0)
+        atr_multiple = float(config.get("min_stop_atr", 1.5) or 0)
         atr_floor = float(atr or 0) * atr_multiple if atr_multiple > 0 else 0.0
         # Volatility-normalized floor replaces the legacy 0.10% price ratio
         # whenever ATR is available.  Percent remains a fallback only.

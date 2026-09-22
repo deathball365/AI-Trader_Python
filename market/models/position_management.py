@@ -116,7 +116,7 @@ def default_position_management_config() -> Dict:
         "min_risk_reward": 1.0,
         "min_stop_percent": 0.1,
         "max_stop_percent": 0.7,
-        "min_stop_atr": 0.5,
+        "min_stop_atr": 1.5,
         "min_stop_distance": 0.0,
         "max_stop_distance": 0.0,
         # Per deployment circuit breaker: completed losing positions only.
@@ -337,9 +337,15 @@ def normalize_position_management_config(config: Optional[Dict]) -> Dict:
     normalized["max_stop_percent"] = _positive(
         normalized.get("max_stop_percent", 0.7), "最大止损比例", True
     )
-    normalized["min_stop_atr"] = _positive(
-        normalized.get("min_stop_atr", 0.5), "最小止损ATR", True
+    min_stop_atr = _positive(
+        normalized.get("min_stop_atr", 1.5), "最小止损ATR", True
     )
+    # 0.5 ATR was the short-lived default after replacing 0.10%.  Saved
+    # policies still carry that value; treat it as the old default, not a
+    # user override, so live accounts pick up the 1.5 ATR floor.
+    if abs(min_stop_atr - 0.5) < 1e-9:
+        min_stop_atr = 1.5
+    normalized["min_stop_atr"] = min_stop_atr
     normalized["min_stop_distance"] = _positive(
         normalized.get("min_stop_distance", 0), "最小止损距离", True
     )
