@@ -76,9 +76,10 @@ class _Repository:
 
 
 def _range_structure(status="confirmed", direction=""):
+    bias = direction if direction in {"up", "down"} else "sideways"
     return {
-        "atr": 2.0, "major_state": "sideways", "internal_state": "sideways",
-        "external_state": "up", "internal_events": [],
+        "atr": 2.0, "major_state": bias, "internal_state": "sideways",
+        "external_state": bias, "internal_events": [],
         "structure_hierarchy": {},
         "range": {
             "active": True, "pattern": "range", "status": status,
@@ -995,6 +996,7 @@ class StructurePlanTests(unittest.TestCase):
 
     def test_confirmed_choch_builds_reversal_plan(self):
         structure = _trend_structure("down")
+        structure["trend_phase"] = "failed"
         # A confirmed reversal should have a nearby protected low; using the
         # old deep downtrend low would correctly fail the real-RR guard.
         for layer in structure["structure_hierarchy"].values():
@@ -1036,7 +1038,76 @@ class StructurePlanTests(unittest.TestCase):
             "source-1", "BTCUSD", "M5", self.store.rows, structure,
         )
         self.assertEqual(plans[0]["setup_type"], "no_trade")
-        self.assertIn("趋势内回撤", plans[0]["reason"])
+        self.assertTrue(
+            "趋势内回撤" in plans[0]["reason"]
+            or "禁止开空" in plans[0]["reason"]
+        )
+
+    def test_uptrend_range_only_keeps_lower_boundary_buy(self):
+        structure = _range_structure()
+        structure["major_state"] = "up"
+        structure["external_state"] = "up"
+        structure["internal_state"] = "down"
+        plans = StructurePlanBuilder({"enable_range_breakout": False}).build(
+            "source-1", "BTCUSD", "M5", self.store.rows, structure,
+        )
+        active = [item for item in plans if item["status"] == "active"]
+        self.assertEqual([item["setup_type"] for item in active], ["range_lower_reversal"])
+        self.assertEqual(active[0]["direction"], "buy")
+
+    def test_external_up_blocks_range_upper_sell_even_if_swing_is_sideways(self):
+        structure = _range_structure()
+        structure["major_state"] = "sideways"
+        structure["external_state"] = "up"
+        structure["internal_state"] = "down"
+        self.store.rows[-1]["close"] = 119.5
+        plans = StructurePlanBuilder({"enable_range_breakout": False}).build(
+            "source-1", "BTCUSD", "M5", self.store.rows, structure,
+        )
+        self.assertNotIn(
+            "range_upper_reversal",
+            [item["setup_type"] for item in plans],
+        )
+
+    def test_external_up_blocks_sweep_sell_when_swing_is_down(self):
+        structure = {
+            "atr": 2.0, "major_state": "down", "current_state": "down",
+            "external_state": "up", "internal_state": "down",
+            "range": {}, "structure_hierarchy": {
+                "swing": {"bias": "down"}, "external": {"bias": "up"},
+                "internal": {"bias": "down"},
+            },
+            "internal_events": [{
+                "type": "liquidity_sweep", "direction": "up",
+                "level": 110.0, "confirmed_at": 39,
+            }],
+        }
+        plans = StructurePlanBuilder({"enable_structure_location": False}).build(
+            "source-1", "BTCUSD", "M5", self.store.rows, structure,
+        )
+        self.assertEqual(plans[0]["setup_type"], "no_trade")
+        self.assertIn("禁止开空", plans[0]["reason"])
+
+    def test_tick_skips_counter_trend_plan_from_snapshot(self):
+        repository = _Repository()
+        generator = StructurePlanSignalGenerator(self.store, repository, 1, 2)
+        strategy = _Strategy()
+        repository.plans = [{
+            "plan_id": "btc-upper", "status": "active",
+            "direction": "sell", "setup_type": "range_upper_reversal",
+            "setup_family": "range", "entry_mode": "touch_or_near",
+            "entry_zone": {"lower": 109.0, "upper": 111.0},
+            "entry_price": 110.0, "stop_loss": 112.0, "take_profit": 104.0,
+            "reason": "箱体上沿", "valid_from": 1, "expires_at": 0,
+            "structure_snapshot": {
+                "major_state": "up", "internal_state": "down",
+                "external_state": "up",
+            },
+        }]
+        generator._cache[("market-structure", "BTCUSD", "M5")] = list(repository.plans)
+        signal = generator.generate_signals_for_strategy("BTCUSD", 110.0, strategy)[0]
+        self.assertFalse(signal.state_ready)
+        self.assertEqual(signal.action, "none")
 
 
 if __name__ == "__main__":

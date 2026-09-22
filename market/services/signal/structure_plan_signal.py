@@ -291,6 +291,68 @@ class StructurePlanBuilder:
             return "down"
         return "undetermined"
 
+    @classmethod
+    def structure_layers(cls, structure: Optional[Dict] = None) -> Dict[str, str]:
+        """Return Internal / Swing / External directional bias."""
+        structure = structure or {}
+        hierarchy = structure.get("structure_hierarchy") or {}
+        return {
+            "internal": cls._direction_bias(
+                (hierarchy.get("internal") or {}).get("bias")
+                or structure.get("internal_state")
+            ),
+            "swing": cls._direction_bias(
+                (hierarchy.get("swing") or {}).get("bias")
+                or structure.get("major_state")
+                or structure.get("current_state")
+            ),
+            "external": cls._direction_bias(
+                (hierarchy.get("external") or {}).get("bias")
+                or structure.get("external_state")
+            ),
+        }
+
+    @classmethod
+    def background_bias(cls, structure: Optional[Dict] = None) -> str:
+        """Larger background wins: External if directional, otherwise Swing.
+
+        Internal never grants permission to fade the background.  A sideways
+        background leaves both directions available for genuine range trades.
+        """
+        layers = cls.structure_layers(structure)
+        if layers["external"] in {"up", "down"}:
+            return layers["external"]
+        if layers["swing"] in {"up", "down"}:
+            return layers["swing"]
+        return "sideways"
+
+    @classmethod
+    def counter_trend_reason(
+        cls, direction: str, structure: Optional[Dict] = None,
+        setup_type: str = "",
+    ) -> str:
+        """Reject fading Swing/External unless a reversal setup already failed."""
+        direction = str(direction or "").strip().lower()
+        if direction not in {"buy", "sell"}:
+            return ""
+        structure = structure or {}
+        setup = str(setup_type or "").strip().lower()
+        phase = str(structure.get("trend_phase") or "").strip().lower()
+        # CHOCH / failed-break reversals may fade only after the trend failed.
+        if setup in {"choch_reversal", "range_false_breakout"} and phase == "failed":
+            return ""
+        layers = cls.structure_layers(structure)
+        bias = cls.background_bias(structure)
+        detail = (
+            f"Internal={layers['internal']}，Swing={layers['swing']}，"
+            f"External={layers['external']}"
+        )
+        if bias == "up" and direction == "sell":
+            return f"背景结构上涨，禁止开空（{detail}）"
+        if bias == "down" and direction == "buy":
+            return f"背景结构下跌，禁止开多（{detail}）"
+        return ""
+
     def _triangle_breakout_confirmation(
         self, rows: List[Dict], structure: Dict, box: Dict,
         direction: str, atr: float,
@@ -859,6 +921,13 @@ class StructurePlanBuilder:
         sl = _number(kwargs.get("stop_loss"))
         tp = _number(kwargs.get("take_profit"))
         direction = kwargs.get("direction")
+        blocked = self.counter_trend_reason(
+            direction, kwargs.get("structure_snapshot") or {},
+            str(kwargs.get("setup_type") or ""),
+        )
+        if blocked:
+            self._reject(blocked)
+            return None
         valid = (
             direction == "buy" and sl < entry < tp
         ) or (
@@ -2516,6 +2585,12 @@ class StructurePlanSignalGenerator:
                         plan["status"] = restored if restored in {"active", "watching"} else "active"
                         plan.pop("event_risk", None)
                 if direction in {"buy", "sell"} and direction not in allowed_directions:
+                    continue
+                blocked = StructurePlanBuilder.counter_trend_reason(
+                    direction, plan.get("structure_snapshot") or {}, setup_type,
+                )
+                if blocked:
+                    waiting.append(plan)
                     continue
                 valid_from = int(plan.get("valid_from") or 0)
                 if plan.get("status") != "active":
