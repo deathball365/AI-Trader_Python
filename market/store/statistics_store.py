@@ -98,13 +98,33 @@ class StatisticsStore:
             return data
 
     def get_spread(self, symbol: str) -> Optional[float]:
-        """获取品种价差"""
+        """Return the latest MT5-reported spread for a symbol.
+
+        EA minute statistics already include ``spread = ask - bid``.  Look at
+        the per-symbol buffer first so a busy account cannot push an older
+        instrument out of the global 100-row window.
+        """
         with self._lock:
             symbol_exact = str(symbol or "").strip().upper()
-            for stat in reversed(list(self._all_data)):
-                if str(stat.symbol or "").strip().upper() == symbol_exact:
-                    if stat.spread > 0:
-                        return stat.spread
+            latest = None
+            for key, items in self._by_symbol.items():
+                if str(key or "").strip().upper() == symbol_exact and items:
+                    latest = items[-1]
+                    break
+            if latest is None:
+                for stat in reversed(list(self._all_data)):
+                    if str(stat.symbol or "").strip().upper() == symbol_exact:
+                        latest = stat
+                        break
+            if latest is None:
+                return None
+            spread = float(getattr(latest, "spread", 0) or 0)
+            if spread > 0:
+                return spread
+            bid = float(getattr(latest, "bid_price", 0) or 0)
+            ask = float(getattr(latest, "ask_price", 0) or 0)
+            if ask > bid > 0:
+                return ask - bid
             return None
 
     def get_account_info(self, symbol: str = None) -> Dict:

@@ -472,6 +472,46 @@ class PositionManagerTests(unittest.TestCase):
         self.assertEqual(plan.stop_loss, 99.2)
         self.assertIsNone(plan.stop_adjustment)
 
+    def test_final_stop_adds_one_reported_spread(self):
+        plan = PositionManager().create_plan(
+            policy({
+                "initial_stop_rules": [{"type": "signal"}],
+                "initial_take_profit_rules": [{"type": "risk_reward", "value": 2}],
+                "management_rules": [],
+                "min_risk_reward": 0,
+                "min_stop_percent": 0.1,
+                "max_stop_percent": 0.7,
+            }),
+            "buy", 100.0, signal_stop_loss=99.2,
+            signal_take_profit=101.6,
+            atr=0.4,
+            setup_context={"signal_source": "structure_plan"},
+            spread=0.03,
+        )
+        self.assertAlmostEqual(plan.stop_loss, 99.17, places=6)
+        self.assertEqual(plan.stop_adjustment["reason"], "spread_buffer")
+        self.assertIn("1 点差", plan.stop_adjustment["message"])
+
+    def test_half_atr_floor_then_adds_spread(self):
+        plan = PositionManager().create_plan(
+            policy({
+                "initial_stop_rules": [{"type": "signal"}],
+                "initial_take_profit_rules": [{"type": "risk_reward", "value": 2}],
+                "management_rules": [],
+                "min_risk_reward": 0,
+                "min_stop_percent": 0.1,
+                "max_stop_percent": 0.7,
+            }),
+            "sell", 157.363, signal_stop_loss=157.379,
+            signal_take_profit=157.048,
+            atr=0.05,
+            setup_context={"signal_source": "structure_plan"},
+            spread=0.012,
+        )
+        self.assertAlmostEqual(plan.stop_loss, 157.363 + 0.025 + 0.012, places=6)
+        self.assertIn("0.5 ATR", plan.stop_adjustment["message"])
+        self.assertIn("1 点差", plan.stop_adjustment["message"])
+
     def test_max_holding_bars_uses_rule_period(self):
         action = PositionManager().evaluate(
             {"management_rules": [{

@@ -245,6 +245,7 @@ class PositionManager:
         setup_context: Optional[Dict] = None,
         signal_stop_candidates: Optional[Iterable[Dict]] = None,
         signal_target_candidates: Optional[Iterable[Dict]] = None,
+        spread: float = 0,
     ) -> PositionPlan:
         direction = str(direction).lower()
         if direction not in {"buy", "sell"} or entry_price <= 0:
@@ -372,6 +373,32 @@ class PositionManager:
                     + f"，已自动调整为 {risk:.2f}"
                 ),
             }
+        spread_buffer = max(0.0, float(spread or 0))
+        if spread_buffer > 0:
+            stop_before_spread = float(stop)
+            stop = (
+                stop - spread_buffer
+                if direction == "buy" else stop + spread_buffer
+            )
+            risk = abs(entry_price - stop)
+            spread_message = f"最终止损再向外加 1 点差 {spread_buffer:g}"
+            if stop_adjustment:
+                stop_adjustment["spread"] = float(spread_buffer)
+                stop_adjustment["stop_loss_before_spread"] = stop_before_spread
+                stop_adjustment["adjusted_stop_loss"] = float(stop)
+                stop_adjustment["adjusted_distance"] = float(risk)
+                stop_adjustment["message"] = (
+                    stop_adjustment["message"] + "；" + spread_message
+                )
+            else:
+                stop_adjustment = {
+                    "reason": "spread_buffer",
+                    "original_stop_loss": stop_before_spread,
+                    "adjusted_stop_loss": float(stop),
+                    "spread": float(spread_buffer),
+                    "adjusted_distance": float(risk),
+                    "message": spread_message,
+                }
         # Structure plans can carry a deliberate, signal-derived protective
         # stop.  The legacy 0.70% percentage ceiling was originally intended
         # for generic stops and was silently rejecting otherwise valid

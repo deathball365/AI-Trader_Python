@@ -25,6 +25,37 @@ from ..market_event_risk_service import active_event
 from ..signal.structure_plan_signal import STRUCTURE_PLAN_DEFAULT_CONFIG
 
 
+def _positive_price(value) -> float:
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if number > 0 else 0.0
+
+
+def resolve_entry_spread(
+    symbol: str,
+    context: Optional[Dict] = None,
+    statistics_service=None,
+) -> float:
+    """Use the live MT5-reported spread, never a guessed tick size."""
+    context = context or {}
+    explicit = _positive_price(context.get("spread"))
+    if explicit > 0:
+        return explicit
+    bid = _positive_price(context.get("bid") or context.get("bid_price"))
+    ask = _positive_price(context.get("ask") or context.get("ask_price"))
+    if ask > bid > 0:
+        return ask - bid
+    getter = getattr(statistics_service, "get_spread", None)
+    if not callable(getter):
+        return 0.0
+    try:
+        return _positive_price(getter(symbol))
+    except Exception:
+        return 0.0
+
+
 def _round_market_price(value: float, reference_price: float) -> float:
     """Round a price without destroying FX/metal broker precision.
 
@@ -610,6 +641,12 @@ class StrategyService:
                 setup_context=setup_context,
                 signal_stop_candidates=getattr(best_signal, "stop_candidates", None),
                 signal_target_candidates=getattr(best_signal, "target_candidates", None),
+                spread=resolve_entry_spread(
+                    symbol, context,
+                    statistics_service=getattr(
+                        self.risk_manager, "_statistics_service", None
+                    ),
+                ),
             )
         except ValueError as exc:
             print(f"[StrategyService] 持仓管理方案无法生成开仓计划: {exc}")

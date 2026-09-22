@@ -11,7 +11,7 @@ from market.models import (
     TradingSignal,
     TradingStrategy,
 )
-from market.services.strategy.strategy_service import StrategyService
+from market.services.strategy.strategy_service import StrategyService, resolve_entry_spread
 from market.services.signal.signal_service import SignalService
 from market.services.signal.key_level_signal import (
     KeyLevelSignalGenerator,
@@ -88,6 +88,33 @@ class _StrategySignalGenerator:
             suggested_sl=current_price - 10,
             suggested_tp=current_price + 20,
         )]
+
+
+class ResolveEntrySpreadTests(unittest.TestCase):
+    def test_prefers_explicit_context_spread(self):
+        self.assertEqual(
+            resolve_entry_spread("GOLD#", {"spread": 0.18, "bid": 1, "ask": 2}),
+            0.18,
+        )
+
+    def test_uses_bid_ask_when_spread_missing(self):
+        self.assertAlmostEqual(
+            resolve_entry_spread("GOLD#", {"bid": 2650.10, "ask": 2650.28}),
+            0.18,
+            places=6,
+        )
+
+    def test_uses_mt5_statistics_service(self):
+        class _Stats:
+            def get_spread(self, symbol):
+                return 12.0 if symbol == "BTCUSD#" else None
+        self.assertEqual(
+            resolve_entry_spread("BTCUSD#", {}, statistics_service=_Stats()),
+            12.0,
+        )
+
+    def test_missing_spread_stays_zero(self):
+        self.assertEqual(resolve_entry_spread("USDJPY#", {}), 0.0)
 
 
 class StrategyServiceTestCase(unittest.TestCase):
