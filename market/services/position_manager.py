@@ -332,7 +332,12 @@ class PositionManager:
                 raise ValueError("没有止损规则能够生成有效价格")
             reference_stop = stop
         risk = abs(entry_price - stop)
-        minimum = entry_price * float(config.get("min_stop_percent", 0.1) or 0) / 100.0
+        percent_floor = entry_price * float(config.get("min_stop_percent", 0.1) or 0) / 100.0
+        atr_multiple = float(config.get("min_stop_atr", 0.5) or 0)
+        atr_floor = float(atr or 0) * atr_multiple if atr_multiple > 0 else 0.0
+        # Volatility-normalized floor replaces the legacy 0.10% price ratio
+        # whenever ATR is available.  Percent remains a fallback only.
+        minimum = atr_floor if atr_floor > 0 else percent_floor
         maximum = entry_price * float(config.get("max_stop_percent", 0.7) or 0) / 100.0
         if dedicated_key_level:
             minimum = 0.0
@@ -355,11 +360,16 @@ class PositionManager:
                 "original_distance": float(abs(entry_price - original_stop)),
                 "adjusted_distance": float(risk),
                 "minimum_distance": float(minimum),
+                "minimum_atr": float(atr_floor),
                 "minimum_percent": float(config.get("min_stop_percent", 0) or 0),
                 "message": (
-                    f"AI止损距离 {abs(entry_price - original_stop):.2f} 小于最小止损比例 "
-                    f"{float(config.get('min_stop_percent', 0) or 0):.2f}%，"
-                    f"已自动调整为 {risk:.2f}"
+                    f"止损距离 {abs(entry_price - original_stop):.2f} 小于 "
+                    + (
+                        f"最小止损 {atr_multiple:g} ATR"
+                        if atr_floor > 0 else
+                        f"最小止损比例 {float(config.get('min_stop_percent', 0) or 0):.2f}%"
+                    )
+                    + f"，已自动调整为 {risk:.2f}"
                 ),
             }
         # Structure plans can carry a deliberate, signal-derived protective
