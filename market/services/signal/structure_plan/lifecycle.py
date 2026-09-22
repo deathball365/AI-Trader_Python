@@ -95,8 +95,9 @@ def distance_invalidate_reason(plan: Dict, price: float) -> str:
     lower = _as_float(zone.get("lower"))
     upper = _as_float(zone.get("upper"))
     zone_width = abs(upper - lower) if upper > lower > 0 else 0.0
+    distance = abs(price - entry)
     if zone_width > 0:
-        distance_ratio = abs(price - entry) / zone_width
+        distance_ratio = distance / zone_width
         max_ratio = max_entry_zone_widths(plan)
         if distance_ratio > max_ratio:
             return (
@@ -104,7 +105,18 @@ def distance_invalidate_reason(plan: Dict, price: float) -> str:
                 f"超过最大等待距离 {max_ratio:.1f} 倍"
             )
         return ""
-    distance_pct = abs(price - entry) / entry * 100.0
+    # A missing zone must not fall back to 0.8% of price: on FX that is
+    # several ATR and lets reclaim plans chase a finished move.
+    atr = _as_float((plan.get("structure_snapshot") or {}).get("atr"))
+    if atr > 0:
+        max_atr = 2.5
+        if distance > max_atr * atr:
+            return (
+                f"价格距离计划入场 {distance / atr:.1f} ATR，"
+                f"超过最大等待距离 {max_atr:.1f} ATR"
+            )
+        return ""
+    distance_pct = distance / entry * 100.0
     max_distance_pct = max_entry_distance_pct(plan)
     if distance_pct > max_distance_pct:
         return (

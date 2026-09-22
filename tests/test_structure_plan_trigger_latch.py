@@ -75,9 +75,32 @@ class StructurePlanTriggerLatchTests(unittest.TestCase):
             "touch_seen": True,
             "touch_state": "reclaimed",
             "boundary_state": "triggered",
+            "structure_snapshot": {"atr": 0.12},
         }
         self.assertTrue(self.gen._triggered(plan, 94.22))
         self.assertEqual(plan["touch_state"], "reclaimed")
+
+    def test_reclaimed_sweep_does_not_chase_finished_bounce(self):
+        plan = {
+            "plan_id": "usdjpy-m1",
+            "setup_type": "liquidity_sweep_reclaim",
+            "direction": "buy",
+            "entry_mode": "touch_and_reclaim",
+            "entry_price": 157.508,
+            "entry_zone": {"lower": 157.50216286, "upper": 157.51383714},
+            "touch_seen": True,
+            "touch_state": "reclaimed",
+            "boundary_state": "triggered",
+            "take_profit": 158.03048571,
+            "target_candidates": [{
+                "structure_layer": "internal", "price": 157.594,
+            }],
+            "structure_snapshot": {"atr": 0.01621428571428193},
+        }
+        self.assertFalse(self.gen._triggered(plan, 157.58))
+        allowed, reason = self.gen._tick_stop_gate(plan, 157.58)
+        self.assertFalse(allowed)
+        self.assertIn("入场", reason)
 
     def test_reclaimed_plan_resets_when_price_is_too_far(self):
         plan = {

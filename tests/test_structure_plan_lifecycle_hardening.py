@@ -15,6 +15,15 @@ class StructurePlanLifecycleHardeningTests(unittest.TestCase):
     def test_default_max_zone_widths_is_tightened(self):
         self.assertEqual(max_entry_zone_widths({}), 3.5)
 
+    def test_missing_zone_uses_atr_instead_of_percent(self):
+        plan = {
+            "entry_price": 157.508,
+            "structure_snapshot": {"atr": 0.016},
+        }
+        reason = distance_invalidate_reason(plan, 157.58)
+        self.assertIn("ATR", reason)
+        self.assertEqual(distance_invalidate_reason(plan, 157.52), "")
+
     def test_distance_invalidates_before_old_eight_widths(self):
         plan = {
             "direction": "buy",

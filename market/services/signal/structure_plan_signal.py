@@ -2277,11 +2277,10 @@ class StructurePlanSignalGenerator:
                     plan.update(changes)
                     self._tick_state[str(plan.get("plan_id") or "")] = {"touched": False}
                     self.repository.update_payload(plan.get("plan_id"), changes)
-                elif reclaimed:
-                    # Price often leaves the zone on the same Tick that reclaimed.
-                    # Keep the live/paper claim window open until distance
-                    # invalidation, otherwise a disabled account misses the only
-                    # in-zone Tick and the plan never fires again.
+                elif reclaimed and self._reclaim_fill_allowed(plan, price):
+                    # Same-Tick reclaim may step just outside the zone.  Allow
+                    # that overshoot only while price is still within 1 ATR of
+                    # the sweep level; never chase a finished bounce.
                     return True
             if str(plan.get("setup_type") or "").startswith("range_") and str(plan.get("boundary_state") or "") in {"touched", "reclaimed", "triggered"}:
                 if price < lower or price > upper:
@@ -2473,6 +2472,57 @@ class StructurePlanSignalGenerator:
         # invalidate_reason already includes the shared distance rule.
         return invalidate_reason(plan, price)
 
+
+    def _reclaim_fill_allowed(self, plan: Dict, price: float) -> bool:
+        """Allow a reclaim fill only near the swept level.
+
+        In-zone fills stay valid.  A same-Tick step outside the zone is allowed
+        up to 1 ATR from the frozen entry.  Without ATR, allow at most one
+        entry-zone width so FX cannot fall back to a 0.8% chase.
+        """
+        entry = _number(plan.get("entry_price"))
+        price = _number(price)
+        if entry <= 0 or price <= 0:
+            return False
+        zone = plan.get("entry_zone") or {}
+        lower, upper = _number(zone.get("lower")), _number(zone.get("upper"))
+        if lower > 0 and upper > lower and lower <= price <= upper:
+            return True
+        distance = abs(price - entry)
+        atr = _number((plan.get("structure_snapshot") or {}).get("atr"))
+        if atr > 0:
+            return distance <= atr
+        if lower > 0 and upper > lower:
+            return distance <= abs(upper - lower)
+        return False
+
+    def _sweep_has_forward_target(self, plan: Dict, price: float) -> bool:
+        """Reject a sweep reclaim that has already reached its nearest target."""
+        direction = str(plan.get("direction") or "")
+        price = _number(price)
+        atr = _number((plan.get("structure_snapshot") or {}).get("atr"))
+        if direction not in {"buy", "sell"} or price <= 0:
+            return True
+        distances = []
+        take_profit = _number(plan.get("take_profit"))
+        if take_profit > 0:
+            if direction == "buy" and take_profit > price:
+                distances.append(take_profit - price)
+            elif direction == "sell" and take_profit < price:
+                distances.append(price - take_profit)
+        for item in plan.get("target_candidates") or []:
+            target = _number(item.get("price") if isinstance(item, dict) else 0)
+            if direction == "buy" and target > price:
+                distances.append(target - price)
+            elif direction == "sell" and target < price:
+                distances.append(price - target)
+        if not distances:
+            return True
+        nearest = min(distances)
+        if atr > 0:
+            return nearest >= atr
+        return nearest > 0
+
     def _tick_stop_gate(
         self, plan: Dict, price: float, effective_config: Optional[Dict] = None,
     ) -> tuple[bool, str]:
@@ -2481,7 +2531,21 @@ class StructurePlanSignalGenerator:
         snapshot = plan.get("structure_snapshot") or {}
         atr = _number(snapshot.get("atr"))
         stop = _number(plan.get("stop_loss"))
-        if atr <= 0 or stop <= 0 or price <= 0:
+        price = _number(price)
+        if price <= 0:
+            return True, ""
+        if setup == "liquidity_sweep_reclaim":
+            if not self._reclaim_fill_allowed(plan, price):
+                entry = _number(plan.get("entry_price"))
+                distance = abs(price - entry) if entry > 0 else 0.0
+                atr_text = f"{distance / atr:.2f} ATR" if atr > 0 else f"{distance:.5f}"
+                return False, (
+                    f"扫单回收触发价距计划入场 {atr_text}，"
+                    "超过允许范围，等待重新回到入场区"
+                )
+            if not self._sweep_has_forward_target(plan, price):
+                return False, "扫单回收前方结构目标不足 1 ATR，不在高点追入"
+        if atr <= 0 or stop <= 0:
             return True, ""
         ratio = abs(price - stop) / atr
         effective_config = effective_config or {}
