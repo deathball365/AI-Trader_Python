@@ -1055,7 +1055,20 @@ class StructurePlanTests(unittest.TestCase):
         self.assertEqual([item["setup_type"] for item in active], ["range_lower_reversal"])
         self.assertEqual(active[0]["direction"], "buy")
 
-    def test_external_up_blocks_range_upper_sell_even_if_swing_is_sideways(self):
+    def test_downtrend_range_only_keeps_upper_boundary_sell(self):
+        structure = _range_structure()
+        structure["major_state"] = "down"
+        structure["external_state"] = "up"
+        structure["internal_state"] = "up"
+        self.store.rows[-1]["close"] = 119.5
+        plans = StructurePlanBuilder({"enable_range_breakout": False}).build(
+            "source-1", "BTCUSD", "M5", self.store.rows, structure,
+        )
+        active = [item for item in plans if item["status"] == "active"]
+        self.assertEqual([item["setup_type"] for item in active], ["range_upper_reversal"])
+        self.assertEqual(active[0]["direction"], "sell")
+
+    def test_sideways_swing_still_allows_range_upper_when_external_is_up(self):
         structure = _range_structure()
         structure["major_state"] = "sideways"
         structure["external_state"] = "up"
@@ -1064,29 +1077,10 @@ class StructurePlanTests(unittest.TestCase):
         plans = StructurePlanBuilder({"enable_range_breakout": False}).build(
             "source-1", "BTCUSD", "M5", self.store.rows, structure,
         )
-        self.assertNotIn(
+        self.assertIn(
             "range_upper_reversal",
             [item["setup_type"] for item in plans],
         )
-
-    def test_external_up_blocks_sweep_sell_when_swing_is_down(self):
-        structure = {
-            "atr": 2.0, "major_state": "down", "current_state": "down",
-            "external_state": "up", "internal_state": "down",
-            "range": {}, "structure_hierarchy": {
-                "swing": {"bias": "down"}, "external": {"bias": "up"},
-                "internal": {"bias": "down"},
-            },
-            "internal_events": [{
-                "type": "liquidity_sweep", "direction": "up",
-                "level": 110.0, "confirmed_at": 39,
-            }],
-        }
-        plans = StructurePlanBuilder({"enable_structure_location": False}).build(
-            "source-1", "BTCUSD", "M5", self.store.rows, structure,
-        )
-        self.assertEqual(plans[0]["setup_type"], "no_trade")
-        self.assertIn("禁止开空", plans[0]["reason"])
 
     def test_tick_skips_counter_trend_plan_from_snapshot(self):
         repository = _Repository()

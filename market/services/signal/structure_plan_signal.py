@@ -314,31 +314,27 @@ class StructurePlanBuilder:
 
     @classmethod
     def background_bias(cls, structure: Optional[Dict] = None) -> str:
-        """Larger background wins: External if directional, otherwise Swing.
+        """Swing is the permission layer for every symbol.
 
-        Internal never grants permission to fade the background.  A sideways
-        background leaves both directions available for genuine range trades.
+        External is too slow to gate entries. Internal never grants a fade.
         """
-        layers = cls.structure_layers(structure)
-        if layers["external"] in {"up", "down"}:
-            return layers["external"]
-        if layers["swing"] in {"up", "down"}:
-            return layers["swing"]
+        swing = cls.structure_layers(structure)["swing"]
+        if swing in {"up", "down"}:
+            return swing
         return "sideways"
 
     @classmethod
     def counter_trend_reason(
         cls, direction: str, structure: Optional[Dict] = None,
-        setup_type: str = "",
+        setup_type: str = "", config: Optional[Dict] = None,
     ) -> str:
-        """Reject fading Swing/External unless a reversal setup already failed."""
+        """Block shorts in a Swing uptrend and longs in a Swing downtrend."""
         direction = str(direction or "").strip().lower()
         if direction not in {"buy", "sell"}:
             return ""
         structure = structure or {}
         setup = str(setup_type or "").strip().lower()
         phase = str(structure.get("trend_phase") or "").strip().lower()
-        # CHOCH / failed-break reversals may fade only after the trend failed.
         if setup in {"choch_reversal", "range_false_breakout"} and phase == "failed":
             return ""
         layers = cls.structure_layers(structure)
@@ -348,9 +344,9 @@ class StructurePlanBuilder:
             f"External={layers['external']}"
         )
         if bias == "up" and direction == "sell":
-            return f"背景结构上涨，禁止开空（{detail}）"
+            return f"Swing 上涨，禁止开空（{detail}）"
         if bias == "down" and direction == "buy":
-            return f"背景结构下跌，禁止开多（{detail}）"
+            return f"Swing 下跌，禁止开多（{detail}）"
         return ""
 
     def _triangle_breakout_confirmation(
@@ -2585,6 +2581,8 @@ class StructurePlanSignalGenerator:
                         plan["status"] = restored if restored in {"active", "watching"} else "active"
                         plan.pop("event_risk", None)
                 if direction in {"buy", "sell"} and direction not in allowed_directions:
+                    continue
+                if direction not in {"buy", "sell"}:
                     continue
                 blocked = StructurePlanBuilder.counter_trend_reason(
                     direction, plan.get("structure_snapshot") or {}, setup_type,
