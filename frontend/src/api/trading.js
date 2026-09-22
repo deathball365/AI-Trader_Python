@@ -355,7 +355,9 @@ export const accountAPI = {
   },
 
   async getRuntimeStats(accountId) {
-    const response = await api.get(`/accounts/${encodeURIComponent(accountId)}/runtime-stats`)
+    const response = await api.get(`/accounts/${encodeURIComponent(accountId)}/runtime-stats`, {
+      timeout: 30000,
+    })
     return response.data
   },
 

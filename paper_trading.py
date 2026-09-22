@@ -893,9 +893,12 @@ class PaperTradingService:
         # order attribution makes this survive service restarts and also keeps
         # separate paper accounts independent from one another.
         if plan_instance_id:
+            # Timeout/canceled/rejected receipts never became a position.
+            # Counting them as consumed permanently kills the same plan.
             previous_orders = self.storage.fetchall(
                 "SELECT position_attribution_json FROM paper_orders "
                 "WHERE user_id = ? AND account_id = ? AND deployment_id = ? "
+                "AND status IN ('pending', 'filled') "
                 "ORDER BY requested_at DESC LIMIT 200",
                 (
                     int(user_id), int(account_id), deployment["deployment_id"],

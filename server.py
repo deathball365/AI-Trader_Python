@@ -774,9 +774,16 @@ class TradingServer:
                 )
                 continue
             signals = execution_context.signals_for(strategy.strategy_id)
-            self._manage_strategy_positions(
-                strategy, symbol, current_price, signals
-            )
+            try:
+                self._manage_strategy_positions(
+                    strategy, symbol, current_price, signals
+                )
+            except Exception as exc:
+                print(
+                    f"[TradingServer] 持仓管理评估失败 user={self.user_id} "
+                    f"account={self.account_id} strategy={strategy.strategy_id} "
+                    f"symbol={symbol}: {exc}"
+                )
             trigger_count = sum(
                 1 for signal in signals
                 if getattr(signal, "is_entry_trigger", True)

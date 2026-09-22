@@ -603,7 +603,9 @@ class StrategyService:
                 position_policy, action, entry_price,
                 signal_stop_loss=best_signal.suggested_sl,
                 signal_take_profit=best_signal.suggested_tp,
-                pivots=pivots or [], atr=float(context.get("atr", 0)),
+                pivots=pivots or [], atr=float(
+                    getattr(best_signal, "atr", 0) or context.get("atr", 0) or 0
+                ),
                 current_time=int(context.get("time", 0) or 0),
                 setup_context=setup_context,
                 signal_stop_candidates=getattr(best_signal, "stop_candidates", None),

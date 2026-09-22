@@ -219,13 +219,13 @@
           </section>
 
           <section class="execution-funnel-card">
-            <div class="runtime-section-title"><h3>策略执行漏斗</h3><span>北京时间 {{ paperDetail.execution_funnel?.window_start || '今日 00:00' }} 起 · 按账户汇总</span></div>
+            <div class="runtime-section-title"><h3>策略执行漏斗</h3><span>北京时间 {{ funnelWindow(paperDetail.execution_funnel) }} 起 · 按账户汇总</span></div>
             <div class="execution-funnel-grid">
-              <article><span>计划数</span><strong>{{ paperDetail.execution_funnel?.plans || 0 }}</strong></article>
-              <i>→</i><article><span>方向形成</span><strong>{{ paperDetail.execution_funnel?.directions || 0 }}</strong></article>
-              <i>→</i><article><span>触发数</span><strong>{{ paperDetail.execution_funnel?.triggered || 0 }}</strong></article>
-              <i>→</i><article><span>风控通过</span><strong>{{ paperDetail.execution_funnel?.risk_passed || 0 }}</strong></article>
-              <i>→</i><article><span>下单数</span><strong>{{ paperDetail.execution_funnel?.ordered || 0 }}</strong></article>
+              <article><span>计划数</span><strong>{{ funnelNumber(paperDetail.execution_funnel, 'plans') }}</strong></article>
+              <i>→</i><article><span>方向形成</span><strong>{{ funnelNumber(paperDetail.execution_funnel, 'directions') }}</strong></article>
+              <i>→</i><article><span>触发数</span><strong>{{ funnelNumber(paperDetail.execution_funnel, 'triggered') }}</strong></article>
+              <i>→</i><article><span>风控通过</span><strong>{{ funnelNumber(paperDetail.execution_funnel, 'risk_passed') }}</strong></article>
+              <i>→</i><article><span>下单数</span><strong>{{ funnelNumber(paperDetail.execution_funnel, 'ordered') }}</strong></article>
             </div>
             <div v-if="paperDetail.execution_funnel?.blocked_reasons?.length" class="funnel-blocks">主要拦截：<span v-for="item in paperDetail.execution_funnel.blocked_reasons" :key="item.reason_code">{{ item.label }} {{ item.count }} 次</span></div>
           </section>
@@ -560,13 +560,13 @@
           </section>
 
           <section class="execution-funnel-card">
-            <div class="runtime-section-title"><h3>策略执行漏斗</h3><span>北京时间 {{ liveDetail.execution_funnel?.window_start || '今日 00:00' }} 起 · 按账户汇总</span></div>
+            <div class="runtime-section-title"><h3>策略执行漏斗</h3><span>北京时间 {{ funnelWindow(liveDetail.execution_funnel) }} 起 · 按账户汇总</span></div>
             <div class="execution-funnel-grid">
-              <article><span>计划数</span><strong>{{ liveDetail.execution_funnel?.plans || 0 }}</strong></article>
-              <i>→</i><article><span>方向形成</span><strong>{{ liveDetail.execution_funnel?.directions || 0 }}</strong></article>
-              <i>→</i><article><span>触发数</span><strong>{{ liveDetail.execution_funnel?.triggered || 0 }}</strong></article>
-              <i>→</i><article><span>风控通过</span><strong>{{ liveDetail.execution_funnel?.risk_passed || 0 }}</strong></article>
-              <i>→</i><article><span>下单数</span><strong>{{ liveDetail.execution_funnel?.ordered || 0 }}</strong></article>
+              <article><span>计划数</span><strong>{{ funnelNumber(liveDetail.execution_funnel, 'plans') }}</strong></article>
+              <i>→</i><article><span>方向形成</span><strong>{{ funnelNumber(liveDetail.execution_funnel, 'directions') }}</strong></article>
+              <i>→</i><article><span>触发数</span><strong>{{ funnelNumber(liveDetail.execution_funnel, 'triggered') }}</strong></article>
+              <i>→</i><article><span>风控通过</span><strong>{{ funnelNumber(liveDetail.execution_funnel, 'risk_passed') }}</strong></article>
+              <i>→</i><article><span>下单数</span><strong>{{ funnelNumber(liveDetail.execution_funnel, 'ordered') }}</strong></article>
             </div>
             <div v-if="liveDetail.execution_funnel?.blocked_reasons?.length" class="funnel-blocks">主要拦截：<span v-for="item in liveDetail.execution_funnel.blocked_reasons" :key="item.reason_code">{{ item.label }} {{ item.count }} 次</span></div>
           </section>
@@ -1334,21 +1334,34 @@ async function loadPaperRuntimeLogs(accountId) {
   }
 }
 
+function funnelWindow(funnel) {
+  return funnel?.window_start || '今日 00:00'
+}
+
+function funnelNumber(funnel, key) {
+  const value = Number(funnel?.[key])
+  return Number.isFinite(value) ? value : 0
+}
+
 async function applyRuntimeStats(target, accountId) {
   if (!target.value) return
   runtimeStatsLoading.value = true
   try {
     const data = await accountAPI.getRuntimeStats(accountId)
-    if (!target.value || target.value.account?.account_id !== accountId) return
-    target.value = {
-      ...target.value,
-      today_trade_stats: data.today_trade_stats || {},
-      execution_funnel: data.execution_funnel || {},
-      strategy_performance: data.strategy_performance || [],
+    if (!target.value) return
+    if (data.execution_funnel) {
+      target.value = {
+        ...target.value,
+        today_trade_stats: data.today_trade_stats || target.value.today_trade_stats || {},
+        execution_funnel: data.execution_funnel,
+        strategy_performance: data.strategy_performance || target.value.strategy_performance || [],
+      }
     }
   } catch (error) {
-    messageType.value = 'error'
-    message.value = error.response?.data?.detail || '加载运行台统计失败'
+    if (!target.value?.execution_funnel?.window_start) {
+      messageType.value = 'error'
+      message.value = error.response?.data?.detail || '加载运行台统计失败'
+    }
   } finally {
     runtimeStatsLoading.value = false
   }
@@ -1362,9 +1375,9 @@ async function openPaperRuntime(account) {
     )
     paperDetail.value = {
       ...data.detail,
-      today_trade_stats: {},
-      execution_funnel: {},
-      strategy_performance: [],
+      today_trade_stats: data.detail.today_trade_stats || {},
+      execution_funnel: data.detail.execution_funnel || {},
+      strategy_performance: data.detail.strategy_performance || [],
     }
     expandedPaperPositions.value = new Set()
     selectedStrategyId.value = ''
@@ -1391,9 +1404,9 @@ async function openLiveRuntime(account) {
     const data = await accountAPI.getLiveMonitoring(account.account_id, ...equityRangeParams(liveEquityRange.value))
     liveDetail.value = {
       ...data.detail,
-      today_trade_stats: {},
-      execution_funnel: {},
-      strategy_performance: [],
+      today_trade_stats: data.detail.today_trade_stats || {},
+      execution_funnel: data.detail.execution_funnel || {},
+      strategy_performance: data.detail.strategy_performance || [],
     }
     expandedLivePositions.value = new Set()
     liveDialog.value = true

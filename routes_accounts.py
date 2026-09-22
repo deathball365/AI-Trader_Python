@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from auth import AuthUser, require_auth
 from membership import MembershipService
-from market.services.account_strategy_performance import build_live_performance
+from market.services.account_strategy_performance import build_live_performance, build_paper_performance
 from market.services.today_trade_stats import today_trade_stats
 from market.models.trading_strategy import StrategyLifecycle
 from market.services.live_strategy_promotion import promotion_candidate_accounts
@@ -82,7 +82,8 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
         funnel_row = storage.fetchone(
             f"""
             SELECT
-              COUNT(DISTINCT CASE WHEN p.plan_id<>'' THEN p.plan_id END) AS plans,
+              COUNT(DISTINCT CASE
+                WHEN p.setup_type<>'no_trade' THEN p.plan_id END) AS plans,
               COUNT(DISTINCT CASE
                 WHEN p.direction IN ('buy','sell') THEN p.plan_id END) AS directions
             FROM structure_trade_plans p
@@ -90,9 +91,9 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
               AND p.account_id=0
               AND p.symbol IN ({symbol_placeholders})
               AND {strategy_clause}
-              AND p.created_at>=?
+              AND (p.created_at>=? OR p.updated_at>=?)
             """,
-            tuple(plan_params),
+            tuple(plan_params + [since]),
         ) or funnel_row
     params = (int(user_id), int(account_id), since)
     # Trigger/order counts come from execution_gate_audits, not
@@ -123,12 +124,52 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
             triggered += count
         if status == 'ordered':
             risk_passed += count
-            ordered += count
-        if status == 'blocked':
+        if status == 'blocked' or (
+            status == 'no_action' and reason not in {'no_direction', 'no_new_trigger'}
+        ):
             blocks.append({
                 'reason_code': reason,
                 'n': occurrences,
             })
+    filled_row = storage.fetchone(
+        """
+        SELECT COUNT(*) AS n FROM paper_orders
+        WHERE user_id=? AND account_id=? AND status='filled'
+          AND COALESCE(filled_at, requested_at)>=?
+        """,
+        params,
+    ) or {}
+    live_filled_row = storage.fetchone(
+        """
+        SELECT COUNT(*) AS n FROM trade_execution_reports
+        WHERE user_id=? AND account_id=? AND success=1
+          AND LOWER(action) IN ('b','s','buy','sell')
+          AND reported_at>=?
+        """,
+        params,
+    ) or {}
+    ordered = int(filled_row.get("n") or 0) + int(live_filled_row.get("n") or 0)
+    timeout_row = storage.fetchone(
+        """
+        SELECT COUNT(*) AS n FROM paper_orders
+        WHERE user_id=? AND account_id=?
+          AND status IN ('canceled','rejected')
+          AND requested_at>=?
+          AND rejection_reason LIKE ?
+        """,
+        (*params, "%撮合超时%"),
+    ) or {}
+    timeout_count = int(timeout_row.get("n") or 0)
+    if timeout_count:
+        blocks.append({"reason_code": "timeout", "n": timeout_count})
+    merged = {}
+    for item in blocks:
+        reason = str(item.get('reason_code') or '')
+        merged[reason] = merged.get(reason, 0) + int(item.get('n') or 0)
+    blocks = [
+        {'reason_code': reason, 'n': count}
+        for reason, count in merged.items()
+    ]
     blocks.sort(key=lambda item: int(item.get('n') or 0), reverse=True)
     blocks = blocks[:8]
     reason_labels = {
@@ -140,6 +181,8 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
         "invalid_volume": "手数无效",
         "technical_failure": "技术错误",
         "entry_guard": "入场门禁拦截",
+        "trading_disabled": "账户交易开关关闭",
+        "timeout": "模拟撮合超时",
     }
     return {
         "window_start": f"{today_beijing.isoformat()} 00:00",
@@ -156,6 +199,27 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
              "count": int(row['n'] or 0)}
             for row in blocks
         ],
+    }
+
+
+def _runtime_stats_payload(storage, user_id: int, account) -> Dict:
+    account_id = int(account.account_id)
+    if account.account_type == "paper":
+        performance = build_paper_performance(storage, user_id, account_id)
+    else:
+        positions = []
+        for payload in RuntimeStateRepository(user_id, account_id, storage).list_entities(
+            "position", statuses=["open"],
+        ):
+            if isinstance(payload, dict):
+                positions.append(payload)
+        performance = build_live_performance(storage, user_id, account_id, positions)
+    return {
+        "today_trade_stats": today_trade_stats(
+            storage, user_id, account_id, account.account_type,
+        ),
+        "execution_funnel": _execution_funnel(storage, user_id, account_id),
+        "strategy_performance": performance,
     }
 
 
@@ -592,6 +656,11 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 user.user_id, account_id, page=page, page_size=page_size,
                 equity_from=equity_from, equity_to=equity_to,
             )
+            account = repository.get_by_id(user.user_id, account_id)
+            if account is not None:
+                detail.update(_runtime_stats_payload(
+                    repository.storage, user.user_id, account,
+                ))
             return {"status": "ok", "detail": detail}
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -754,6 +823,9 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 "trades": trades,
                 "execution_reports": execution_reports,
                 "equity_curve": [],
+                **_runtime_stats_payload(
+                    repositories.storage, user.user_id, account,
+                ),
             },
         }
 
@@ -765,32 +837,11 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
         account = repository.get_by_id(user.user_id, account_id)
         if account is None:
             raise HTTPException(status_code=404, detail="交易账户不存在")
-        if account.account_type == "paper":
-            performance = build_paper_performance(
-                repository.storage, user.user_id, account_id,
-            )
-        elif account.account_type in {"mt5", "ibkr"}:
-            positions = []
-            for payload in RuntimeStateRepository(
-                user.user_id, account_id, repositories.storage,
-            ).list_entities("position", statuses=["open"]):
-                if isinstance(payload, dict):
-                    positions.append(payload)
-            performance = build_live_performance(
-                repository.storage, user.user_id, account_id, positions,
-            )
-        else:
+        if account.account_type not in {"paper", "mt5", "ibkr"}:
             raise HTTPException(status_code=404, detail="该账户没有运行台统计")
-        return {
-            "status": "ok",
-            "today_trade_stats": today_trade_stats(
-                repository.storage, user.user_id, account_id, account.account_type,
-            ),
-            "execution_funnel": _execution_funnel(
-                repository.storage, user.user_id, account_id,
-            ),
-            "strategy_performance": performance,
-        }
+        return {"status": "ok", **_runtime_stats_payload(
+            repository.storage, user.user_id, account,
+        )}
 
     @router.get("/accounts/{account_id}/live-monitoring/equity-curve")
     async def get_live_equity_curve(

@@ -3277,7 +3277,22 @@ class PositionManagementPolicyRepository:
         self.storage = storage or get_storage()
 
     @staticmethod
-    def _row_to_policy(row):
+    def _policy_datetime(value):
+        if isinstance(value, datetime):
+            return value
+        try:
+            ts = float(value or 0)
+        except (TypeError, ValueError):
+            return datetime.now()
+        if ts > 1_000_000_000_000:
+            ts /= 1000.0
+        try:
+            return datetime.fromtimestamp(ts)
+        except (OverflowError, OSError, ValueError):
+            return datetime.now()
+
+    @classmethod
+    def _row_to_policy(cls, row):
         from market.models import PositionManagementPolicy
 
         return PositionManagementPolicy.from_dict({
@@ -3289,8 +3304,8 @@ class PositionManagementPolicyRepository:
             "source_owner_user_id": row["source_owner_user_id"],
             "source_owner_username": row["source_owner_username"],
             "config": json.loads(row["config_json"]),
-            "created_at": datetime.fromtimestamp(row["created_at"]),
-            "updated_at": datetime.fromtimestamp(row["updated_at"]),
+            "created_at": cls._policy_datetime(row["created_at"]),
+            "updated_at": cls._policy_datetime(row["updated_at"]),
         })
 
     def _raw_get(self, user_id: int, policy_id: str):

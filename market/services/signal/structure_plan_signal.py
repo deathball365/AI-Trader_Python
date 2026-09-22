@@ -2194,18 +2194,16 @@ class StructurePlanSignalGenerator:
         zone = plan.get("entry_zone") or {}
         lower, upper = _number(zone.get("lower")), _number(zone.get("upper"))
         if lower <= 0 or upper <= 0 or not lower <= price <= upper:
-            if str(plan.get("setup_type") or "").startswith("range_") and str(plan.get("boundary_state") or "") in {"touched", "reclaimed", "triggered"}:
-                # A boundary opportunity becomes eligible for a future cycle
-                # only after price has left its entry zone.
-                if price < lower or price > upper:
-                    plan["boundary_state"] = "left_boundary"
-                    self.repository.update_payload(plan.get("plan_id"), {"boundary_state": "left_boundary"})
+            reclaimed = str(plan.get("touch_state") or "") == "reclaimed" or str(
+                plan.get("boundary_state") or ""
+            ) == "triggered"
+            far = bool(distance_invalidate_reason(plan, price))
             # A reclaim that has drifted well outside its zone must re-touch.
             if str(plan.get("entry_mode") or "") == "touch_and_reclaim" and (
                 plan.get("touch_seen")
                 or str(plan.get("touch_state") or "") in {"touched", "reclaimed"}
             ):
-                if distance_invalidate_reason(plan, price):
+                if far:
                     changes = {
                         "touch_seen": False,
                         "touch_state": "unvisited",
@@ -2214,6 +2212,16 @@ class StructurePlanSignalGenerator:
                     plan.update(changes)
                     self._tick_state[str(plan.get("plan_id") or "")] = {"touched": False}
                     self.repository.update_payload(plan.get("plan_id"), changes)
+                elif reclaimed:
+                    # Price often leaves the zone on the same Tick that reclaimed.
+                    # Keep the live/paper claim window open until distance
+                    # invalidation, otherwise a disabled account misses the only
+                    # in-zone Tick and the plan never fires again.
+                    return True
+            if str(plan.get("setup_type") or "").startswith("range_") and str(plan.get("boundary_state") or "") in {"touched", "reclaimed", "triggered"}:
+                if price < lower or price > upper:
+                    plan["boundary_state"] = "left_boundary"
+                    self.repository.update_payload(plan.get("plan_id"), {"boundary_state": "left_boundary"})
             return False
         mode = str(plan.get("entry_mode") or "")
         if mode in {"breakout_retest", "touch_or_near", "trend_pullback_reclaim"}:
@@ -2484,7 +2492,11 @@ class StructurePlanSignalGenerator:
                         if beijing_hour in blocked_hours:
                             continue
                     event = active_event(effective, symbol, period, setup_type, now)
-                    if event:
+                    already_confirmed = (
+                        str(plan.get("touch_state") or "") == "reclaimed"
+                        or str(plan.get("boundary_state") or "") == "triggered"
+                    )
+                    if event and not already_confirmed:
                         suppress_plan = getattr(self.repository, "suppress_plan", None)
                         if suppress_plan:
                             suppress_plan(plan_id, event)
@@ -2562,6 +2574,8 @@ class StructurePlanSignalGenerator:
                 created_at=datetime.now(),
                 expires_at=datetime.fromtimestamp(expires_at) if expires_at else datetime.now()+timedelta(seconds=300),
             ))
+            snapshot = plan.get("structure_snapshot") or {}
+            signals[-1].atr = _number(snapshot.get("atr"))
         if signals:
             return signals
         reason = (

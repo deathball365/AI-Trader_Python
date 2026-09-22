@@ -338,8 +338,11 @@ class StructurePlanTests(unittest.TestCase):
         generator.refresh_plans(
             "BTCUSD", "M5", strategy, _range_structure()
         )
+        # 110 is more than 3.5 entry-zone widths away and would retire the
+        # waiter. Stay just outside the zone to prove the Tick path waits
+        # without destroying the same plan.
         self.assertFalse(generator.generate_signals_for_strategy(
-            "BTCUSD", 110.0, strategy
+            "BTCUSD", 101.2, strategy
         )[0].state_ready)
         signal = generator.generate_signals_for_strategy(
             "BTCUSD", 99.8, strategy
@@ -372,6 +375,34 @@ class StructurePlanTests(unittest.TestCase):
             )[0]
         self.assertTrue(signal.state_ready)
         self.assertEqual(signal.action, "buy")
+        self.assertEqual(repository.plans[0]["status"], "active")
+
+    def test_event_window_does_not_suppress_already_reclaimed_plan(self):
+        repository = _Repository()
+        generator = StructurePlanSignalGenerator(self.store, repository, 1, 2)
+        strategy = _Strategy()
+        repository.plans = [{
+            "plan_id": "plan-gold", "plan_group_id": "group-1",
+            "status": "active", "direction": "sell",
+            "setup_type": "liquidity_sweep_reclaim",
+            "setup_family": "liquidity", "entry_mode": "touch_and_reclaim",
+            "entry_zone": {"lower": 4335.49, "upper": 4340.17},
+            "entry_price": 4337.83, "stop_loss": 4339.44, "take_profit": 4312.46,
+            "reason": "扫高点后回落", "valid_from": 1, "expires_at": 0,
+            "touch_seen": True, "touch_state": "reclaimed",
+            "boundary_state": "triggered",
+        }]
+        generator._cache[("market-structure", "GOLD#", "M5")] = list(repository.plans)
+        with patch(
+            "market.services.signal.structure_plan_signal.active_event",
+            return_value={"id": "new_york_open", "reason": "纽约开盘风险窗口"},
+        ):
+            signals = generator.generate_signals_for_strategy(
+                "GOLD#", 4333.3, strategy,
+            )
+        self.assertTrue(signals)
+        self.assertEqual(signals[0].action, "sell")
+        self.assertTrue(signals[0].is_entry_trigger)
         self.assertEqual(repository.plans[0]["status"], "active")
 
     def test_refresh_keeps_repository_retained_plans_in_tick_cache(self):

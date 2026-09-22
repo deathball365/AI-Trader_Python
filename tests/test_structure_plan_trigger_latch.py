@@ -64,6 +64,36 @@ class StructurePlanTriggerLatchTests(unittest.TestCase):
         reason = self.gen._event_invalidated(plan, 85451.35)
         self.assertIn("倍入场区宽度", reason)
 
+    def test_reclaimed_plan_still_triggers_just_outside_zone(self):
+        plan = {
+            "plan_id": "oil-m1",
+            "setup_type": "range_false_breakout",
+            "direction": "buy",
+            "entry_mode": "touch_and_reclaim",
+            "entry_price": 94.1417,
+            "entry_zone": {"lower": 94.1068, "upper": 94.1767},
+            "touch_seen": True,
+            "touch_state": "reclaimed",
+            "boundary_state": "triggered",
+        }
+        self.assertTrue(self.gen._triggered(plan, 94.22))
+        self.assertEqual(plan["touch_state"], "reclaimed")
+
+    def test_reclaimed_plan_resets_when_price_is_too_far(self):
+        plan = {
+            "plan_id": "oil-m1-far",
+            "setup_type": "range_false_breakout",
+            "direction": "buy",
+            "entry_mode": "touch_and_reclaim",
+            "entry_price": 94.1417,
+            "entry_zone": {"lower": 94.1068, "upper": 94.1767},
+            "touch_seen": True,
+            "touch_state": "reclaimed",
+            "boundary_state": "triggered",
+        }
+        self.assertFalse(self.gen._triggered(plan, 95.5))
+        self.assertEqual(plan["touch_state"], "unvisited")
+
 
 if __name__ == "__main__":
     unittest.main()

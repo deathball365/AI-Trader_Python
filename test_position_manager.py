@@ -384,6 +384,58 @@ class PositionManagerTests(unittest.TestCase):
         self.assertEqual(plan.stop_rule["type"], "fixed_percent")
         self.assertEqual(plan.take_profit_rule["type"], "risk_reward")
 
+    def test_structure_plan_signal_stop_skips_percent_ceiling(self):
+        plan = PositionManager().create_plan(
+            policy({
+                "initial_stop_rules": [{"type": "signal"}],
+                "initial_take_profit_rules": [{"type": "risk_reward", "value": 2}],
+                "management_rules": [],
+                "min_risk_reward": 0,
+                "min_stop_percent": 0.02,
+                "max_stop_percent": 0.7,
+            }),
+            "sell", 94.77, signal_stop_loss=97.90,
+            signal_take_profit=88.51,
+            setup_context={
+                "signal_source": "structure_plan",
+                "setup_type": "range_lower_reversal",
+            },
+        )
+        self.assertAlmostEqual(plan.stop_loss, 97.90, places=2)
+
+    def test_generic_signal_stop_still_honors_percent_ceiling(self):
+        with self.assertRaisesRegex(ValueError, "超过持仓管理方案最大比例"):
+            PositionManager().create_plan(
+                policy({
+                    "initial_stop_rules": [{"type": "signal"}],
+                    "initial_take_profit_rules": [{"type": "risk_reward", "value": 2}],
+                    "management_rules": [],
+                    "min_risk_reward": 0,
+                    "min_stop_percent": 0.02,
+                    "max_stop_percent": 0.7,
+                }),
+                "sell", 94.77, signal_stop_loss=97.90,
+                signal_take_profit=88.51,
+                setup_context={"signal_source": "pivot"},
+            )
+
+    def test_generic_signal_stop_allows_three_atr(self):
+        plan = PositionManager().create_plan(
+            policy({
+                "initial_stop_rules": [{"type": "signal"}],
+                "initial_take_profit_rules": [{"type": "risk_reward", "value": 2}],
+                "management_rules": [],
+                "min_risk_reward": 0,
+                "min_stop_percent": 0.02,
+                "max_stop_percent": 0.7,
+            }),
+            "sell", 100.0, signal_stop_loss=101.5,
+            signal_take_profit=97.0,
+            atr=0.6,
+            setup_context={"signal_source": "pivot"},
+        )
+        self.assertEqual(plan.stop_loss, 101.5)
+
     def test_max_holding_bars_uses_rule_period(self):
         action = PositionManager().evaluate(
             {"management_rules": [{

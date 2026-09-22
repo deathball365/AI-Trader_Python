@@ -369,11 +369,17 @@ class PositionManager:
         # order.  Keep the configured ceiling as the first limit, but permit a
         # signal stop up to 3 ATR when ATR is available; explicit absolute
         # max_stop_distance values remain hard limits.
-        signal_stop_exception = bool(signal_stop_loss) and bool(atr) and not bool(
+        signal_stop_exception = bool(signal_stop_loss) and not bool(
             config.get("max_stop_distance", 0)
         )
-        allowed_maximum = max(maximum, float(atr or 0) * 3.0) if signal_stop_exception else maximum
-        if allowed_maximum and risk > allowed_maximum:
+        structure_signal_stop = (
+            signal_stop_exception
+            and str((setup_context or {}).get("signal_source") or "") == "structure_plan"
+        )
+        allowed_maximum = maximum
+        if signal_stop_exception and atr:
+            allowed_maximum = max(maximum, float(atr) * 3.0)
+        if allowed_maximum and risk > allowed_maximum and not structure_signal_stop:
             raise ValueError(
                 f"止损距离 {risk:.2f} 超过持仓管理方案最大比例 "
                 f"{float(config.get('max_stop_percent', 0) or 0):.2f}%"
