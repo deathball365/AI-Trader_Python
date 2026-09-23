@@ -32,6 +32,7 @@ from repositories.trading import PositionManagementEventRepository
 from repositories.trading import TradeExecutionRepository
 from repositories.execution_gate_audits import ExecutionGateAuditRepository
 from market.services.entry_guard_service import EntryGuardService
+from market.services.same_setup_repeat_guard import SameSetupRepeatGuard
 from market.services.paper_execution_reporter import PaperExecutionReporter
 from market.services.paper_matching_engine import PaperMatchingEngine
 from market.services.paper_order_service import PaperOrderService
@@ -928,6 +929,13 @@ class PaperTradingService:
                         "plan_instance_id": plan_instance_id,
                         "reason": "本交易计划已经触发过，不在该模拟部署重复开仓",
                     }
+
+        repeat = SameSetupRepeatGuard(self.storage).check(
+            user_id=user_id, account_id=account_id, strategy=strategy,
+            signal=signal, execution_mode="paper", action=action,
+        )
+        if not repeat.get("allowed", True):
+            return repeat
 
         config = policy_config or {}
         if not bool(config.get("loss_streak_circuit_breaker_enabled", True)):

@@ -75,6 +75,7 @@ from market.services.execution_eligibility import (
 from market.services.runtime_status_query_service import RuntimeStatusQueryService
 from market.services.strategy_runtime_coordinator import StrategyRuntimeCoordinator
 from market.services.entry_guard_service import EntryGuardService
+from market.services.same_setup_repeat_guard import SameSetupRepeatGuard
 from instrument_price_store import get_instrument_price_store
 from account_notification_service import AccountNotificationService
 
@@ -141,6 +142,9 @@ class TradingServer:
         self.kline_store = (
             market_data_source.kline_store
             if market_data_source is not None else KlineStore()
+        )
+        self.entry_guard_service.repeat_guard = SameSetupRepeatGuard(
+            self.repositories.storage, self.kline_store,
         )
         self.pivot_store = (
             market_data_source.pivot_store
@@ -808,6 +812,7 @@ class TradingServer:
                 entry_guard=lambda symbol, strategy, action, signal: self.entry_guard_service.check_live(
                     int(self.user_id or 0), int(self.account_id or 0), strategy, signal,
                     enabled=bool(self.user_id and self.account_id and self._runtime_repository),
+                    action=action,
                 ),
                 audit_no_action=True,
             )
