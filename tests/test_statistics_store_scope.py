@@ -56,6 +56,38 @@ class StatisticsStoreScopeTests(unittest.TestCase):
         self.assertEqual(store.get_spread("gold#"), 0.18)
         self.assertEqual(store.get_spread("BTCUSD#"), 12.0)
 
+
+    def test_spread_only_heartbeat_does_not_erase_account_snapshot(self):
+        store = StatisticsStore()
+        owner = StatisticsData.from_ea_data({
+            "symbol": "USDJPY#",
+            "timestamp": "2026-09-23 22:00:00",
+            "bidPrice": 157.9,
+            "askPrice": 157.91,
+            "balance": 192.4,
+            "equity": 188.1,
+            "freeMargin": 120.0,
+            "margin": 68.1,
+            "marginLevel": 276.2,
+        })
+        store.add(owner)
+        child = StatisticsData.from_ea_data({
+            "symbol": "GOLD#",
+            "timestamp": "2026-09-23 22:00:30",
+            "bidPrice": 4301.1,
+            "askPrice": 4301.4,
+            "tickCount": 80,
+            "spread": 0.3,
+            "spreadPoints": 30,
+        })
+        store.add(child)
+        info = store.get_account_info()
+        self.assertFalse(child.has_account_snapshot)
+        self.assertEqual(info["balance"], 192.4)
+        self.assertEqual(info["equity"], 188.1)
+        self.assertEqual(info["free_margin"], 120.0)
+        self.assertEqual(store.get_spread("GOLD#"), 0.3)
+
     def test_get_spread_falls_back_to_ask_minus_bid(self):
         store = StatisticsStore()
         store.add(StatisticsData(

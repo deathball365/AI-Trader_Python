@@ -71,5 +71,19 @@ class RiskManagerVolumeTest(unittest.TestCase):
         self.assertNotIn("将超过每日风险限制", " ".join(result["warnings"]))
 
 
+
+    def test_zero_statistics_do_not_uninitialize_account(self):
+        class _Stats:
+            def get_account_info(self):
+                return {"balance": 0, "equity": 0, "free_margin": 0}
+
+        manager = RiskManager()
+        manager.set_statistics_service(_Stats())
+        manager.update_account_info(192.4, 188.1, 120.0)
+        result = manager.check_risk("GOLD#", 0.01, 1)
+        self.assertTrue(result["account_initialized"])
+        self.assertNotIn("账户信息未初始化，禁止自动交易", result["warnings"])
+        self.assertEqual(manager.get_account_balance(), 192.4)
+
 if __name__ == "__main__":
     unittest.main()

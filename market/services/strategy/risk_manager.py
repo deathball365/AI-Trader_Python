@@ -93,13 +93,21 @@ class RiskManager:
 
         try:
             account_info = self._statistics_service.get_account_info()
-            if account_info:
-                self._account_balance = account_info.get('balance', 0.0)
-                self._account_equity = account_info.get('equity', 0.0)
-                self._free_margin = account_info.get(
-                    'free_margin',
-                    account_info.get('equity', 0.0),
-                )
+            if not account_info:
+                return
+            balance = float(account_info.get("balance") or 0)
+            equity = float(account_info.get("equity") or 0)
+            free_margin = float(account_info.get(
+                "free_margin",
+                account_info.get("equity") or 0,
+            ) or 0)
+            # A spread-only heartbeat reports 0 funds.  Keep the last seeded
+            # or owner-chart snapshot instead of classifying the account as
+            # uninitialized on the next live Tick.
+            if balance > 0 or equity > 0 or free_margin > 0:
+                self._account_balance = balance
+                self._account_equity = equity
+                self._free_margin = free_margin
         except Exception as e:
             print(f"[RiskManager] 刷新账户信息失败: {e}")
 

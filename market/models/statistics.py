@@ -36,6 +36,8 @@ class StatisticsData:
     margin_level: float
     free_margin: float = 0.0
     margin: float = 0.0
+    # Non-owner charts omit balance/equity.  Missing is not the same as zero.
+    has_account_snapshot: bool = True
 
     # 其他
     tick_count: int = 0
@@ -73,6 +75,9 @@ class StatisticsData:
             legacy_wall_field="timestamp",
         )
 
+        has_account_snapshot = (
+            data.get('balance') is not None and data.get('equity') is not None
+        )
         return cls(
             symbol=data.get('symbol', ''),
             timestamp=timestamp,
@@ -80,10 +85,11 @@ class StatisticsData:
             ask_price=float(data.get('askPrice', 0)),
             spread=float(data.get('spread', 0)),
             spread_points=float(data.get('spreadPoints', 0)),
-            balance=float(data.get('balance', 0)),
-            equity=float(data.get('equity', 0)),
-            margin_level=float(data.get('marginLevel', 0)),
-            free_margin=float(data.get('freeMargin', data.get('equity', 0))),
-            margin=float(data.get('margin', 0)),
+            balance=float(data.get('balance') or 0),
+            equity=float(data.get('equity') or 0),
+            margin_level=float(data.get('marginLevel') or 0),
+            free_margin=float(data.get('freeMargin', data.get('equity')) or 0),
+            margin=float(data.get('margin') or 0),
+            has_account_snapshot=has_account_snapshot,
             tick_count=int(data.get('tickCount', 0))
         )

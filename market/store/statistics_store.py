@@ -54,30 +54,44 @@ class StatisticsStore:
 
         print(f"[StatisticsStore] 统计数据存储已初始化 (max_per_symbol={max_per_symbol}, max_total={max_total})")
 
+    @staticmethod
+    def _account_fields(data: StatisticsData) -> Dict:
+        return {
+            "balance": data.balance,
+            "equity": data.equity,
+            "margin_level": data.margin_level,
+            "free_margin": data.free_margin,
+            "margin": data.margin,
+            "updated_at": (
+                data.timestamp.isoformat()
+                if data.timestamp
+                else datetime.now().isoformat()
+            ),
+        }
+
+    @staticmethod
+    def _has_funds(info: Optional[Dict]) -> bool:
+        if not info:
+            return False
+        return any(
+            float(info.get(key) or 0) > 0
+            for key in ("balance", "equity", "free_margin")
+        )
+
     def add(self, data: StatisticsData) -> None:
         """添加统计数据"""
         with self._lock:
             self._by_symbol[data.symbol].append(data)
             self._all_data.append(data)
-            if self._repository:
-                self._persisted_account_info = {
-                    "balance": data.balance,
-                    "equity": data.equity,
-                    "margin_level": data.margin_level,
-                    "free_margin": data.free_margin,
-                    "margin": data.margin,
-                    "updated_at": (
-                        data.timestamp.isoformat()
-                        if data.timestamp
-                        else datetime.now().isoformat()
-                    ),
-                }
-                self._repository.upsert_entity(
-                    "account_snapshot",
-                    "latest",
-                    self._persisted_account_info,
-                    status="active",
-                )
+            if getattr(data, "has_account_snapshot", True):
+                self._persisted_account_info = self._account_fields(data)
+                if self._repository:
+                    self._repository.upsert_entity(
+                        "account_snapshot",
+                        "latest",
+                        self._persisted_account_info,
+                        status="active",
+                    )
 
     def get_latest(self, symbol: str = None) -> Optional[StatisticsData]:
         """获取最新的统计数据"""
@@ -130,19 +144,31 @@ class StatisticsStore:
     def get_account_info(self, symbol: str = None) -> Dict:
         """获取账户信息"""
         latest = self.get_latest(symbol)
+        persisted = self._persisted_account_info
         if not latest:
-            return self._persisted_account_info or {
+            return persisted or {
                 "balance": 0,
                 "equity": 0,
                 "margin_level": 0
             }
-        return {
+        info = {
             "balance": latest.balance,
             "equity": latest.equity,
             "margin_level": latest.margin_level,
             "free_margin": latest.free_margin,
             "margin": latest.margin,
         }
+        # Spread-only heartbeats from non-owner charts must not erase the
+        # last funded snapshot.  Missing balance is encoded as 0 by the EA
+        # payload parser, so fall back whenever this row has no funds.
+        if (
+            not getattr(latest, "has_account_snapshot", True)
+            or not self._has_funds(info)
+        ) and self._has_funds(persisted):
+            for key in ("balance", "equity", "margin_level", "free_margin", "margin"):
+                if key in persisted:
+                    info[key] = persisted[key]
+        return info
 
     def get_all_recent(self, count: int = 10) -> List[StatisticsData]:
         """获取最近的所有统计数据"""
