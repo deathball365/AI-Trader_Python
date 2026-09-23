@@ -795,6 +795,7 @@ class KeyLevelSignalGenerator:
                 signal.is_entry_trigger = False
             signal.source_period = config["period"]
             signal.signal_source_id = source_id
+            signal.atr = float(atr or 0)
             signals.append(signal)
             for special in extra_level_19:
                 special_setup = str(special.setup_type or "")
@@ -814,6 +815,7 @@ class KeyLevelSignalGenerator:
                         continue
                 special.source_period = config["period"]
                 special.signal_source_id = source_id
+                special.atr = float(atr or 0)
                 signals.append(special)
         return signals
 

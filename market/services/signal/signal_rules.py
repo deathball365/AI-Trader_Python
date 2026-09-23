@@ -340,15 +340,8 @@ def build_key_level_state_signal(
     elif current_price < nearest:
         direction = "down"
 
-    # Integer/round-number signals use the key level itself as the
-    # invalidation reference.  Keep the protective stop one price unit
-    # beyond that level (buy: level - 1, sell: level + 1).
-    # Previously this
-    # source returned zero and the position manager silently fell back to a
-    # 0.2% fixed-percent stop, which widened GOLD stops to roughly 9 points.
-    # The initial target is deliberately expressed as a 0.32% percentage of the
-    # actual trigger price so it remains useful for both automatic and manual
-    # integer levels.
+    # Integer/round-number signals invalidate one price unit on the far
+    # side of the round number (buy: level - 1, sell: level + 1).
     sl = tp = 0
     try:
         take_profit_percent = max(

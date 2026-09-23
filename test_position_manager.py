@@ -78,6 +78,25 @@ class PositionManagerTests(unittest.TestCase):
         self.assertEqual(plan.stop_loss, 4299)
         self.assertAlmostEqual(plan.take_profit, 4313.76, places=6)
 
+    def test_integer_stop_stays_one_unit_beyond_round_number_without_spread(self):
+        plan = PositionManager().create_plan(
+            policy({
+                "initial_stop_rules": [{"type": "fixed_percent", "value": 0.2}],
+                "initial_take_profit_rules": [{"type": "signal"}],
+                "management_rules": [], "min_risk_reward": 0,
+                "min_stop_percent": 0.1, "max_stop_percent": 0.7,
+            }),
+            "buy", 7702.09, signal_stop_loss=7699.0,
+            signal_take_profit=7726.15, spread=0.65,
+            setup_context={
+                "signal_source": "key_level", "setup_type": "key_level_reversal",
+                "setup_family": "reversal", "integer_level": True,
+                "key_level": 7700.0,
+            },
+        )
+        self.assertEqual(plan.stop_loss, 7699.0)
+        self.assertEqual(plan.stop_rule["source"], "key_level_integer_level")
+
     def test_key_level_19_reanchors_stale_signal_stop_to_boundary(self):
         """A stale upstream SL must not widen a 19-level stop."""
         plan = PositionManager().create_plan(

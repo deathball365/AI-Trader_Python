@@ -283,6 +283,7 @@ class PositionManager:
             key_level = 0.0
         dedicated_boundary_stop = None
         if dedicated_key_level and key_level > 0:
+            # Far side of the round number by one price unit: 7700 buy -> 7699.
             dedicated_boundary_stop = (
                 key_level - 1.0 if direction == "buy" else key_level + 1.0
             )
@@ -374,6 +375,10 @@ class PositionManager:
                 ),
             }
         spread_buffer = max(0.0, float(spread or 0))
+        if dedicated_key_level:
+            # Integer invalidation is the far side of the round number by 1.
+            # Do not push it farther by spread, or 7700 buy becomes 7698.35.
+            spread_buffer = 0.0
         if spread_buffer > 0:
             stop_before_spread = float(stop)
             stop = (
