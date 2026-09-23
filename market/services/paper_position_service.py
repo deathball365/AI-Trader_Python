@@ -24,6 +24,7 @@ class PaperPositionService:
         ).fetchall()
         if not positions:
             return balance
+        from paper_trading import paper_account_cash
         account_control = conn.execute(
             """
             SELECT COALESCE(single_position_loss_limit_enabled, 1)
@@ -80,9 +81,11 @@ class PaperPositionService:
                 close_volume = float(
                     position["remaining_volume"] or position["volume"]
                 )
-                estimated_gross = (
-                    exit_price - float(position["entry_price"])
-                ) * multiplier * close_volume * contract_size
+                estimated_gross = paper_account_cash(
+                    symbol,
+                    (exit_price - float(position["entry_price"])) * multiplier,
+                    close_volume, contract_size, exit_price,
+                )
                 estimated_close_commission = (
                     close_volume * settings["commission_per_lot"]
                 )
@@ -240,12 +243,17 @@ class PaperPositionService:
                     close_volume = min(remaining, close_volume)
                     if close_volume > 0:
                         multiplier = 1 if position["direction"] == "buy" else -1
-                        gross = (
-                            mark - float(position["entry_price"])
-                        ) * multiplier * close_volume * contract_size
+                        gross = paper_account_cash(
+                            symbol,
+                            (mark - float(position["entry_price"])) * multiplier,
+                            close_volume, contract_size, mark,
+                        )
                         commission = close_volume * settings["commission_per_lot"]
                         net = gross - commission
-                        risk_amount = float(position["initial_risk"] or 0) * close_volume * contract_size
+                        risk_amount = paper_account_cash(
+                            symbol, float(position["initial_risk"] or 0),
+                            close_volume, contract_size, mark,
+                        )
                         trade_attribution = close_position_attribution(
                             json.loads(position["position_attribution_json"] or "{}"),
                             action.reason or "partial_take_profit",
@@ -307,13 +315,18 @@ class PaperPositionService:
                 close_volume = float(
                     position["remaining_volume"] or position["volume"]
                 )
-                gross = (
-                    exit_price - float(position["entry_price"])
-                ) * multiplier * close_volume * contract_size
+                gross = paper_account_cash(
+                    symbol,
+                    (exit_price - float(position["entry_price"])) * multiplier,
+                    close_volume, contract_size, exit_price,
+                )
                 close_commission = close_volume * settings["commission_per_lot"]
                 total_commission = float(position["open_commission"]) + close_commission
                 net = gross - total_commission
-                risk_amount = float(position["initial_risk"] or 0) * close_volume * contract_size
+                risk_amount = paper_account_cash(
+                    symbol, float(position["initial_risk"] or 0),
+                    close_volume, contract_size, exit_price,
+                )
                 trade_attribution = close_position_attribution(
                     json.loads(position["position_attribution_json"] or "{}"),
                     reason, net / risk_amount if risk_amount > 0 else 0,

@@ -142,6 +142,38 @@ def paper_required_margin(
     return notional / leverage
 
 
+def paper_account_cash(
+    symbol: str,
+    price_move: float,
+    volume: float,
+    contract_size: float,
+    quote_price: float,
+    spec: Optional[Dict] = None,
+) -> float:
+    """Convert a price move into account-currency cash (USD).
+
+    GOLD/AUDUSD/US500 already quote in USD.  USDJPY quotes in JPY, so
+    ``price_move * lots * 100000`` is yen and must be divided by the pair
+    price.  A 0.008 stop on 0.04 lot is about $0.20, not $-32.
+    """
+    volume = abs(float(volume or 0.0))
+    contract_size = abs(float(contract_size or 0.0))
+    quote_price = abs(float(quote_price or 0.0))
+    raw = float(price_move) * volume * contract_size
+    compact = _normalized_market_symbol(symbol)
+    payload = dict(spec or {})
+    base = str(payload.get("currency_base") or "").upper()
+    profit = str(payload.get("currency_profit") or "").upper()
+    usd_base_fx = (
+        base == "USD"
+        or (compact.startswith("USD") and len(compact) == 6)
+    )
+    quote_usd = compact.endswith("USD") or profit in {"USD", "USDT"}
+    if usd_base_fx and not quote_usd and quote_price > 0:
+        return raw / quote_price
+    return raw
+
+
 class PaperTradingService:
     """以 EA Tick 驱动的持久化模拟撮合器。"""
 
@@ -1170,8 +1202,8 @@ class PaperTradingService:
                     "account_id": int(account_id),
                     "deployment_id": str(deployment["deployment_id"]),
                 },
-                volume_calculator=lambda s, risk, st, aid=account_id: (
-                    self._paper_volume(aid, s, risk, st)
+                volume_calculator=lambda s, risk, st, aid=account_id, px=current_price: (
+                    self._paper_volume(aid, s, risk, st, px)
                 ),
                 position_checker=lambda s, st, action, aid=account_id, dep=deployment: (
                     self._paper_position_check(
@@ -1855,7 +1887,10 @@ class PaperTradingService:
                     initial_risk = abs(entry_price - opening_stop)
             symbol = str(ordered[-1].get("symbol") or "")
             _, contract_size = market_spec(symbol, account_id=account_id, storage=self.storage)
-            risk_amount = initial_risk * total_volume * contract_size
+            quote_price = float(ordered[-1].get("exit_price") or ordered[0].get("entry_price") or 0)
+            risk_amount = paper_account_cash(
+                symbol, initial_risk, total_volume, contract_size, quote_price,
+            )
             realized_r = (
                 net_profit / risk_amount if risk_amount > 0
                 else float(attribution.get("realized_r") or 0)
@@ -1951,7 +1986,7 @@ class PaperTradingService:
             key=lambda item: (-item["position_count"], item["name"]),
         )
 
-    def _paper_volume(self, account_id, symbol, risk_points, strategy) -> float:
+    def _paper_volume(self, account_id, symbol, risk_points, strategy, quote_price: float = 0.0) -> float:
         if strategy.volume_mode == "fixed":
             return max(0.01, round(float(strategy.fixed_volume), 2))
         account = self.storage.fetchone(
@@ -1959,7 +1994,10 @@ class PaperTradingService:
         )
         _, contract_size = market_spec(symbol, account_id=account_id, storage=self.storage)
         risk_amount = float(account["balance"]) * float(strategy.risk_percent) / 100
-        raw = risk_amount / max(risk_points * contract_size, 0.000001)
+        cash_per_lot = abs(paper_account_cash(
+            symbol, abs(float(risk_points or 0)), 1.0, contract_size, quote_price,
+        ))
+        raw = risk_amount / max(cash_per_lot, 0.000001)
         return max(0.01, math.floor(raw * 100) / 100)
 
     def _paper_position_check(
@@ -2074,13 +2112,19 @@ class PaperTradingService:
                     continue
                 _, contract_size = market_spec(row.get("symbol") or symbol, account_id=account_id, storage=self.storage)
                 existing_risk_pct += (
-                    abs(entry - stop) * float(row.get("requested_volume") or 0)
-                    * contract_size / balance * 100
+                    abs(paper_account_cash(
+                        row.get("symbol") or symbol,
+                        abs(entry - stop),
+                        float(row.get("requested_volume") or 0),
+                        contract_size, entry,
+                    )) / balance * 100
                     if balance > 0 else 0.0
                 )
             current_risk_pct = (
-                abs(float(risk_points or 0)) * float(volume) * new_contract_size
-                / balance * 100
+                abs(paper_account_cash(
+                    symbol, abs(float(risk_points or 0)), float(volume),
+                    new_contract_size, float(current_price or 0),
+                )) / balance * 100
                 if balance > 0 else 0.0
             )
             daily_risk_limit = float(account["daily_risk_limit"] or 0.0)
