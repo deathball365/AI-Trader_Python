@@ -131,6 +131,11 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
                 'reason_code': reason,
                 'n': occurrences,
             })
+    account_row = storage.fetchone(
+        "SELECT account_type FROM trading_accounts WHERE id=? AND user_id=?",
+        (int(account_id), int(user_id)),
+    ) or {}
+    account_type = str(account_row.get("account_type") or "").lower()
     filled_row = storage.fetchone(
         """
         SELECT COUNT(*) AS n FROM paper_orders
@@ -148,7 +153,12 @@ def _execution_funnel(storage, user_id: int, account_id: int) -> Dict:
         """,
         params,
     ) or {}
-    ordered = int(filled_row.get("n") or 0) + int(live_filled_row.get("n") or 0)
+    # Paper matching also writes trade_execution_reports. Counting both
+    # tables on a Paper account doubles 下单数 against a single 风控通过.
+    if account_type == "paper":
+        ordered = int(filled_row.get("n") or 0)
+    else:
+        ordered = int(live_filled_row.get("n") or 0)
     timeout_row = storage.fetchone(
         """
         SELECT COUNT(*) AS n FROM paper_orders

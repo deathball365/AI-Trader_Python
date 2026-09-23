@@ -5,7 +5,8 @@ from routes_accounts import _execution_funnel
 
 class _Storage:
     def __init__(self, plans=None, audits=None, deployments=None,
-                 filled_orders=0, live_filled=0, timeout_orders=0):
+                 filled_orders=0, live_filled=0, timeout_orders=0,
+                 account_type="paper"):
         self.plans = plans or {"plans": 12, "directions": 8}
         self.audits = audits or []
         self.deployments = deployments if deployments is not None else [
@@ -14,8 +15,11 @@ class _Storage:
         self.filled_orders = filled_orders
         self.live_filled = live_filled
         self.timeout_orders = timeout_orders
+        self.account_type = account_type
 
     def fetchone(self, sql, params=()):
+        if "FROM trading_accounts" in sql:
+            return {"account_type": self.account_type}
         if "FROM structure_trade_plans" in sql:
             return dict(self.plans)
         if "FROM paper_orders" in sql and "status='filled'" in sql:
@@ -63,6 +67,27 @@ class ExecutionFunnelTests(unittest.TestCase):
         funnel = _execution_funnel(storage, 1, 22)
         self.assertEqual(funnel["risk_passed"], 2)
         self.assertEqual(funnel["ordered"], 3)
+
+    def test_paper_does_not_double_count_execution_reports(self):
+        storage = _Storage(
+            audits=[{"status": "ordered", "reason_code": "eligible", "n": 3, "occurrences": 3}],
+            filled_orders=3,
+            live_filled=3,
+            account_type="paper",
+        )
+        funnel = _execution_funnel(storage, 1, 22)
+        self.assertEqual(funnel["risk_passed"], 3)
+        self.assertEqual(funnel["ordered"], 3)
+
+    def test_live_counts_broker_fills_only(self):
+        storage = _Storage(
+            audits=[{"status": "ordered", "reason_code": "eligible", "n": 6, "occurrences": 6}],
+            filled_orders=3,
+            live_filled=6,
+            account_type="mt5",
+        )
+        funnel = _execution_funnel(storage, 1, 21)
+        self.assertEqual(funnel["ordered"], 6)
 
     def test_ignores_waiting_ticks_that_are_not_persisted_as_triggers(self):
         storage = _Storage(audits=[
