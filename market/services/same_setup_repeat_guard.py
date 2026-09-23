@@ -7,7 +7,7 @@ from typing import Dict, Iterable, Optional
 
 
 REPEAT_WINDOW_SECONDS = 30 * 60
-MIN_PROGRESS_ATR = 0.5
+MIN_PROGRESS_ATR = 0.8
 MIN_PROGRESS_PCT = 0.0005
 
 
