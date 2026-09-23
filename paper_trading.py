@@ -105,6 +105,43 @@ def market_spec(
     return point_size, contract_size
 
 
+def paper_required_margin(
+    symbol: str,
+    price: float,
+    volume: float,
+    contract_size: float,
+    leverage: float,
+    spec: Optional[Dict] = None,
+) -> float:
+    """Paper margin in account currency (USD).
+
+    ``price * lots * contract / leverage`` is correct when the quote is USD
+    (GOLD, AUDUSD, US500).  USDJPY's quote is JPY, so that formula multiplies
+    a USD notional by ~158 and rejects a 0.04 lot against a 2300 account.
+    USD-base JPY pairs use lots * contract / leverage instead.
+    """
+    leverage = max(float(leverage or 1.0), 1e-9)
+    volume = abs(float(volume or 0.0))
+    contract_size = abs(float(contract_size or 0.0))
+    price = abs(float(price or 0.0))
+    compact = _normalized_market_symbol(symbol)
+    payload = dict(spec or {})
+    base = str(payload.get("currency_base") or "").upper()
+    profit = str(payload.get("currency_profit") or "").upper()
+    usd_base_fx = (
+        base == "USD"
+        or (compact.startswith("USD") and len(compact) == 6)
+    )
+    quote_usd = compact.endswith("USD") or profit in {"USD", "USDT"}
+    if usd_base_fx and not quote_usd:
+        notional = volume * contract_size
+    elif quote_usd:
+        notional = price * volume * contract_size
+    else:
+        notional = price * volume * contract_size
+    return notional / leverage
+
+
 class PaperTradingService:
     """以 EA Tick 驱动的持久化模拟撮合器。"""
 
@@ -2053,7 +2090,10 @@ class PaperTradingService:
                 )
             _, contract_size = market_spec(symbol, account_id=account_id, storage=self.storage)
             leverage = self._settings(account_id)["leverage"]
-            if current_price * volume * contract_size / leverage > float(account["free_margin"]):
+            required_margin = paper_required_margin(
+                symbol, current_price, volume, contract_size, leverage,
+            )
+            if required_margin > float(account["free_margin"]):
                 warnings.append("模拟账户可用保证金不足")
         if warnings and account:
             try:

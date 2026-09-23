@@ -7,7 +7,7 @@ class PaperAccountingService:
         self.paper_service = paper_service
 
     def mark_positions(self, conn, user_id, account_id, balance, leverage, now):
-        from paper_trading import market_spec
+        from paper_trading import market_spec, paper_required_margin
         rows = conn.execute(
             "SELECT * FROM paper_positions WHERE account_id = ? AND status = 'open'",
             (account_id,),
@@ -23,7 +23,10 @@ class PaperAccountingService:
             multiplier = 1 if position["direction"] == "buy" else -1
             active_volume = float(position["remaining_volume"] or position["volume"])
             unrealized = (mark - float(position["entry_price"])) * multiplier * active_volume * contract_size
-            margin += float(position["entry_price"]) * active_volume * contract_size / leverage
+            margin += paper_required_margin(
+                position["symbol"], float(position["entry_price"]),
+                active_volume, contract_size, leverage,
+            )
             unrealized_total += unrealized
             conn.execute(
                 "UPDATE paper_positions SET current_price=?, unrealized_profit=?, updated_at=? WHERE position_id=?",

@@ -55,6 +55,7 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
 
     def process_paper_tick_after_response(
         identity: EAIdentity, symbol: str, price: float,
+        execution_context=None,
     ) -> None:
         """Run Paper matching after the live EA response has been assembled.
 
@@ -62,10 +63,13 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
         instruction triggered by the request's own Tick can be returned in the
         same response.  Paper matching does not affect that response and stays
         off the latency-sensitive EA polling path.
+
+        Capture the Tick snapshot when the task is scheduled.  Looking it up
+        later can pick a later quote that already lost the entry trigger.
         """
         try:
             server = engine_manager.get_engine_for_ea(identity)
-            tick_context = engine_manager.get_tick_execution_context(
+            tick_context = execution_context or engine_manager.get_tick_execution_context(
                 identity.user_id, identity.account_id, symbol,
             )
             structures = {}
@@ -274,6 +278,7 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
             and price is not None and float(price) > 0
             and market_policy.get("is_market_primary")
         )
+        paper_tick_context = None
         if should_process_tick:
             # Evaluate live deployments before reading the instruction store.
             # Previously this ran as a response background task: the request
@@ -288,6 +293,9 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
                         symbol,
                     ),
                     symbol, float(price), source_account_id=identity.account_id,
+                )
+                paper_tick_context = engine_manager.get_tick_execution_context(
+                    identity.user_id, identity.account_id, symbol,
                 )
             except Exception as exc:
                 # Existing queued instructions must remain deliverable even if
@@ -305,7 +313,7 @@ def create_ea_routes(engine_manager: TradingEngineManager) -> APIRouter:
         if should_process_tick:
             background_tasks.add_task(
                 process_paper_tick_after_response,
-                identity, symbol, float(price),
+                identity, symbol, float(price), paper_tick_context,
             )
         result["paper_orders_created"] = 0
         result["paper_execution"] = {"filled": 0, "closed": 0, "rejected": 0}

@@ -44,7 +44,7 @@ class PaperMatchingEngine:
         self, user_id: int, account_id: int, symbol: str,
         bid: float, ask: float, now: int, pivots: List[Dict], structures: Dict[str, Dict],
     ) -> Dict:
-        from paper_trading import market_spec
+        from paper_trading import market_spec, paper_required_margin
         point_size, contract_size = market_spec(
             symbol, account_id=account_id, storage=self.paper_service.storage,
         )
@@ -143,7 +143,9 @@ class PaperMatchingEngine:
                     result["rejected"] += 1
                     continue
                 volume = float(order["requested_volume"])
-                required_margin = fill_price * volume * contract_size / settings["leverage"]
+                required_margin = paper_required_margin(
+                    symbol, fill_price, volume, contract_size, settings["leverage"],
+                )
                 if required_margin > available_margin:
                     self.paper_service._reject_order(conn, order["order_id"], "可用保证金不足", now)
                     result["rejected"] += 1
