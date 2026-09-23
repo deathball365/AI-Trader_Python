@@ -27,8 +27,8 @@ class MT5EADistributionTest(unittest.TestCase):
     def test_ea_supports_historical_dataset_tasks(self):
         source = EA_SOURCE.read_text(encoding="utf-8")
 
-        self.assertIn('#property version   "2.10"', source)
-        self.assertIn('#define EA_API_VERSION "2.1.0"', source)
+        self.assertIn('#property version   "2.11"', source)
+        self.assertIn('#define EA_API_VERSION "2.1.1"', source)
         self.assertIn('X-EA-Version: " + EA_API_VERSION', source)
         self.assertIn("SYMBOL_TRADE_TICK_SIZE", source)
         self.assertIn("SYMBOL_TRADE_TICK_VALUE", source)
@@ -45,22 +45,12 @@ class MT5EADistributionTest(unittest.TestCase):
         self.assertIn("/ea/backtest-data/tasks/next?symbol=", source)
         self.assertIn("/chunks", source)
 
-    def test_risk_threshold_uses_larger_account_value(self):
+    def test_ea_does_not_auto_close_local_risk_positions(self):
         source = EA_SOURCE.read_text(encoding="utf-8")
 
-        self.assertIn(
-            "MathMax(g_accountBalance, g_accountEquity)",
-            source,
-        )
-        self.assertNotIn(
-            "g_accountBalance > 0 ? g_accountBalance : g_accountEquity",
-            source,
-        )
-        self.assertIn("if(riskBase <= 0)", source)
-        self.assertIn(
-            "double riskThreshold = riskBase * (g_riskLimitPercent / 100.0)",
-            source,
-        )
+        self.assertNotIn("CheckAndCloseRiskyPositions", source)
+        self.assertNotIn("g_riskLimitPercent", source)
+        self.assertNotIn("Risk limit exceeded!", source)
 
 
 if __name__ == "__main__":

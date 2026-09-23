@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright "wwananggxxxx"
 #property link      "https://www.mql5.com"
-#property version   "2.10"
-#define EA_API_VERSION "2.1.0"
+#property version   "2.11"
+#define EA_API_VERSION "2.1.1"
 #property strict
 
 //--- 需要访问Web请求权限
@@ -78,9 +78,6 @@ datetime g_lastTickTime = 0;
 CTrade trade;
 CSymbolInfo symbolInfo;
 CPositionInfo positionInfo;
-
-// 风险管理相关
-double g_riskLimitPercent = 30.0;  // 30% 账户风险限制
 
 // 交易历史上报相关
 datetime g_lastTradeHistoryReportTime = 0;  // 上次上报时间
@@ -532,7 +529,6 @@ int OnInit()
 //--- 打印初始化信息
       Print("Expert initialized successfully");
       Print("Python server: ", g_pythonServer);
-      Print("Risk limit: ", g_riskLimitPercent, "%");
 
 //--- 启动任务改由OnTimer分批执行，避免阻塞EA初始化
       g_klineInitialized = false;
@@ -692,48 +688,6 @@ void SendPositionsToPython(bool allSymbols = true)
       else if(responseCode != -1)
         {
          Print("[持仓上报] 失败. Response code: ", responseCode);
-        }
-  }
-
-//+------------------------------------------------------------------+
-//| 检查并平仓风险持仓                                                |
-//+------------------------------------------------------------------+
-void CheckAndCloseRiskyPositions()
-  {
-      // 信用账户可能余额很低但权益正常，取较大值避免风控阈值被压到开仓点差以下。
-      double riskBase = MathMax(g_accountBalance, g_accountEquity);
-      if(riskBase <= 0)
-         return;
-
-      double riskThreshold = riskBase * (g_riskLimitPercent / 100.0);
-      
-      for(int i = 0; i < PositionsTotal(); i++)
-        {
-         if(!PositionGetTicket(i)) continue;
-         
-         string posSymbol = PositionGetString(POSITION_SYMBOL);
-         if(posSymbol != _Symbol) continue;
-         
-         double posProfit = PositionGetDouble(POSITION_PROFIT);
-         
-         // 如果损失超过阈值，平仓
-         if(posProfit < -riskThreshold)
-           {
-            long posTicket = PositionGetInteger(POSITION_TICKET);
-            double posVolume = PositionGetDouble(POSITION_VOLUME);
-            Print("Risk limit exceeded! Position profit: ", posProfit, " Limit: ", -riskThreshold);
-            
-            if(ClosePositionByTicket(posTicket))
-              {
-               Print("Position closed successfully: ", posTicket);
-               // 记录平仓动作
-               RecordTrade("CLOSE", _Symbol, posVolume, 0, 0, 0);
-              }
-            else
-              {
-               Print("Failed to close position: ", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
-              }
-           }
         }
   }
 
@@ -1771,9 +1725,6 @@ void OnTimer()
 
 //--- 检查是否需要推送增量K线数据
    CheckAndPushIncrementalKlines();
-
-//--- 检查持仓风险并平仓
-   CheckAndCloseRiskyPositions();
 
 //--- 全账户持仓只由主图表上报；当前品种图表仍各自处理自己的开平仓。
    if(accountOwner && (g_positionsSyncPending || g_lastPositionSyncTime == 0 ||
