@@ -26,7 +26,7 @@ def test_integer_level_cooldown_cannot_be_reduced_by_strategy_configuration():
         "key_level_19_breakout", "buy", "M1", 7200,
     ) is True
 
-    assert repository.calls[-1][1] == 48 * 60 * 60
+    assert repository.calls[-1][1] == 8 * 60 * 60
 
 
 def test_integer_level_cooldown_is_shared_by_direction_and_setup():

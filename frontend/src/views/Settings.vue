@@ -1350,7 +1350,7 @@
                 <v-text-field v-model="newSignalSource.params.level_19_levels_text" label="19 专用关键位（可选）" placeholder="4419" hint="留空时自动使用已配置且价格尾数为 19 的关键位" persistent-hint></v-text-field>
               </v-col>
               <v-col cols="12" sm="6">
-                <v-text-field v-model.number="newSignalSource.params.breakout_retest_tolerance_atr" label="19 接近/回踩距离（ATR）" type="number" min="0" max="10" step="0.1" hint="默认 0.7 ATR；ATR 不可用时回退到绝对距离" persistent-hint></v-text-field>
+                <v-text-field v-model.number="newSignalSource.params.breakout_retest_tolerance_atr" label="19 接近/回踩距离（ATR）" type="number" min="0" max="10" step="0.1" hint="默认 0.9 ATR；ATR 不可用时回退到绝对距离" persistent-hint></v-text-field>
               </v-col>
               <v-col v-if="newSignalSource.params.level_mode === 'levels'" cols="12" sm="6">
                 <v-text-field v-model="newSignalSource.params.levels_text" label="关键点位数字（逗号分隔）" placeholder="4000, 4050, 4100"></v-text-field>
@@ -1379,7 +1379,7 @@
                   <v-switch v-model="newSignalSource.params.downward_breakout_sell" label="向下突破下卖单" color="success" density="compact" hide-details></v-switch>
                 </div>
                 <div class="text-caption text-medium-emphasis mt-2">
-                  有效 ATR 数据时，反转接近范围优先使用 ATR 倍数（默认 0.7）；没有足够 K 线时才回退到下单距离比例。止损为关键位 ±1，止盈按止盈比例计算。
+                  有效 ATR 数据时，反转接近范围优先使用 ATR 倍数（默认 0.9）；没有足够 K 线时才回退到下单距离比例。止损为关键位 ±1，止盈按止盈比例计算。
                 </div>
               </v-col>
             </v-row>
@@ -3618,14 +3618,14 @@ export default {
               level_19_enabled: true,
               level_19_levels: [],
               level_19_levels_text: '',
-              breakout_retest_tolerance_atr: 0.7,
+              breakout_retest_tolerance_atr: 0.9,
               breakout_retest_confirmation_offset: 3,
               breakout_retest_tolerance: 1,
               level_mode: 'automatic', levels: [], levels_text: '',
               expression: '', proximity_threshold: 0.0008,
               order_distance: 0.0008,
               use_atr_proximity: true,
-              reversal_entry_tolerance_atr: 0.7,
+              reversal_entry_tolerance_atr: 0.9,
               take_profit_percent: 0.0032,
               upward_approach_sell: true, downward_approach_buy: true,
               upward_breakout_buy: true, downward_breakout_sell: true,
@@ -4297,7 +4297,8 @@ export default {
           source.params.setup_mode ??= 'both'
           source.params.level_19_enabled ??= true
           source.params.level_19_levels ??= []
-          source.params.breakout_retest_tolerance_atr ??= 0.7
+          source.params.breakout_retest_tolerance_atr ??= 0.9
+          source.params.reversal_entry_tolerance_atr ??= 0.9
           source.params.level_19_levels_text ??= (source.params.level_19_levels || []).join(', ')
           source.params.proximity_threshold = source.params.order_distance
           delete source.params.stop_loss_distance

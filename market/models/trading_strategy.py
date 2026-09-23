@@ -100,6 +100,18 @@ SIGNAL_PERIOD_MINUTES = {
     "H4": 240,
 }
 
+
+def _legacy_key_level_atr(value, default: float = 0.9) -> float:
+    """Keep saved custom ATR windows; promote the old 0.7 default to 0.9."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if abs(number - 0.7) < 1e-9:
+        return default
+    return max(0.0, min(10.0, number))
+
+
 def signal_source_defaults(source: str, period: str = "M5") -> Dict:
     """创建一条可独立配置的信号源实例。"""
     period = period if period in SIGNAL_PERIODS else "M5"
@@ -116,7 +128,7 @@ def signal_source_defaults(source: str, period: str = "M5") -> Dict:
             # above the level confirms the breakout (e.g. 4419 -> 4420).
             "level_19_confirmation_offset": 1.0,
             "breakout_retest_tolerance": 1.0,
-            "breakout_retest_tolerance_atr": 0.7,
+            "breakout_retest_tolerance_atr": 0.9,
             "level_mode": "automatic",
             "levels": [],
             "expression": "",
@@ -126,7 +138,7 @@ def signal_source_defaults(source: str, period: str = "M5") -> Dict:
             # Key-level reversal staging defaults.  The ATR value is consumed
             # by the staged-entry evaluator; the legacy proximity percentage
             # remains available for signal-source compatibility.
-            "reversal_entry_tolerance_atr": 0.7,
+            "reversal_entry_tolerance_atr": 0.9,
             "take_profit_percent": 0.0032,
             "upward_approach_sell": True,
             "downward_approach_buy": True,
@@ -313,10 +325,8 @@ def normalize_signal_sources(
                     "breakout_retest_tolerance", 1.0
                 )))
             )
-            params["breakout_retest_tolerance_atr"] = max(
-                0.0, min(10.0, float(params.get(
-                    "breakout_retest_tolerance_atr", 0.7
-                )))
+            params["breakout_retest_tolerance_atr"] = _legacy_key_level_atr(
+                params.get("breakout_retest_tolerance_atr"), 0.9
             )
             params["level_19_enabled"] = bool(params.get("level_19_enabled", True))
             raw_19_levels = params.get("level_19_levels") or []
@@ -350,10 +360,8 @@ def normalize_signal_sources(
                     params["order_distance"],
                 ))),
             )
-            params["reversal_entry_tolerance_atr"] = max(
-                0.0, min(10.0, float(params.get(
-                    "reversal_entry_tolerance_atr", 0.7
-                )))
+            params["reversal_entry_tolerance_atr"] = _legacy_key_level_atr(
+                params.get("reversal_entry_tolerance_atr"), 0.9
             )
             params["take_profit_percent"] = max(
                 0.0, min(0.10, float(params.get(

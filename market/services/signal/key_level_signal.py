@@ -76,9 +76,9 @@ class KeyLevelSignalGenerator:
         # 信号冷却时间（秒）
         # Integer/round-number attempts are intentionally sparse.  Every
         # setup at the same integer level shares the directional quiet period
-        # so reversal/breakout variants cannot bypass the 48-hour guard.
+        # so reversal/breakout variants cannot bypass the 8-hour guard.
         self.cooldown = 2 * 60 * 60
-        self.integer_level_cooldown = 48 * 60 * 60
+        self.integer_level_cooldown = 8 * 60 * 60
 
         # 冷却记录
         self._signal_cooldowns: Dict[str, datetime] = {}
@@ -209,13 +209,11 @@ class KeyLevelSignalGenerator:
     ) -> bool:
         """Claim a cooldown once, atomically when MySQL is available."""
         requested_duration = self.cooldown if cooldown is None else max(0, int(cooldown))
-        # Integer/round-number opportunities are intentionally sparse.  The
-        # durable guard must not be shortened by a per-strategy value (older
-        # configurations still contain the former two-hour default).
-        duration = max(
+        # Integer/round-number opportunities share one quiet period.  Strategy
+        # cooldown_seconds must not shorten or stretch that dedicated window.
+        duration = (
             self.integer_level_cooldown
-            if self._is_integer_level(key_level) else 0,
-            requested_duration,
+            if self._is_integer_level(key_level) else requested_duration
         )
         key = self._cooldown_key(
             symbol, key_level, strategy_id, signal_source_id,
@@ -334,10 +332,10 @@ class KeyLevelSignalGenerator:
             atr = 0.0
         try:
             tolerance_atr = max(0.0, float(params.get(
-                "breakout_retest_tolerance_atr", 0.7
+                "breakout_retest_tolerance_atr", 0.9
             )))
         except (TypeError, ValueError):
-            tolerance_atr = 0.7
+            tolerance_atr = 0.9
         tolerance = atr * tolerance_atr if atr > 0 else fallback_tolerance
         key = self._breakout_retest_key(
             signal.symbol, level, strategy_id, source_id, period
@@ -520,7 +518,7 @@ class KeyLevelSignalGenerator:
         """
         trigger_config = {
             "use_atr_proximity": True,
-            "reversal_entry_tolerance_atr": 0.7,
+            "reversal_entry_tolerance_atr": 0.9,
             "take_profit_percent": 0.0032,
         }
         atr = self._atr_for(symbol)
@@ -580,7 +578,7 @@ class KeyLevelSignalGenerator:
                 levels = self.get_key_levels(symbol, current_price)
             trigger_config = dict(params)
             trigger_config.setdefault("use_atr_proximity", True)
-            trigger_config.setdefault("reversal_entry_tolerance_atr", 0.7)
+            trigger_config.setdefault("reversal_entry_tolerance_atr", 0.9)
             trigger_config.setdefault("take_profit_percent", 0.0032)
             atr = self._atr_for(symbol, config.get("period", "M1"))
             if atr > 0:
@@ -654,21 +652,19 @@ class KeyLevelSignalGenerator:
                 )
             except (TypeError, ValueError):
                 integer_level = False
-            if setup_type == "key_level_reversal":
-                # Integer levels use a 48-hour quiet period.  Non-integer
-                # configured levels retain the two-hour reversal default.
+            if integer_level:
+                configured_cooldown = self.integer_level_cooldown
+            elif setup_type == "key_level_reversal":
                 configured_cooldown = max(
-                    self.integer_level_cooldown if integer_level else self.cooldown,
+                    self.cooldown,
                     int(params.get(
                         "reversal_cooldown_seconds",
                         params.get("cooldown_seconds", self.cooldown),
                     ) or 0),
                 )
             else:
-                # Integer breakouts also use the 48-hour quiet period;
-                # non-integer breakouts keep their explicit throttle only.
                 configured_cooldown = max(
-                    self.integer_level_cooldown if integer_level else 0,
+                    0,
                     int(params.get("breakout_cooldown_seconds", 0) or 0),
                 )
             cooldown = max(0, int(configured_cooldown))
@@ -683,15 +679,11 @@ class KeyLevelSignalGenerator:
             for special in extra_level_19:
                 special_setup = str(special.setup_type or "")
                 # Level-19 breakout/rejection is a discrete round-number
-                # setup.  Both directions use the same 48-hour quiet period
-                # by default; an explicit longer configuration still wins.
-                level_19_breakout_cooldown = (
-                    self.integer_level_cooldown if "key_level_19" in special_setup else 0
-                )
-                special_cooldown = max(
-                    self.integer_level_cooldown if "reversal" in special_setup else 0,
-                    level_19_breakout_cooldown,
-                    int(params.get("breakout_cooldown_seconds", 0) or 0),
+                # setup.  Both directions use the same 8-hour quiet period.
+                special_cooldown = (
+                    self.integer_level_cooldown
+                    if "key_level_19" in special_setup or "reversal" in special_setup
+                    else max(0, int(params.get("breakout_cooldown_seconds", 0) or 0))
                 )
                 if special.is_entry_trigger and special_cooldown > 0:
                     if not self._claim_cooldown(

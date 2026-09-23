@@ -288,11 +288,11 @@ def build_key_level_state_signal(
             atr_multiple = max(
                 0.0,
                 min(10.0, float(
-                    trigger_config.get("reversal_entry_tolerance_atr", 0.7)
+                    trigger_config.get("reversal_entry_tolerance_atr", 0.9)
                 )),
             )
         except (TypeError, ValueError):
-            atr_multiple = 0.7
+            atr_multiple = 0.9
         near_distance = atr * atr_multiple
         near = abs(current_price - nearest) <= near_distance
     else:
