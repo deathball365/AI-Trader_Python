@@ -83,6 +83,8 @@ class RiskManager:
             self._daily_loss_limit = max(0.1, float(daily_loss_limit))
             self._daily_risk_limit = max(0.0, float(daily_risk_limit or 0))
             self._daily_order_limit = max(1, int(daily_order_limit))
+            self._sync_daily_loss_breaker()
+            self._persist_state()
 
     def _refresh_account_info(self) -> None:
         """从统计服务刷新账户信息"""
@@ -466,18 +468,33 @@ class RiskManager:
                 + float(deal.get("swap", 0))
                 + float(deal.get("commission", 0))
             )
-        if realized == self._daily_realized_pnl:
-            return
+        breaker_before = (self._circuit_breaker, self._circuit_breaker_reason)
+        pnl_changed = realized != self._daily_realized_pnl
         self._daily_realized_pnl = realized
-        if self._account_balance > 0 and realized < 0:
-            loss_percent = abs(realized) / self._account_balance * 100
-            if loss_percent >= self._daily_loss_limit:
-                self._circuit_breaker = True
-                self._circuit_breaker_reason = (
-                    f"当日亏损 {loss_percent:.2f}% 达到限制 "
-                    f"{self._daily_loss_limit:.2f}%"
-                )
-        self._persist_state()
+        self._sync_daily_loss_breaker()
+        if pnl_changed or breaker_before != (self._circuit_breaker, self._circuit_breaker_reason):
+            self._persist_state()
+
+    def _sync_daily_loss_breaker(self) -> None:
+        """Trip or release the daily-loss breaker against the current limit."""
+        reason = str(self._circuit_breaker_reason or "")
+        loss_breaker = (not reason) or ("当日亏损" in reason)
+        if self._account_balance <= 0:
+            return
+        if self._daily_realized_pnl >= 0:
+            loss_percent = 0.0
+        else:
+            loss_percent = abs(self._daily_realized_pnl) / self._account_balance * 100
+        if loss_percent >= self._daily_loss_limit:
+            self._circuit_breaker = True
+            self._circuit_breaker_reason = (
+                f"当日亏损 {loss_percent:.2f}% 达到限制 "
+                f"{self._daily_loss_limit:.2f}%"
+            )
+            return
+        if self._circuit_breaker and loss_breaker:
+            self._circuit_breaker = False
+            self._circuit_breaker_reason = ""
 
     def _persist_state(self) -> None:
         if not self._repository:

@@ -39,6 +39,29 @@ class RiskManagerVolumeTest(unittest.TestCase):
         manager = RiskManager()
         self.assertEqual(manager.get_status()["daily_risk_limit"], 0.0)
 
+    def test_raising_daily_loss_limit_releases_stale_breaker(self):
+        manager = RiskManager()
+        manager.update_account_info(163.6, 163.6, 163.6)
+        manager._daily_realized_pnl = -77.18
+        manager.set_account_limits(
+            max_positions=10,
+            max_single_volume=10,
+            daily_loss_limit=20,
+            daily_order_limit=100,
+            daily_risk_limit=0,
+        )
+        self.assertTrue(manager._circuit_breaker)
+        manager.set_account_limits(
+            max_positions=10,
+            max_single_volume=10,
+            daily_loss_limit=58.7,
+            daily_order_limit=100,
+            daily_risk_limit=0,
+        )
+        self.assertFalse(manager._circuit_breaker)
+        result = manager.check_risk("X", 0.01, 1)
+        self.assertNotIn("账户已熔断", " ".join(result["warnings"]))
+
     def test_disabled_daily_risk_limit_does_not_block(self):
         manager = RiskManager()
         manager.update_account_info(1000, 1000, 1000)
