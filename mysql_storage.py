@@ -924,7 +924,7 @@ class MySQLStorage:
                     "trading_accounts": (
                         ("auto_flatten_enabled", "TINYINT NOT NULL DEFAULT 0"),
                         ("auto_flatten_time", "VARCHAR(5) NULL"),
-                        ("daily_risk_limit", "DOUBLE NOT NULL DEFAULT 5.0"),
+                        ("daily_risk_limit", "DOUBLE NOT NULL DEFAULT 0"),
                         ("single_position_loss_limit_enabled", "TINYINT NOT NULL DEFAULT 1"),
                         ("single_position_loss_limit_amount", "DOUBLE NOT NULL DEFAULT 30.0"),
                     ),

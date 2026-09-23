@@ -35,9 +35,17 @@ class RiskManagerVolumeTest(unittest.TestCase):
         result = manager.check_risk("X", 1, 100)
         self.assertEqual(result["daily_risk_limit"], 12.5)
 
-    def test_daily_risk_limit_defaults_to_five_percent(self):
+    def test_daily_risk_limit_defaults_to_disabled(self):
         manager = RiskManager()
-        self.assertEqual(manager.get_status()["daily_risk_limit"], 5.0)
+        self.assertEqual(manager.get_status()["daily_risk_limit"], 0.0)
+
+    def test_disabled_daily_risk_limit_does_not_block(self):
+        manager = RiskManager()
+        manager.update_account_info(1000, 1000, 1000)
+        manager._daily_risk_used = 80
+        result = manager.check_risk("X", 1, 100)
+        self.assertTrue(result["allowed"] or "将超过每日风险限制" not in " ".join(result["warnings"]))
+        self.assertNotIn("将超过每日风险限制", " ".join(result["warnings"]))
 
 
 if __name__ == "__main__":

@@ -103,7 +103,7 @@ class TradingAccountRepositoryTests(unittest.TestCase):
         self.assertEqual(paper.balance, 50000)
         self.assertEqual(paper.free_margin, 50000)
         self.assertEqual(paper.daily_order_limit, 100)
-        self.assertEqual(paper.daily_risk_limit, 5.0)
+        self.assertEqual(paper.daily_risk_limit, 0.0)
         self.assertIsNone(connection)
         self.assertIsNone(self.repository.authenticate(self.user.user_id, "invalid"))
 

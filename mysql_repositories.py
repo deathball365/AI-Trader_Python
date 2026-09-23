@@ -129,7 +129,7 @@ class TradingAccountRepository:
                a.margin, a.status, a.financial_updated_at, a.enabled,
                a.trading_enabled, a.auto_trading_enabled,
                a.max_total_positions, a.max_single_volume,
-               a.daily_loss_limit, COALESCE(a.daily_risk_limit, 5.0) AS daily_risk_limit,
+               a.daily_loss_limit, COALESCE(a.daily_risk_limit, 0) AS daily_risk_limit,
                a.daily_order_limit, a.archived_at,
                COALESCE(a.auto_flatten_enabled, 0) AS auto_flatten_enabled,
                a.auto_flatten_time,
@@ -354,8 +354,8 @@ class TradingAccountRepository:
             raise ValueError("单笔最大手数必须在 0.01 到 1000 之间")
         if not 0.1 <= values["daily_loss_limit"] <= 100:
             raise ValueError("每日最大亏损必须在 0.1% 到 100% 之间")
-        if not 0.1 <= values["daily_risk_limit"] <= 100:
-            raise ValueError("每日风险占用上限必须在 0.1% 到 100% 之间")
+        if not 0 <= values["daily_risk_limit"] <= 100:
+            raise ValueError("每日风险占用上限必须在 0% 到 100% 之间，0 表示关闭")
         if not 1 <= values["daily_order_limit"] <= 10000:
             raise ValueError("每日订单上限必须在 1 到 10000 之间")
         if not 1 <= values["single_position_loss_limit_amount"] <= 1000000:
@@ -590,9 +590,9 @@ class TradingAccountRepository:
                     user_id, account_key, account_name, account_type,
                     environment, currency, initial_balance, balance, equity,
                     free_margin, margin, status, token_hash, enabled,
-                    daily_order_limit, financial_updated_at, created_at, updated_at
+                    daily_order_limit, daily_risk_limit, financial_updated_at, created_at, updated_at
                 ) VALUES(?, ?, ?, 'paper', 'simulated', ?, ?, ?, ?, ?, 0,
-                         'active', ?, 1, 100, ?, ?, ?)
+                         'active', ?, 1, 100, 0, ?, ?, ?)
                 """,
                 (
                     user_id, account_key, name[:100], normalized_currency,
@@ -860,7 +860,7 @@ class TradingAccountRepository:
             max_total_positions=int(row["max_total_positions"]),
             max_single_volume=float(row["max_single_volume"]),
             daily_loss_limit=float(row["daily_loss_limit"]),
-            daily_risk_limit=float(row.get("daily_risk_limit", 5.0) or 5.0),
+            daily_risk_limit=float(row["daily_risk_limit"] if row.get("daily_risk_limit") is not None else 0.0),
             daily_order_limit=int(row["daily_order_limit"]),
             auto_flatten_enabled=bool(row.get("auto_flatten_enabled", 0)),
             auto_flatten_time=row.get("auto_flatten_time"),

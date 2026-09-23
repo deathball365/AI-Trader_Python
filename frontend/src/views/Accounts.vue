@@ -686,7 +686,6 @@
             <v-text-field v-model.number="accountForm.maxTotalPositions" label="最大总持仓" type="number" min="1" max="100" variant="outlined" />
             <v-text-field v-model.number="accountForm.maxSingleVolume" label="单笔最大手数" type="number" min="0.01" step="0.01" variant="outlined" />
             <v-text-field v-model.number="accountForm.dailyLossLimit" label="每日最大亏损（%）" type="number" min="0.1" step="0.1" variant="outlined" />
-            <v-text-field v-model.number="accountForm.dailyRiskLimit" label="每日风险占用上限（%）" type="number" min="0.1" max="100" step="0.1" variant="outlined" hint="按新仓初始止损风险累计计算" persistent-hint />
             <v-text-field v-model.number="accountForm.dailyOrderLimit" label="每日订单上限" type="number" min="1" variant="outlined" />
           </div>
           <v-switch v-model="accountForm.autoFlattenEnabled" color="warning" inset label="开启定时全清仓" />
@@ -772,7 +771,7 @@ const accountForm = reactive({
   accountName: '', tradingEnabled: true, autoTradingEnabled: true,
   maxTotalPositions: 10, maxSingleVolume: 10,
   dailyLossLimit: 5, dailyOrderLimit: 100,
-  dailyRiskLimit: 5,
+  dailyRiskLimit: 0,
   autoFlattenEnabled: false, autoFlattenTime: '',
   singlePositionLossLimitEnabled: true, singlePositionLossLimitAmount: 30,
 })
@@ -1172,7 +1171,7 @@ function openAccountManager(account) {
     maxTotalPositions: account.max_total_positions,
     maxSingleVolume: account.max_single_volume,
     dailyLossLimit: account.daily_loss_limit,
-    dailyRiskLimit: account.daily_risk_limit ?? 5,
+    dailyRiskLimit: 0,
     dailyOrderLimit: account.daily_order_limit,
     autoFlattenEnabled: Boolean(account.auto_flatten_enabled),
     autoFlattenTime: account.auto_flatten_time || '',

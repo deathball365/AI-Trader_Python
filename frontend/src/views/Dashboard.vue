@@ -81,10 +81,6 @@
             <div class="risk-progress__head"><span>今日订单额度</span><strong>{{ overview.risk.daily_order_count || 0 }} / {{ overview.risk.daily_order_limit || 0 }}</strong></div>
             <v-progress-linear :model-value="ratio(overview.risk.daily_order_count, overview.risk.daily_order_limit)" :color="progressColor(ratio(overview.risk.daily_order_count, overview.risk.daily_order_limit))" height="8" rounded />
           </div>
-          <div class="risk-progress">
-            <div class="risk-progress__head"><span>今日风险额度</span><strong>{{ Number(overview.risk.daily_risk_used || 0).toFixed(2) }}% / {{ Number(overview.risk.daily_risk_limit || 0).toFixed(2) }}%</strong></div>
-            <v-progress-linear :model-value="ratio(overview.risk.daily_risk_used, overview.risk.daily_risk_limit)" :color="progressColor(ratio(overview.risk.daily_risk_used, overview.risk.daily_risk_limit))" height="8" rounded />
-          </div>
           <p v-if="overview.risk.circuit_breaker_reason" class="risk-reason">{{ overview.risk.circuit_breaker_reason }}</p>
         </v-card-text>
       </v-card>

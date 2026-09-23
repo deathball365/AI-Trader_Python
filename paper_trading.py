@@ -1967,7 +1967,7 @@ class PaperTradingService:
         account = self.storage.fetchone(
             """SELECT user_id, account_name, balance, free_margin, status, enabled, trading_enabled,
                       max_single_volume, daily_loss_limit, daily_order_limit,
-                      COALESCE(daily_risk_limit, 5.0) AS daily_risk_limit
+                      COALESCE(daily_risk_limit, 0) AS daily_risk_limit
                FROM trading_accounts WHERE id = ?""",
             (account_id,),
         )
@@ -2038,8 +2038,8 @@ class PaperTradingService:
                 / balance * 100
                 if balance > 0 else 0.0
             )
-            daily_risk_limit = float(account["daily_risk_limit"] or 5.0)
-            if existing_risk_pct + current_risk_pct > daily_risk_limit:
+            daily_risk_limit = float(account["daily_risk_limit"] or 0.0)
+            if daily_risk_limit > 0 and existing_risk_pct + current_risk_pct > daily_risk_limit:
                 warnings.append(
                     f"将超过每日风险占用上限 {daily_risk_limit:.2f}%"
                 )
