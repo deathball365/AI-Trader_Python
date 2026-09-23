@@ -18,6 +18,11 @@ class _Request:
             "tick_size": 0.01,
             "point_size": 0.01,
             "tick_value": 1.0,
+            "swap_long": -7.14,
+            "swap_short": 2.36,
+            "swap_mode": 1,
+            "swap_rollover3days": 3,
+            "stops_level": 0,
             "source": "mt5",
         }
 
@@ -51,6 +56,8 @@ class EAInstrumentSpecTests(unittest.TestCase):
         self.assertEqual(fake.calls[0][2]["price_digits"], 2)
         self.assertEqual(fake.calls[0][2]["tick_size"], 0.01)
         self.assertEqual(fake.calls[0][2]["tick_value"], 1.0)
+        self.assertEqual(fake.calls[0][2]["swap_long"], -7.14)
+        self.assertEqual(fake.calls[0][2]["stops_level"], 0)
 
 
 if __name__ == "__main__":

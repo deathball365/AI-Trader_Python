@@ -19,8 +19,27 @@ DEFAULT_SPEC = {
     "tick_size": 0.0,
     "point_size": 0.0,
     "tick_value": 0.0,
+    "swap_long": 0.0,
+    "swap_short": 0.0,
+    "swap_mode": 0,
+    "swap_rollover3days": 0,
+    "stops_level": 0,
+    "freeze_level": 0,
+    "filling_mode": 0,
+    "trade_calc_mode": 0,
+    "currency_base": "",
+    "currency_profit": "",
+    "currency_margin": "",
     "source": "default",
 }
+
+SPEC_COLUMNS = (
+    "min_volume,volume_step,max_volume,volume_digits,contract_size,"
+    "price_digits,tick_size,point_size,tick_value,"
+    "swap_long,swap_short,swap_mode,swap_rollover3days,"
+    "stops_level,freeze_level,filling_mode,trade_calc_mode,"
+    "currency_base,currency_profit,currency_margin,source,updated_at"
+)
 
 
 class InstrumentSpecRepository:
@@ -31,16 +50,13 @@ class InstrumentSpecRepository:
         account_id = int(account_id or 0)
         symbol = str(symbol or "").strip()
         row = self.storage.fetchone(
-            "SELECT account_id,symbol,min_volume,volume_step,max_volume,"
-            "volume_digits,contract_size,price_digits,tick_size,point_size,tick_value,source,updated_at "
+            "SELECT account_id,symbol," + SPEC_COLUMNS + " "
             "FROM account_instrument_specs WHERE account_id=? AND symbol=?",
             (account_id, symbol),
         )
         if row is None and account_id:
             row = self.storage.fetchone(
-                "SELECT s.account_id,s.symbol,s.min_volume,s.volume_step,s.max_volume,"
-                "s.volume_digits,s.contract_size,s.price_digits,s.tick_size,s.point_size,"
-                "s.tick_value,s.source,s.updated_at "
+                "SELECT s.account_id,s.symbol,s." + SPEC_COLUMNS.replace(",", ",s.") + " "
                 "FROM account_instrument_specs s "
                 "JOIN trading_accounts target ON target.id=? "
                 "JOIN trading_accounts source ON source.id=s.account_id "
@@ -72,21 +88,41 @@ class InstrumentSpecRepository:
         tick_size = max(0.0, float(spec.get("tick_size") or 0.0))
         point_size = max(0.0, float(spec.get("point_size") or 0.0))
         tick_value = max(0.0, float(spec.get("tick_value") or 0.0))
+        swap_long = float(spec.get("swap_long") or 0.0)
+        swap_short = float(spec.get("swap_short") or 0.0)
+        swap_mode = max(0, int(spec.get("swap_mode") or 0))
+        swap_rollover3days = max(0, min(6, int(spec.get("swap_rollover3days") or 0)))
+        stops_level = max(0, int(spec.get("stops_level") or 0))
+        freeze_level = max(0, int(spec.get("freeze_level") or 0))
+        filling_mode = max(0, int(spec.get("filling_mode") or 0))
+        trade_calc_mode = max(0, int(spec.get("trade_calc_mode") or 0))
+        currency_base = str(spec.get("currency_base") or "")[:16]
+        currency_profit = str(spec.get("currency_profit") or "")[:16]
+        currency_margin = str(spec.get("currency_margin") or "")[:16]
         source = str(spec.get("source") or "broker")[:32]
         now = int(time.time())
         self.storage.execute(
             "INSERT INTO account_instrument_specs "
             "(account_id,symbol,min_volume,volume_step,max_volume,volume_digits,contract_size,"
-            "price_digits,tick_size,point_size,tick_value,source,updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "price_digits,tick_size,point_size,tick_value,swap_long,swap_short,swap_mode,"
+            "swap_rollover3days,stops_level,freeze_level,filling_mode,trade_calc_mode,"
+            "currency_base,currency_profit,currency_margin,source,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON DUPLICATE KEY UPDATE min_volume=VALUES(min_volume),volume_step=VALUES(volume_step),"
             "max_volume=VALUES(max_volume),volume_digits=VALUES(volume_digits),"
             "contract_size=VALUES(contract_size),price_digits=VALUES(price_digits),"
             "tick_size=VALUES(tick_size),point_size=VALUES(point_size),"
-            "tick_value=VALUES(tick_value),"
+            "tick_value=VALUES(tick_value),swap_long=VALUES(swap_long),"
+            "swap_short=VALUES(swap_short),swap_mode=VALUES(swap_mode),"
+            "swap_rollover3days=VALUES(swap_rollover3days),stops_level=VALUES(stops_level),"
+            "freeze_level=VALUES(freeze_level),filling_mode=VALUES(filling_mode),"
+            "trade_calc_mode=VALUES(trade_calc_mode),currency_base=VALUES(currency_base),"
+            "currency_profit=VALUES(currency_profit),currency_margin=VALUES(currency_margin),"
             "source=VALUES(source),updated_at=VALUES(updated_at)",
             (account_id, symbol, min_volume, step, max_volume, digits, contract,
-             price_digits, tick_size, point_size, tick_value, source, now),
+             price_digits, tick_size, point_size, tick_value, swap_long, swap_short,
+             swap_mode, swap_rollover3days, stops_level, freeze_level, filling_mode,
+             trade_calc_mode, currency_base, currency_profit, currency_margin, source, now),
         )
         return self.get(account_id, symbol)
 

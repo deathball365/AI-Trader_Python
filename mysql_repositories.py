@@ -620,7 +620,10 @@ class TradingAccountRepository:
         """Copy broker contract specs onto a Paper account so PnL uses the same multiplier."""
         rows = conn.execute(
             "SELECT symbol, min_volume, volume_step, max_volume, volume_digits, "
-            "contract_size, price_digits, tick_size, point_size, tick_value, source "
+            "contract_size, price_digits, tick_size, point_size, tick_value, "
+            "swap_long, swap_short, swap_mode, swap_rollover3days, "
+            "stops_level, freeze_level, filling_mode, trade_calc_mode, "
+            "currency_base, currency_profit, currency_margin, source "
             "FROM account_instrument_specs WHERE account_id=?",
             (int(source_account_id),),
         ).fetchall()
@@ -629,13 +632,20 @@ class TradingAccountRepository:
             conn.execute(
                 "INSERT INTO account_instrument_specs "
                 "(account_id,symbol,min_volume,volume_step,max_volume,volume_digits,contract_size,"
-                "price_digits,tick_size,point_size,tick_value,source,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "price_digits,tick_size,point_size,tick_value,swap_long,swap_short,swap_mode,"
+                "swap_rollover3days,stops_level,freeze_level,filling_mode,trade_calc_mode,"
+                "currency_base,currency_profit,currency_margin,source,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON DUPLICATE KEY UPDATE min_volume=VALUES(min_volume),volume_step=VALUES(volume_step),"
                 "max_volume=VALUES(max_volume),volume_digits=VALUES(volume_digits),"
                 "contract_size=VALUES(contract_size),price_digits=VALUES(price_digits),"
                 "tick_size=VALUES(tick_size),point_size=VALUES(point_size),"
-                "tick_value=VALUES(tick_value),"
+                "tick_value=VALUES(tick_value),swap_long=VALUES(swap_long),"
+                "swap_short=VALUES(swap_short),swap_mode=VALUES(swap_mode),"
+                "swap_rollover3days=VALUES(swap_rollover3days),stops_level=VALUES(stops_level),"
+                "freeze_level=VALUES(freeze_level),filling_mode=VALUES(filling_mode),"
+                "trade_calc_mode=VALUES(trade_calc_mode),currency_base=VALUES(currency_base),"
+                "currency_profit=VALUES(currency_profit),currency_margin=VALUES(currency_margin),"
                 "source=VALUES(source),updated_at=VALUES(updated_at)",
                 (
                     int(target_account_id), payload.get("symbol"),
@@ -644,6 +654,13 @@ class TradingAccountRepository:
                     payload.get("contract_size"), payload.get("price_digits"),
                     payload.get("tick_size"), payload.get("point_size"),
                     payload.get("tick_value") or 0,
+                    payload.get("swap_long") or 0, payload.get("swap_short") or 0,
+                    payload.get("swap_mode") or 0, payload.get("swap_rollover3days") or 0,
+                    payload.get("stops_level") or 0, payload.get("freeze_level") or 0,
+                    payload.get("filling_mode") or 0, payload.get("trade_calc_mode") or 0,
+                    str(payload.get("currency_base") or "")[:16],
+                    str(payload.get("currency_profit") or "")[:16],
+                    str(payload.get("currency_margin") or "")[:16],
                     str(payload.get("source") or "copied")[:32], int(now),
                 ),
             )

@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright "wwananggxxxx"
 #property link      "https://www.mql5.com"
-#property version   "2.11"
-#define EA_API_VERSION "2.1.1"
+#property version   "2.12"
+#define EA_API_VERSION "2.1.2"
 #property strict
 
 //--- 需要访问Web请求权限
@@ -433,6 +433,17 @@ bool SendInstrumentSpec()
       double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
       double pointSize = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
       double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+      double swapLong = SymbolInfoDouble(_Symbol, SYMBOL_SWAP_LONG);
+      double swapShort = SymbolInfoDouble(_Symbol, SYMBOL_SWAP_SHORT);
+      long swapMode = SymbolInfoInteger(_Symbol, SYMBOL_SWAP_MODE);
+      long swapTriple = SymbolInfoInteger(_Symbol, SYMBOL_SWAP_ROLLOVER3DAYS);
+      long stopsLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+      long freezeLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_FREEZE_LEVEL);
+      long fillingMode = SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+      long calcMode = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_CALC_MODE);
+      string currencyBase = SymbolInfoString(_Symbol, SYMBOL_CURRENCY_BASE);
+      string currencyProfit = SymbolInfoString(_Symbol, SYMBOL_CURRENCY_PROFIT);
+      string currencyMargin = SymbolInfoString(_Symbol, SYMBOL_CURRENCY_MARGIN);
       if(minVolume <= 0) minVolume = 0.01;
       if(stepVolume <= 0) stepVolume = minVolume;
       if(maxVolume <= 0) maxVolume = 100.0;
@@ -447,6 +458,18 @@ bool SendInstrumentSpec()
       jsonBody += "\"price_digits\":" + IntegerToString(priceDigits) + ",";
       jsonBody += "\"tick_size\":" + DoubleToString(tickSize, 10) + ",";
       jsonBody += "\"point_size\":" + DoubleToString(pointSize, 10) + ",";
+      jsonBody += "\"tick_value\":" + DoubleToString(tickValue, 10) + ",";
+      jsonBody += "\"swap_long\":" + DoubleToString(swapLong, 8) + ",";
+      jsonBody += "\"swap_short\":" + DoubleToString(swapShort, 8) + ",";
+      jsonBody += "\"swap_mode\":" + IntegerToString((int)swapMode) + ",";
+      jsonBody += "\"swap_rollover3days\":" + IntegerToString((int)swapTriple) + ",";
+      jsonBody += "\"stops_level\":" + IntegerToString((int)stopsLevel) + ",";
+      jsonBody += "\"freeze_level\":" + IntegerToString((int)freezeLevel) + ",";
+      jsonBody += "\"filling_mode\":" + IntegerToString((int)fillingMode) + ",";
+      jsonBody += "\"trade_calc_mode\":" + IntegerToString((int)calcMode) + ",";
+      jsonBody += "\"currency_base\":\"" + EscapeJsonString(currencyBase) + "\",";
+      jsonBody += "\"currency_profit\":\"" + EscapeJsonString(currencyProfit) + "\",";
+      jsonBody += "\"currency_margin\":\"" + EscapeJsonString(currencyMargin) + "\",";
       jsonBody += "\"source\":\"mt5\"}";
       uchar postData[];
       uchar responseData[];
@@ -466,7 +489,10 @@ bool SendInstrumentSpec()
       Print("[品种规格上报] ", _Symbol, " min=", DoubleToString(minVolume, 8),
             " step=", DoubleToString(stepVolume, 8), " digits=", priceDigits,
             " tick=", DoubleToString(tickSize, 10),
-            " tick_value=", DoubleToString(tickValue, 10));
+            " tick_value=", DoubleToString(tickValue, 10),
+            " swapL=", DoubleToString(swapLong, 4),
+            " swapS=", DoubleToString(swapShort, 4),
+            " stops=", IntegerToString((int)stopsLevel));
       return true;
   }
 

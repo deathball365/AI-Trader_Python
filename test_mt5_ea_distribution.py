@@ -27,8 +27,8 @@ class MT5EADistributionTest(unittest.TestCase):
     def test_ea_supports_historical_dataset_tasks(self):
         source = EA_SOURCE.read_text(encoding="utf-8")
 
-        self.assertIn('#property version   "2.11"', source)
-        self.assertIn('#define EA_API_VERSION "2.1.1"', source)
+        self.assertIn('#property version   "2.12"', source)
+        self.assertIn('#define EA_API_VERSION "2.1.2"', source)
         self.assertIn('X-EA-Version: " + EA_API_VERSION', source)
         self.assertIn("SYMBOL_TRADE_TICK_SIZE", source)
         self.assertIn("SYMBOL_TRADE_TICK_VALUE", source)
@@ -41,6 +41,9 @@ class MT5EADistributionTest(unittest.TestCase):
         self.assertIn("SYMBOL_TRADE_STOPS_LEVEL", source)
         self.assertIn("NormalizeTradePrice(updateSymbol, sl, stopRounding)", source)
         self.assertIn("CheckHistoricalDataTask();", source)
+        self.assertIn("SYMBOL_SWAP_LONG", source)
+        self.assertIn("tick_value", source)
+        self.assertIn("stops_level", source)
         self.assertIn("CopyRates(\n      _Symbol, PERIOD_M1", source)
         self.assertIn("/ea/backtest-data/tasks/next?symbol=", source)
         self.assertIn("/chunks", source)
