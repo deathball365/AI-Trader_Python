@@ -524,6 +524,47 @@ class StrategyServiceTestCase(unittest.TestCase):
         self.assertEqual(signal.setup_type, "key_level_19_breakout")
         self.assertEqual(signal.suggested_sl, 4418.0)
 
+    def test_key_level_19_waits_for_next_bar_if_first_close_misses_4320(self):
+        from unittest.mock import patch
+        from market.services.signal.key_level_signal import KeyLevelSignalGenerator
+        from market.models.trading_strategy import TradingStrategy
+
+        class _Bars:
+            def __init__(self):
+                self.rows = []
+            def get_all_klines(self, symbol, period):
+                return list(self.rows)
+
+        t0 = 1_800_000_000
+        store = _Bars()
+        strategy = TradingStrategy(symbol="GOLD_", signal_sources=[{
+            "signal_source_id": "key-19-next-bar", "source": "key_level",
+            "period": "M1", "params": {
+                "level_mode": "levels", "levels": [4419],
+                "setup_mode": "level_19", "cooldown_seconds": 0,
+            },
+        }])
+        generator = KeyLevelSignalGenerator(kline_store=store)
+        with patch("market.services.signal.key_level_signal.time.time", return_value=t0 + 10):
+            generator.generate_signals_for_strategy("GOLD_", 4418.5, strategy)
+            generator.generate_signals_for_strategy("GOLD_", 4420.0, strategy)
+        store.rows = [{
+            "timestamp": t0, "open": 4418.5, "high": 4420.2,
+            "low": 4418.4, "close": 4419.5,
+        }]
+        with patch("market.services.signal.key_level_signal.time.time", return_value=t0 + 60):
+            waiting = generator.generate_signals_for_strategy("GOLD_", 4419.8, strategy)
+        self.assertFalse(any(item.is_entry_trigger for item in waiting))
+        store.rows.append({
+            "timestamp": t0 + 60, "open": 4419.6, "high": 4421.0,
+            "low": 4419.4, "close": 4420.3,
+        })
+        with patch("market.services.signal.key_level_signal.time.time", return_value=t0 + 120):
+            signals = generator.generate_signals_for_strategy("GOLD_", 4420.3, strategy)
+        signal = next(item for item in signals if item.is_entry_trigger)
+        self.assertEqual(signal.action, "buy")
+        self.assertEqual(signal.setup_type, "key_level_19_breakout")
+
     def test_key_level_19_ignores_breakout_if_bar_closes_back_below(self):
         from unittest.mock import patch
         from market.services.signal.key_level_signal import KeyLevelSignalGenerator

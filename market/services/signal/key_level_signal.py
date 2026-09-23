@@ -342,6 +342,26 @@ class KeyLevelSignalGenerator:
         return value // 1000 if value > 10_000_000_000 else value
 
     def _closed_hold_bar(self, symbol: str, period: str, since_bar: int) -> Optional[Dict]:
+        result = self._scan_hold_bars(symbol, period, since_bar, "long", 0.0, 0.0)
+        return result[1] if result and result[0] == "hold" else None
+
+    def _bar_close(self, row: Dict) -> float:
+        try:
+            return float(row.get("close", row.get("close_price")) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _scan_hold_bars(
+        self, symbol: str, period: str, since_bar: int, side: str,
+        hold_price: float, fail_price: float,
+    ) -> Optional[tuple]:
+        """Walk closed bars after the break. Skip in-between closes.
+
+        Long: close >= hold_price confirms; close < fail_price cancels.
+        Short: close <= hold_price confirms; close > fail_price cancels.
+        A close stuck between those two prices is ignored so the next bar
+        can still confirm.
+        """
         if not self.kline_store or since_bar <= 0:
             return None
         seconds = self._period_seconds(period)
@@ -358,7 +378,22 @@ class KeyLevelSignalGenerator:
         if not closed:
             return None
         closed.sort(key=lambda item: item[0])
-        return closed[0][1]
+        long_side = str(side or "long") != "short"
+        for _, row in closed:
+            close = self._bar_close(row)
+            if close <= 0:
+                continue
+            if long_side:
+                if close >= hold_price:
+                    return ("hold", row)
+                if close < fail_price:
+                    return ("fail", row)
+            else:
+                if close <= hold_price:
+                    return ("hold", row)
+                if close > fail_price:
+                    return ("fail", row)
+        return None
 
     def _apply_level19_entry(
         self, signal: TradingSignal, action: str, current_price: float,
@@ -468,40 +503,36 @@ class KeyLevelSignalGenerator:
                 if current_price < level:
                     phase, bar_time = "idle", 0
                 else:
-                    hold = self._closed_hold_bar(signal.symbol, period, bar_time)
-                    if hold is not None:
-                        try:
-                            close = float(hold.get("close", hold.get("close_price")) or 0)
-                        except (TypeError, ValueError):
-                            close = 0.0
-                        if close >= confirmation:
-                            self._apply_level19_entry(
-                                signal, "buy", current_price, level, params,
-                                f"突破关键位 {level} 上方确认点 {confirmation} 后收盘站稳，生成买入",
-                            )
-                            self._set_level19_state(key, "triggered", bar_time)
-                            return signal
-                        if close < level:
-                            phase, bar_time = "idle", 0
+                    scanned = self._scan_hold_bars(
+                        signal.symbol, period, bar_time, "long",
+                        confirmation, level,
+                    )
+                    if scanned and scanned[0] == "hold":
+                        self._apply_level19_entry(
+                            signal, "buy", current_price, level, params,
+                            f"突破关键位 {level} 上方确认点 {confirmation} 后收盘站稳，生成买入",
+                        )
+                        self._set_level19_state(key, "triggered", bar_time)
+                        return signal
+                    if scanned and scanned[0] == "fail":
+                        phase, bar_time = "idle", 0
             elif phase == "awaiting_hold_short":
                 if current_price > level:
                     phase, bar_time = "idle", 0
                 else:
-                    hold = self._closed_hold_bar(signal.symbol, period, bar_time)
-                    if hold is not None:
-                        try:
-                            close = float(hold.get("close", hold.get("close_price")) or 0)
-                        except (TypeError, ValueError):
-                            close = 0.0
-                        if close <= downside_confirmation:
-                            self._apply_level19_entry(
-                                signal, "sell", current_price, level, params,
-                                f"跌破关键位 {level} 下方确认点 {downside_confirmation} 后收盘站稳，生成卖出",
-                            )
-                            self._set_level19_state(key, "triggered", bar_time)
-                            return signal
-                        if close > level:
-                            phase, bar_time = "idle", 0
+                    scanned = self._scan_hold_bars(
+                        signal.symbol, period, bar_time, "short",
+                        downside_confirmation, level,
+                    )
+                    if scanned and scanned[0] == "hold":
+                        self._apply_level19_entry(
+                            signal, "sell", current_price, level, params,
+                            f"跌破关键位 {level} 下方确认点 {downside_confirmation} 后收盘站稳，生成卖出",
+                        )
+                        self._set_level19_state(key, "triggered", bar_time)
+                        return signal
+                    if scanned and scanned[0] == "fail":
+                        phase, bar_time = "idle", 0
 
             self._set_level19_state(key, phase, bar_time)
             if not signal.is_entry_trigger:
