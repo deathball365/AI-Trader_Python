@@ -624,6 +624,7 @@ class StrategyService:
                 "setup_family": str(getattr(best_signal, "setup_family", "") or "generic"),
                 "setup_type": str(getattr(best_signal, "setup_type", "") or "generic_entry"),
                 "entry_mode": str(getattr(best_signal, "entry_mode", "") or "touch_or_near"),
+                "symbol": str(getattr(best_signal, "symbol", "") or symbol or ""),
                 "key_level": float(key_level_value or 0),
                 "integer_level": is_integer_level,
                 "signal_min_risk_reward": float(

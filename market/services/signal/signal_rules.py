@@ -213,6 +213,20 @@ def build_moving_average_signal(
     )
 
 
+def integer_level_stop_offset(symbol: str = "", *, level_19: bool = False) -> float:
+    """Far-side buffer from a round number before adding spread.
+
+    GOLD 19-levels stay at 1.0.  OIL uses 0.03 because a 1.00 stop would
+    sit many ATR away from 95/100.  Other symbols keep 1.0.
+    """
+    if level_19:
+        return 1.0
+    compact = "".join(ch for ch in str(symbol or "").upper() if ch.isalnum())
+    if "OIL" in compact:
+        return 0.03
+    return 1.0
+
+
 def automatic_key_levels(current_price: float) -> list:
     if current_price <= 0:
         return []
@@ -349,11 +363,12 @@ def build_key_level_state_signal(
         )
     except (TypeError, ValueError):
         take_profit_percent = 0.0032
+    stop_offset = integer_level_stop_offset(symbol)
     if trigger_type and action == "buy":
-        sl = float(nearest) - 1.0
+        sl = float(nearest) - stop_offset
         tp = float(current_price) * (1.0 + take_profit_percent)
     elif trigger_type and action == "sell":
-        sl = float(nearest) + 1.0
+        sl = float(nearest) + stop_offset
         tp = float(current_price) * (1.0 - take_profit_percent)
 
     if not near and not upward_breakout and not downward_breakout:

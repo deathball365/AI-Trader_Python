@@ -11,6 +11,7 @@ from market.models.position_management import (
     PositionAction, PositionManagementPolicy, PositionPlan,
     resolve_position_management_config,
 )
+from market.services.signal.signal_rules import integer_level_stop_offset
 
 
 def _buffer_value(buffer: Dict, entry_price: float, atr: float) -> float:
@@ -283,9 +284,12 @@ class PositionManager:
             key_level = 0.0
         dedicated_boundary_stop = None
         if dedicated_key_level and key_level > 0:
-            # Far side of the round number by one price unit: 7700 buy -> 7699.
+            offset = integer_level_stop_offset(
+                (setup_context or {}).get("symbol"),
+                level_19=dedicated_key_level_19,
+            )
             dedicated_boundary_stop = (
-                key_level - 1.0 if direction == "buy" else key_level + 1.0
+                key_level - offset if direction == "buy" else key_level + offset
             )
 
         if multi_level:
@@ -375,10 +379,6 @@ class PositionManager:
                 ),
             }
         spread_buffer = max(0.0, float(spread or 0))
-        if dedicated_key_level:
-            # Integer invalidation is the far side of the round number by 1.
-            # Do not push it farther by spread, or 7700 buy becomes 7698.35.
-            spread_buffer = 0.0
         if spread_buffer > 0:
             stop_before_spread = float(stop)
             stop = (
