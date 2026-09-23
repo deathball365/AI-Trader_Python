@@ -84,7 +84,7 @@ class KeyLevelSignalGenerator:
         self._signal_cooldowns: Dict[str, datetime] = {}
         self._last_prices: Dict[str, float] = {}
         # Per strategy/source state for the special level-19 staged breakout.
-        self._breakout_retest_states: Dict[str, str] = {}
+        self._breakout_retest_states: Dict[str, object] = {}
 
         print("[KeyLevelSignalGenerator] 关键点位信号生成器已初始化")
 
@@ -308,12 +308,100 @@ class KeyLevelSignalGenerator:
             strategy_id, signal_source_id, symbol, key_level, period,
         ))
 
+
+    _PERIOD_SECONDS = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600, "H4": 14400}
+
+    def _level19_state(self, key: str) -> Dict:
+        raw = self._breakout_retest_states.get(key, "idle")
+        if isinstance(raw, dict):
+            return {
+                "phase": str(raw.get("phase") or "idle"),
+                "bar_time": int(raw.get("bar_time") or 0),
+            }
+        return {"phase": str(raw or "idle"), "bar_time": 0}
+
+    def _set_level19_state(self, key: str, phase: str, bar_time: int = 0) -> None:
+        self._breakout_retest_states[key] = {
+            "phase": str(phase or "idle"),
+            "bar_time": int(bar_time or 0),
+        }
+
+    def _period_seconds(self, period: str) -> int:
+        return self._PERIOD_SECONDS.get(str(period or "M1").upper(), 60)
+
+    def _bar_open_time(self, period: str, now: Optional[int] = None) -> int:
+        seconds = self._period_seconds(period)
+        current = int(now if now is not None else time.time())
+        return current - (current % seconds)
+
+    def _bar_epoch(self, row: Dict) -> int:
+        try:
+            value = int(float(row.get("timestamp_utc") or row.get("timestamp") or row.get("time") or 0))
+        except (TypeError, ValueError):
+            return 0
+        return value // 1000 if value > 10_000_000_000 else value
+
+    def _closed_hold_bar(self, symbol: str, period: str, since_bar: int) -> Optional[Dict]:
+        if not self.kline_store or since_bar <= 0:
+            return None
+        seconds = self._period_seconds(period)
+        now = int(time.time())
+        try:
+            rows = self.kline_store.get_all_klines(symbol, str(period or "M1").upper()) or []
+        except Exception:
+            return None
+        closed = []
+        for row in rows:
+            ts = self._bar_epoch(row)
+            if ts >= since_bar and ts + seconds <= now:
+                closed.append((ts, row))
+        if not closed:
+            return None
+        closed.sort(key=lambda item: item[0])
+        return closed[0][1]
+
+    def _apply_level19_entry(
+        self, signal: TradingSignal, action: str, current_price: float,
+        level: float, params: Dict, reason: str,
+    ) -> TradingSignal:
+        take_profit_percent = 0.0032
+        try:
+            take_profit_percent = max(
+                0.0, min(0.10, float(params.get("take_profit_percent", 0.0032) or 0.0032))
+            )
+        except (TypeError, ValueError):
+            take_profit_percent = 0.0032
+        signal.action = action
+        signal.is_entry_trigger = True
+        signal.setup_family = "breakout" if "突破" in reason or "跌破" in reason else "reversal"
+        signal.entry_mode = "breakout" if action == "buy" or "跌破" in reason else "touch_or_near"
+        signal.suggested_entry = current_price
+        if action == "buy":
+            signal.market_direction = "up"
+            signal.setup_type = "key_level_19_breakout"
+            signal.entry_mode = "breakout"
+            signal.suggested_sl = float(level) - 1.0
+            signal.suggested_tp = round(current_price * (1.0 + take_profit_percent), 8)
+        else:
+            signal.market_direction = "down"
+            signal.setup_type = (
+                "key_level_19_resistance_reversal"
+                if "阻力" in reason else "key_level_19_breakout"
+            )
+            signal.entry_mode = (
+                "touch_or_near" if signal.setup_type.endswith("reversal") else "breakout"
+            )
+            signal.suggested_sl = float(level) + 1.0
+            signal.suggested_tp = round(current_price * (1.0 - take_profit_percent), 8)
+        signal.trigger_reason = reason
+        return signal
+
     def _evaluate_breakout_retest(
         self, signal: TradingSignal, current_price: float,
         previous_price: Optional[float], strategy_id: str,
         source_id: str, period: str, params: Dict,
     ) -> TradingSignal:
-        """Evaluate level-19 breakout -> confirmation -> retest -> entry."""
+        """Evaluate 19-level break with one closed-bar hold, or legacy retest."""
         level = float(signal.key_level or 0)
         if level <= 0:
             return signal
@@ -331,140 +419,140 @@ class KeyLevelSignalGenerator:
         except (TypeError, ValueError):
             atr = 0.0
         try:
-            tolerance_atr = max(0.0, float(params.get(
-                "breakout_retest_tolerance_atr", 0.9
-            )))
+            tolerance_atr = max(
+                0.0, min(10.0, float(params.get("breakout_retest_tolerance_atr", 0.9))),
+            )
         except (TypeError, ValueError):
             tolerance_atr = 0.9
         tolerance = atr * tolerance_atr if atr > 0 else fallback_tolerance
         key = self._breakout_retest_key(
             signal.symbol, level, strategy_id, source_id, period
         )
-        phase = self._breakout_retest_states.get(key, "idle")
+        state = self._level19_state(key)
+        phase = state["phase"]
+        bar_time = state["bar_time"]
         previous = float(previous_price) if previous_price is not None else None
         confirmation = level + offset
         downside_confirmation = level - offset
 
-        # The GOLD 19-level pattern also treats the first approach from below
-        # as a resistance rejection. It is deliberately emitted only for the
-        # explicit level_19 mode; ordinary breakout_retest remains buy-only.
-        if (
-            str(params.get("setup_mode") or "") == "level_19"
-            and phase == "idle"
-            and previous is not None
-            and previous < current_price < level
-            and level - current_price <= tolerance
-        ):
-            signal.action = "sell"
-            signal.market_direction = "down"
-            signal.is_entry_trigger = True
-            signal.setup_family = "reversal"
-            signal.setup_type = "key_level_19_resistance_reversal"
-            signal.entry_mode = "touch_or_near"
-            signal.suggested_entry = current_price
-            signal.suggested_sl = level + 1.0
-            signal.suggested_tp = round(
-                current_price * (1.0 - float(
-                    params.get("take_profit_percent", 0.0032)
-                )), 8
-            )
-            signal.trigger_reason = (
-                f"首次接近关键阻力 {level} 未突破，生成阻力反转卖出"
-            )
-            self._breakout_retest_states[key] = "rejected"
+        if is_level_19:
+            bar_open = self._bar_open_time(period)
+            if (
+                phase == "idle"
+                and previous is not None
+                and previous < current_price < level
+                and level - current_price <= tolerance
+            ):
+                self._apply_level19_entry(
+                    signal, "sell", current_price, level, params,
+                    f"首次接近关键阻力 {level} 未突破，生成阻力反转卖出",
+                )
+                self._set_level19_state(key, "rejected", bar_open)
+                return signal
+            if (
+                phase in {"idle", "rejected"}
+                and previous is not None
+                and previous < confirmation <= current_price
+            ):
+                phase = "awaiting_hold_long"
+                bar_time = bar_open
+            elif (
+                phase in {"idle", "rejected"}
+                and previous is not None
+                and previous > downside_confirmation >= current_price
+            ):
+                phase = "awaiting_hold_short"
+                bar_time = bar_open
+
+            if phase == "awaiting_hold_long":
+                if current_price < level:
+                    phase, bar_time = "idle", 0
+                else:
+                    hold = self._closed_hold_bar(signal.symbol, period, bar_time)
+                    if hold is not None:
+                        try:
+                            close = float(hold.get("close", hold.get("close_price")) or 0)
+                        except (TypeError, ValueError):
+                            close = 0.0
+                        if close >= confirmation:
+                            self._apply_level19_entry(
+                                signal, "buy", current_price, level, params,
+                                f"突破关键位 {level} 上方确认点 {confirmation} 后收盘站稳，生成买入",
+                            )
+                            self._set_level19_state(key, "triggered", bar_time)
+                            return signal
+                        if close < level:
+                            phase, bar_time = "idle", 0
+            elif phase == "awaiting_hold_short":
+                if current_price > level:
+                    phase, bar_time = "idle", 0
+                else:
+                    hold = self._closed_hold_bar(signal.symbol, period, bar_time)
+                    if hold is not None:
+                        try:
+                            close = float(hold.get("close", hold.get("close_price")) or 0)
+                        except (TypeError, ValueError):
+                            close = 0.0
+                        if close <= downside_confirmation:
+                            self._apply_level19_entry(
+                                signal, "sell", current_price, level, params,
+                                f"跌破关键位 {level} 下方确认点 {downside_confirmation} 后收盘站稳，生成卖出",
+                            )
+                            self._set_level19_state(key, "triggered", bar_time)
+                            return signal
+                        if close > level:
+                            phase, bar_time = "idle", 0
+
+            self._set_level19_state(key, phase, bar_time)
+            if not signal.is_entry_trigger:
+                signal.action = "none"
+                signal.market_direction = (
+                    "up" if phase == "awaiting_hold_long"
+                    else "down" if phase == "awaiting_hold_short"
+                    else "sideways"
+                )
+                signal.setup_family = "breakout"
+                signal.setup_type = (
+                    "key_level_19_resistance_reversal"
+                    if phase == "rejected" else "key_level_19_breakout"
+                )
+                signal.entry_mode = "breakout"
+                signal.trigger_reason = {
+                    "idle": f"等待突破关键位 {level}",
+                    "rejected": f"阻力反转已触发，等待下一次 {level} 机会",
+                    "awaiting_hold_long": (
+                        f"已突破确认点 {confirmation}，等待当根M1收盘站稳"
+                    ),
+                    "awaiting_hold_short": (
+                        f"已跌破确认点 {downside_confirmation}，等待当根M1收盘站稳"
+                    ),
+                    "triggered": "19点突破已触发",
+                }.get(phase, "等待19点确认")
             return signal
 
-        # The 19-level breakout follows the integer-level rule: once price
-        # crosses level + 1, buy immediately.  There is no retest entry.
-        if (
-            is_level_19
-            and phase in {"idle", "rejected"}
-            and previous is not None
-            and previous < confirmation <= current_price
-        ):
-            signal.action = "buy"
-            signal.market_direction = "up"
-            signal.is_entry_trigger = True
-            signal.setup_family = "breakout"
-            signal.setup_type = "key_level_19_breakout"
-            signal.entry_mode = "breakout"
-            signal.suggested_entry = current_price
-            signal.suggested_sl = level - 1.0
-            signal.suggested_tp = round(
-                current_price * (1.0 + float(
-                    params.get("take_profit_percent", 0.0032)
-                )), 8
-            )
-            signal.trigger_reason = (
-                f"突破关键位 {level} 上方确认点 {confirmation}，生成买入"
-            )
-            phase = "triggered"
-        # The 19-level rule is symmetric: after falling from above, crossing
-        # the lower confirmation point (level - 1, normally 4418 for 4419)
-        # opens a sell with protection one unit above the level (4420).
-        elif (
-            is_level_19
-            and phase in {"idle", "rejected"}
-            and previous is not None
-            and previous > downside_confirmation >= current_price
-        ):
-            signal.action = "sell"
-            signal.market_direction = "down"
-            signal.is_entry_trigger = True
-            signal.setup_family = "breakout"
-            signal.setup_type = "key_level_19_breakout"
-            signal.entry_mode = "breakout"
-            signal.suggested_entry = current_price
-            signal.suggested_sl = level + 1.0
-            signal.suggested_tp = round(
-                current_price * (1.0 - float(
-                    params.get("take_profit_percent", 0.0032)
-                )), 8
-            )
-            signal.trigger_reason = (
-                f"跌破关键位 {level} 下方确认点 {downside_confirmation}，生成卖出"
-            )
-            phase = "triggered"
-        elif current_price < level:
+        if current_price < level:
             phase = "idle"
         elif phase in {"idle", "rejected"} and previous is not None and previous < level <= current_price:
             phase = "broken"
         elif phase in {"broken", "confirmed"} and current_price >= confirmation:
             phase = "confirmed"
         elif phase == "confirmed":
-            # Require a later pullback from above the confirmation boundary;
-            # the confirmation tick itself never opens a position.
             if (
                 previous is not None
                 and previous > confirmation + tolerance
                 and level <= current_price <= confirmation + tolerance
             ):
-                signal.action = "buy"
-                signal.market_direction = "up"
-                signal.is_entry_trigger = True
-                signal.setup_family = "breakout"
-                signal.setup_type = "key_level_19_breakout"
-                signal.entry_mode = "breakout"
-                signal.suggested_entry = current_price
-                signal.suggested_sl = level - 1.0
-                signal.suggested_tp = round(
-                    current_price * (1.0 + float(
-                        params.get("take_profit_percent", 0.0032)
-                    )), 8
-                )
-                signal.trigger_reason = (
-                    f"突破关键位 {level} 上方确认点 {confirmation}，生成买入"
+                self._apply_level19_entry(
+                    signal, "buy", current_price, level, params,
+                    f"突破关键位 {level} 上方确认点 {confirmation}，生成买入",
                 )
                 phase = "triggered"
-        self._breakout_retest_states[key] = phase
+        self._set_level19_state(key, phase, bar_time)
         if not signal.is_entry_trigger:
             signal.action = "none"
             signal.market_direction = "up" if phase in {"broken", "confirmed"} else "sideways"
             signal.setup_family = "breakout"
-            signal.setup_type = (
-                "key_level_19_resistance_reversal"
-                if phase == "rejected" else "key_level_19_breakout"
-            )
+            signal.setup_type = "key_level_19_breakout"
             signal.entry_mode = "breakout"
             signal.trigger_reason = {
                 "idle": f"等待突破关键位 {level}",
@@ -638,7 +726,8 @@ class KeyLevelSignalGenerator:
                     )
                     special = self._evaluate_breakout_retest(
                         special, current_price, special_previous_price, strategy.strategy_id,
-                        source_id, config.get("period", ""), setup_params,
+                        source_id, config.get("period", ""),
+                        {**setup_params, "setup_mode": "level_19"},
                     )
                     self._last_prices[special_state_key] = current_price
                     if special.is_entry_trigger or special.market_direction == "up":

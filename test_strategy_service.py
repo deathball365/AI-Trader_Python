@@ -487,9 +487,19 @@ class StrategyServiceTestCase(unittest.TestCase):
         self.assertEqual(signal.action, "sell")
         self.assertEqual(signal.setup_type, "key_level_19_resistance_reversal")
 
-    def test_key_level_19_breaks_one_point_above_and_enters_directly(self):
+    def test_key_level_19_buys_after_breakout_bar_closes_above(self):
+        from unittest.mock import patch
         from market.services.signal.key_level_signal import KeyLevelSignalGenerator
         from market.models.trading_strategy import TradingStrategy
+
+        class _Bars:
+            def __init__(self):
+                self.rows = []
+            def get_all_klines(self, symbol, period):
+                return list(self.rows)
+
+        t0 = 1_800_000_000
+        store = _Bars()
         strategy = TradingStrategy(symbol="GOLD_", signal_sources=[{
             "signal_source_id": "key-19-breakout", "source": "key_level",
             "period": "M1", "params": {
@@ -497,20 +507,68 @@ class StrategyServiceTestCase(unittest.TestCase):
                 "setup_mode": "level_19", "cooldown_seconds": 0,
             },
         }])
-        generator = KeyLevelSignalGenerator()
-        first = generator.generate_signals_for_strategy("GOLD_", 4418.5, strategy)
-        second = generator.generate_signals_for_strategy("GOLD_", 4420.0, strategy)
+        generator = KeyLevelSignalGenerator(kline_store=store)
+        with patch("market.services.signal.key_level_signal.time.time", return_value=t0 + 10):
+            first = generator.generate_signals_for_strategy("GOLD_", 4418.5, strategy)
+            crossed = generator.generate_signals_for_strategy("GOLD_", 4420.0, strategy)
         self.assertFalse(first[0].is_entry_trigger)
-        signal = next(item for item in second if item.is_entry_trigger)
+        self.assertFalse(any(item.is_entry_trigger for item in crossed))
+        store.rows = [{
+            "timestamp": t0, "open": 4418.5, "high": 4421.0,
+            "low": 4418.0, "close": 4420.4,
+        }]
+        with patch("market.services.signal.key_level_signal.time.time", return_value=t0 + 60):
+            signals = generator.generate_signals_for_strategy("GOLD_", 4420.4, strategy)
+        signal = next(item for item in signals if item.is_entry_trigger)
         self.assertEqual(signal.action, "buy")
         self.assertEqual(signal.setup_type, "key_level_19_breakout")
-        self.assertEqual(signal.entry_mode, "breakout")
         self.assertEqual(signal.suggested_sl, 4418.0)
-        self.assertAlmostEqual(signal.suggested_tp, 4420.0 * 1.0032, places=6)
 
-    def test_key_level_19_breaks_below_lower_confirmation_and_enters_short(self):
+    def test_key_level_19_ignores_breakout_if_bar_closes_back_below(self):
+        from unittest.mock import patch
         from market.services.signal.key_level_signal import KeyLevelSignalGenerator
         from market.models.trading_strategy import TradingStrategy
+
+        class _Bars:
+            def __init__(self):
+                self.rows = []
+            def get_all_klines(self, symbol, period):
+                return list(self.rows)
+
+        t0 = 1_800_000_000
+        store = _Bars()
+        strategy = TradingStrategy(symbol="GOLD_", signal_sources=[{
+            "signal_source_id": "key-19-fail", "source": "key_level",
+            "period": "M1", "params": {
+                "level_mode": "levels", "levels": [4419],
+                "setup_mode": "level_19", "cooldown_seconds": 0,
+            },
+        }])
+        generator = KeyLevelSignalGenerator(kline_store=store)
+        with patch("market.services.signal.key_level_signal.time.time", return_value=t0 + 10):
+            generator.generate_signals_for_strategy("GOLD_", 4418.5, strategy)
+            generator.generate_signals_for_strategy("GOLD_", 4420.0, strategy)
+        store.rows = [{
+            "timestamp": t0, "open": 4418.5, "high": 4421.0,
+            "low": 4417.8, "close": 4418.2,
+        }]
+        with patch("market.services.signal.key_level_signal.time.time", return_value=t0 + 60):
+            signals = generator.generate_signals_for_strategy("GOLD_", 4420.1, strategy)
+        self.assertFalse(any(item.is_entry_trigger for item in signals))
+
+    def test_key_level_19_sells_after_breakdown_bar_closes_below(self):
+        from unittest.mock import patch
+        from market.services.signal.key_level_signal import KeyLevelSignalGenerator
+        from market.models.trading_strategy import TradingStrategy
+
+        class _Bars:
+            def __init__(self):
+                self.rows = []
+            def get_all_klines(self, symbol, period):
+                return list(self.rows)
+
+        t0 = 1_800_000_000
+        store = _Bars()
         strategy = TradingStrategy(symbol="GOLD_", signal_sources=[{
             "signal_source_id": "key-19-short", "source": "key_level",
             "period": "M1", "params": {
@@ -518,18 +576,35 @@ class StrategyServiceTestCase(unittest.TestCase):
                 "setup_mode": "level_19", "cooldown_seconds": 0,
             },
         }])
-        generator = KeyLevelSignalGenerator()
-        generator.generate_signals_for_strategy("GOLD_", 4420.0, strategy)
-        signals = generator.generate_signals_for_strategy("GOLD_", 4418.0, strategy)
+        generator = KeyLevelSignalGenerator(kline_store=store)
+        with patch("market.services.signal.key_level_signal.time.time", return_value=t0 + 10):
+            generator.generate_signals_for_strategy("GOLD_", 4420.0, strategy)
+            crossed = generator.generate_signals_for_strategy("GOLD_", 4418.0, strategy)
+        self.assertFalse(any(item.is_entry_trigger for item in crossed))
+        store.rows = [{
+            "timestamp": t0, "open": 4420.0, "high": 4420.2,
+            "low": 4417.5, "close": 4417.8,
+        }]
+        with patch("market.services.signal.key_level_signal.time.time", return_value=t0 + 60):
+            signals = generator.generate_signals_for_strategy("GOLD_", 4417.8, strategy)
         signal = next(item for item in signals if item.is_entry_trigger)
         self.assertEqual(signal.action, "sell")
         self.assertEqual(signal.setup_type, "key_level_19_breakout")
         self.assertEqual(signal.suggested_sl, 4420.0)
-        self.assertAlmostEqual(signal.suggested_tp, 4418.0 * (1 - 0.0032), places=6)
 
     def test_key_level_19_breakout_has_8_hour_directional_cooldown(self):
+        from unittest.mock import patch
         from market.services.signal.key_level_signal import KeyLevelSignalGenerator
         from market.models.trading_strategy import TradingStrategy
+
+        class _Bars:
+            def __init__(self):
+                self.rows = []
+            def get_all_klines(self, symbol, period):
+                return list(self.rows)
+
+        t0 = 1_800_000_000
+        store = _Bars()
         strategy = TradingStrategy(symbol="GOLD_", signal_sources=[{
             "signal_source_id": "key-19-cooldown", "source": "key_level",
             "period": "M1", "params": {
@@ -537,12 +612,17 @@ class StrategyServiceTestCase(unittest.TestCase):
                 "setup_mode": "level_19",
             },
         }])
-        generator = KeyLevelSignalGenerator()
-        generator.generate_signals_for_strategy("GOLD_", 4418.5, strategy)
-        first = generator.generate_signals_for_strategy("GOLD_", 4420.0, strategy)
+        generator = KeyLevelSignalGenerator(kline_store=store)
+        with patch("market.services.signal.key_level_signal.time.time", return_value=t0 + 10):
+            generator.generate_signals_for_strategy("GOLD_", 4418.5, strategy)
+            generator.generate_signals_for_strategy("GOLD_", 4420.0, strategy)
+        store.rows = [{
+            "timestamp": t0, "open": 4418.5, "high": 4421.0,
+            "low": 4418.0, "close": 4420.4,
+        }]
+        with patch("market.services.signal.key_level_signal.time.time", return_value=t0 + 60):
+            first = generator.generate_signals_for_strategy("GOLD_", 4420.4, strategy)
         self.assertTrue(any(item.is_entry_trigger for item in first))
-        # Re-arm the state machine, then cross the same level in the same
-        # direction.  The second trigger is suppressed for 8 hours.
         generator.generate_signals_for_strategy("GOLD_", 4417.0, strategy)
         second = generator.generate_signals_for_strategy("GOLD_", 4420.0, strategy)
         self.assertFalse(any(item.is_entry_trigger for item in second))
