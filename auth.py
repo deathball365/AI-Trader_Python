@@ -366,3 +366,26 @@ def require_admin(user: AuthUser = Depends(require_auth)) -> AuthUser:
             detail="仅管理员可以执行此操作",
         )
     return user
+
+
+def require_hermes_ingest(
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    x_hermes_token: Optional[str] = Header(default=None, alias="X-Hermes-Token"),
+) -> AuthUser:
+    """Allow HERMES to write market-event assessments without a user session."""
+    expected = str(os.getenv("HERMES_INGEST_TOKEN") or "").strip()
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="HERMES 入库令牌未配置",
+        )
+    supplied = str(x_hermes_token or "").strip()
+    if not supplied and authorization and authorization.startswith("Bearer "):
+        supplied = authorization.split(" ", 1)[1].strip()
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="HERMES 入库令牌无效",
+        )
+    return AuthUser(user_id=0, username="hermes", role="admin")

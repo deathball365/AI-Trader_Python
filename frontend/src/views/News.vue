@@ -207,6 +207,17 @@
               </div>
               <h3>{{ item.title }}</h3>
               <p>{{ item.summary || item.description || item.content || '暂无补充说明' }}</p>
+              <div v-if="item.impacts && item.impacts.length" class="impact-row">
+                <v-chip
+                  v-for="impact in item.impacts"
+                  :key="impact.symbol + impact.bias"
+                  size="x-small"
+                  :color="impactBiasColor(impact.bias)"
+                  variant="tonal"
+                >
+                  {{ impact.symbol }} {{ impactBiasLabel(impact.bias) }}
+                </v-chip>
+              </div>
               <div class="symbol-row">
                 <v-chip v-for="symbol in item.symbols || []" :key="symbol" size="x-small" variant="outlined">
                   {{ symbol }}
@@ -391,6 +402,11 @@ function connectRealtime() {
       mergeRealtimeFlash(message.items)
       loadStatus().catch(() => {})
     }
+    if (message.type === 'market_key_events_updated') {
+      loadKeyEvents().catch(() => {})
+      loadStatus().catch(() => {})
+      loadWeekFocus().catch(() => {})
+    }
   }, () => {
     socket = null
     wsConnected.value = false
@@ -417,6 +433,14 @@ function formatDateTime(value) {
 
 function displayValue(value) {
   return value === null || value === undefined || value === '' ? '--' : value
+}
+
+function impactBiasLabel(value) {
+  return { bullish: '偏多', bearish: '偏空', mixed: '分歧', neutral: '中性' }[String(value || '').toLowerCase()] || '观察'
+}
+
+function impactBiasColor(value) {
+  return { bullish: 'success', bearish: 'error', mixed: 'warning', neutral: 'grey' }[String(value || '').toLowerCase()] || 'info'
 }
 
 function importanceLabel(value) {
@@ -511,6 +535,7 @@ onUnmounted(() => {
 .risk-copy { display: grid; gap: 8px; }
 .risk-window { color: #8d5947; font-size: .8rem; }
 .risk-setups { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; color: #78837e; font-size: .78rem; }
+.impact-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
 .calendar-row { display: grid; grid-template-columns: 80px minmax(220px, 1fr) auto; align-items: center; gap: 18px; padding: 18px 8px; border-bottom: 1px solid #e7ebe8; }
 .calendar-row time { color: #1d6755; font: 700 1.05rem Georgia, serif; }
 .event-title-line, .symbol-row { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }

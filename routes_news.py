@@ -22,7 +22,7 @@ from fastapi import (
     status,
 )
 
-from auth import AuthUser, get_auth_manager, require_admin, require_auth
+from auth import AuthUser, get_auth_manager, require_admin, require_auth, require_hermes_ingest
 from market.utils.ws_manager import WebSocketManager
 from market_event_repository import MarketEventRepository
 from repositories.runtime import RuntimeStateRepository
@@ -296,6 +296,37 @@ def create_news_routes():
         return {
             "status": "ok",
             "message": f"{day} 关键事件已覆盖",
+            "date": day,
+            "count": count,
+        }
+
+    @router.post("/hermes/assessments")
+    async def ingest_hermes_assessments(
+        request: Request,
+        user: AuthUser = Depends(require_hermes_ingest),
+    ) -> Dict:
+        payload = await request.json()
+        day = _validate_day(
+            payload.get("date")
+            or datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+        )
+        source = str(payload.get("source") or "hermes_48h").strip() or "hermes_48h"
+        events = _normalize_key_events(day, _require_items(payload, "events"))
+        for event in events:
+            event["source"] = source
+            event["category"] = str(event.get("category") or "HERMES 48小时评估")
+            event["importance"] = max(2, int(event.get("importance") or 2))
+        count = repository.replace_key_event_day(day, events, source)
+        await hub.broadcast({
+            "type": "market_key_events_updated",
+            "date": day,
+            "count": count,
+            "source": source,
+            "updated_at": int(datetime.now().timestamp()),
+        })
+        return {
+            "status": "ok",
+            "message": f"{day} HERMES 评估已写入",
             "date": day,
             "count": count,
         }
