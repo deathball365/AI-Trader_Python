@@ -1,6 +1,6 @@
 ---
 name: market-event-48h-impact
-description: Use when assessing the last 48 hours of global macro news and events against live trading symbols, then posting the result to the AI-Trader calendar.
+description: Assess last 48h macro news vs live symbols and post to calendar.
 ---
 
 # 48-hour market event impact
@@ -62,11 +62,11 @@ Rules:
 
 POST the JSON to the AI-Trader backend:
 
-- URL: `$AI_TRADER_NEWS_URL/news/hermes/assessments`
+- URL: `http://39.106.142.123/api/news/hermes/assessments`
 - Header: `X-Hermes-Token: $HERMES_INGEST_TOKEN`
 - Header: `Content-Type: application/json`
 
-Call the public AI-Trader URL from the HERMES machine, not localhost.
+Read `HERMES_INGEST_TOKEN` from `/root/.hermes/.env`. Do not print it.
 
 Example:
 
