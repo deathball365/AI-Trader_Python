@@ -2006,18 +2006,34 @@ class PaperTradingService:
         )
 
     def _paper_volume(self, account_id, symbol, risk_points, strategy, quote_price: float = 0.0) -> float:
-        if strategy.volume_mode == "fixed":
-            return max(0.01, round(float(strategy.fixed_volume), 2))
+        """Resolve Paper lots using the strategy's declared sizing mode.
+
+        Fixed-volume strategies must remain fixed in Paper just as they are in
+        live execution.  Only an explicit ``risk_percent`` mode may size from
+        account balance and stop distance.
+        """
         account = self.storage.fetchone(
-            "SELECT balance FROM trading_accounts WHERE id = ?", (account_id,)
-        )
+            "SELECT balance, max_single_volume FROM trading_accounts WHERE id = ?",
+            (account_id,),
+        ) or {}
+        balance = float(account.get("balance") or 0)
+        max_volume = max(0.01, float(account.get("max_single_volume") or 10.0))
+        fixed = max(0.01, round(float(getattr(strategy, "fixed_volume", 0.01) or 0.01), 2))
+        volume_mode = str(getattr(strategy, "volume_mode", "fixed") or "fixed").lower()
+        if volume_mode != "risk_percent":
+            return min(fixed, max_volume)
+        risk_percent = float(getattr(strategy, "risk_percent", 0) or 0)
+        stop = abs(float(risk_points or 0))
+        if stop <= 0 or balance <= 0 or risk_percent <= 0:
+            return min(fixed, max_volume)
         _, contract_size = market_spec(symbol, account_id=account_id, storage=self.storage)
-        risk_amount = float(account["balance"]) * float(strategy.risk_percent) / 100
         cash_per_lot = abs(paper_account_cash(
-            symbol, abs(float(risk_points or 0)), 1.0, contract_size, quote_price,
+            symbol, stop, 1.0, contract_size, quote_price,
         ))
-        raw = risk_amount / max(cash_per_lot, 0.000001)
-        return max(0.01, math.floor(raw * 100) / 100)
+        if cash_per_lot <= 0:
+            return min(fixed, max_volume)
+        raw = (balance * risk_percent / 100.0) / cash_per_lot
+        return min(max(0.01, math.floor(raw * 100) / 100), max_volume)
 
     def _paper_position_check(
         self, account_id, symbol, strategy, action, deployment_id: str = "",
