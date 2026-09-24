@@ -699,6 +699,15 @@
             hint="任一持仓达到该浮亏时，服务端立即触发整笔平仓；MT5 以 EA 上报利润为准，模拟盘以当前 Tick 预计净损益为准"
             persistent-hint
           />
+          <v-switch v-model="accountForm.manualOrderDailyLimitEnabled" color="warning" inset label="开启每日手动下单上限" />
+          <v-text-field
+            v-model.number="accountForm.manualOrderDailyLimit"
+            label="每日手动下单上限"
+            type="number" min="1" max="1000" variant="outlined"
+            :disabled="!accountForm.manualOrderDailyLimitEnabled"
+            hint="无备注的持仓视为手动单。北京时间 0 点起累计，超过上限后新看到的手动单会立即平仓"
+            persistent-hint
+          />
           <div class="paper-actions mt-2">
             <v-btn color="primary" :loading="accountSaving" @click="saveAccountControls">保存账户配置</v-btn>
             <v-btn v-if="managedAccount.status === 'archived'" color="success" variant="tonal" :loading="accountSaving" @click="restoreManagedAccount">恢复账户</v-btn>
@@ -774,6 +783,7 @@ const accountForm = reactive({
   dailyRiskLimit: 0,
   autoFlattenEnabled: false, autoFlattenTime: '',
   singlePositionLossLimitEnabled: true, singlePositionLossLimitAmount: 30,
+  manualOrderDailyLimitEnabled: true, manualOrderDailyLimit: 10,
 })
 const strategyDialog = ref(false)
 const selectedAccount = ref(null)
@@ -1177,6 +1187,8 @@ function openAccountManager(account) {
     autoFlattenTime: account.auto_flatten_time || '',
     singlePositionLossLimitEnabled: account.single_position_loss_limit_enabled !== false,
     singlePositionLossLimitAmount: account.single_position_loss_limit_amount ?? 30,
+    manualOrderDailyLimitEnabled: account.manual_order_daily_limit_enabled !== false,
+    manualOrderDailyLimit: account.manual_order_daily_limit ?? 10,
   })
   accountDialog.value = true
 }
@@ -1197,6 +1209,8 @@ async function saveAccountControls() {
       auto_flatten_time: accountForm.autoFlattenTime || null,
       single_position_loss_limit_enabled: accountForm.singlePositionLossLimitEnabled,
       single_position_loss_limit_amount: accountForm.singlePositionLossLimitAmount,
+      manual_order_daily_limit_enabled: accountForm.manualOrderDailyLimitEnabled,
+      manual_order_daily_limit: accountForm.manualOrderDailyLimit,
     })
     messageType.value = 'success'
     message.value = data.message

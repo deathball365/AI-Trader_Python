@@ -16,6 +16,7 @@ from repositories.accounts import TradingAccountRepository
 from repositories.trading import PositionManagementEventRepository
 from repositories.instrument_specs import InstrumentSpecRepository
 from market.store.structure_plan_store import StructureTradePlanRepository
+from market.services.manual_order_limit import apply_manual_order_daily_limit
 
 logger = logging.getLogger(__name__)
 
@@ -181,9 +182,21 @@ def create_position_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 account_repository=TradingAccountRepository(repositories.storage),
                 event_repository=repositories.position_events,
             )
+            manual_limit_tickets = apply_manual_order_daily_limit(
+                trading_server,
+                user_id=identity.user_id,
+                account_id=identity.account_id,
+                symbol=symbol,
+                positions=loss_limit_positions,
+                account_repository=TradingAccountRepository(repositories.storage),
+                event_repository=repositories.position_events,
+                storage=repositories.storage,
+            )
             if isinstance(result, dict):
                 result["loss_limit_close_count"] = len(loss_limit_tickets)
                 result["loss_limit_close_tickets"] = loss_limit_tickets
+                result["manual_order_limit_close_count"] = len(manual_limit_tickets)
+                result["manual_order_limit_close_tickets"] = manual_limit_tickets
             try:
                 StructureTradePlanRepository().confirm_protection_for_account(
                     identity.user_id, identity.account_id, symbol, symbol_positions,

@@ -214,6 +214,24 @@ class TradingAccountRepositoryTests(unittest.TestCase):
                 single_position_loss_limit_amount=0,
             )
 
+    def test_manual_order_daily_limit_defaults_and_updates(self):
+        account = self.repository.create_paper_account(
+            self.user.user_id, "Manual Guard Paper", 10000
+        )
+        self.assertTrue(account.manual_order_daily_limit_enabled)
+        self.assertEqual(account.manual_order_daily_limit, 10)
+        updated = self.repository.update_controls(
+            self.user.user_id,
+            account.account_id,
+            manual_order_daily_limit_enabled=False,
+            manual_order_daily_limit=6,
+        )
+        self.assertFalse(updated.manual_order_daily_limit_enabled)
+        self.assertEqual(updated.manual_order_daily_limit, 6)
+        payload = _account_payload(updated, [])
+        self.assertFalse(payload["manual_order_daily_limit_enabled"])
+        self.assertEqual(payload["manual_order_daily_limit"], 6)
+
     def test_online_mt5_cannot_be_archived_and_offline_account_can_restore(self):
         account, token = self.repository.create_or_rotate_default(self.user.user_id)
         self.repository.authenticate(self.user.user_id, token)
