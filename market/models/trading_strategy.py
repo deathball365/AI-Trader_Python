@@ -444,6 +444,9 @@ def normalize_signal_sources(
                 "breakout_target_atr", "range_plan_valid_bars",
                 "event_plan_valid_bars", "location_plan_valid_bars",
                 "breakout_retest_valid_bars", "max_plan_age_bars",
+                "false_breakout_require_reclaim_close",
+                "false_breakout_confirmation_bars",
+                "false_breakout_min_reclaim_atr",
             ):
                 params.pop(obsolete, None)
             directions = params.get("allowed_directions", ["buy", "sell"])

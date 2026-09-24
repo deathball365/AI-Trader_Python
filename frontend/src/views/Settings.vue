@@ -298,6 +298,11 @@
               <v-text-field v-model.number="structureSetupProfileDraft.min_displacement_atr" :class="setupFieldClass('min_displacement_atr')" type="number" min="0" step="0.1" label="最小位移 ATR" density="compact" variant="outlined" hide-details style="max-width:140px" />
               <v-text-field v-model.number="structureSetupProfileDraft.min_body_atr" :class="setupFieldClass('min_body_atr')" type="number" min="0" step="0.1" label="突破实体 ATR" density="compact" variant="outlined" hide-details style="max-width:130px" />
               <v-switch v-model="structureSetupProfileDraft.require_reclaim" :class="setupFieldClass('require_reclaim')" color="primary" inset hide-details label="要求回收" />
+              <template v-if="structureSetupProfileDraft.setup_type === 'range_false_breakout'">
+                <v-switch v-model="structureSetupProfileDraft.false_breakout_require_reclaim_close" :class="setupFieldClass('false_breakout_require_reclaim_close')" color="primary" inset hide-details label="假突破要求收盘回收" />
+                <v-text-field v-model.number="structureSetupProfileDraft.false_breakout_confirmation_bars" :class="setupFieldClass('false_breakout_confirmation_bars')" type="number" min="1" max="10" label="假突破确认K线" hint="回到箱体内后，连续收盘确认根数" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
+                <v-text-field v-model.number="structureSetupProfileDraft.false_breakout_min_reclaim_atr" :class="setupFieldClass('false_breakout_min_reclaim_atr')" type="number" min="0" max="2" step="0.05" label="最小回收 ATR" hint="收盘至少进入箱体该距离" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
+              </template>
               <v-text-field v-model.number="structureSetupProfileDraft.min_real_risk_reward" :class="setupFieldClass('min_real_risk_reward')" type="number" min="0" step="0.1" label="最低盈亏比" density="compact" variant="outlined" hide-details style="max-width:130px" />
               <v-text-field v-model.number="structureSetupProfileDraft.entry_zone_atr" :class="setupFieldClass('entry_zone_atr')" type="number" min="0" step="0.05" label="入场 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
               <v-text-field v-model.number="structureSetupProfileDraft.stop_buffer_atr" :class="setupFieldClass('stop_buffer_atr')" type="number" min="0" step="0.05" label="止损 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
@@ -1798,12 +1803,12 @@ export default {
     // Optimization previews can contain booleans, arrays, or null values;
     // keep the conflict table readable instead of exposing raw JSON values.
     const formatOptimizationValue = value => formatStructureValue(value)
-    const structureSetupProfileDraft = ref({ symbol: '', period: 'M5', setup_type: 'structure_location_pullback', enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '', confirmation_bars: null, min_displacement_atr: null, min_body_atr: null, require_reclaim: null, min_real_risk_reward: null, entry_zone_atr: null, stop_buffer_atr: null, target_buffer_atr: null, pressure_min_rejections: null, pressure_min_displacement_atr: null, pressure_min_efficiency: null, target_multiple: null, max_entries_per_opportunity: null, cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null, invalidate_on_zone_return: null })
+    const structureSetupProfileDraft = ref({ symbol: '', period: 'M5', setup_type: 'structure_location_pullback', enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '', confirmation_bars: null, min_displacement_atr: null, min_body_atr: null, require_reclaim: null, min_real_risk_reward: null, entry_zone_atr: null, stop_buffer_atr: null, target_buffer_atr: null, pressure_min_rejections: null, pressure_min_displacement_atr: null, pressure_min_efficiency: null, target_multiple: null, max_entries_per_opportunity: null, cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null, invalidate_on_zone_return: null, false_breakout_require_reclaim_close: null, false_breakout_confirmation_bars: null, false_breakout_min_reclaim_atr: null })
     const setupTypeNames = { pressure_reversal: '密集区反转', pressure_zone_breakout: '密集区突破', structure_location_pullback: '结构位置回撤', range_lower_reversal: '箱体下沿反转', range_upper_reversal: '箱体上沿反转', range_breakout: '箱体突破', range_false_breakout: '箱体假突破', triangle_breakout: '三角形突破', triangle_breakout_watch: '三角形突破观察', triangle_prebreakout_pullback: '三角形提前回撤', choch_reversal: 'CHOCH反转', liquidity_sweep_reclaim: '流动性扫单回收', trend_continuation: '趋势延续', structure_reversal: '结构反转' }
     const setupTypeLabel = type => setupTypeNames[type] || type
     const structureSetupTypes = Object.keys(setupTypeNames).map(value => ({ value, label: setupTypeNames[value] }))
-    const setupFieldKeys = ['enabled', 'allowed_directions', 'entry_mode', 'confirmation_bars', 'min_displacement_atr', 'min_body_atr', 'require_reclaim', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'target_buffer_atr', 'pressure_min_rejections', 'pressure_min_displacement_atr', 'pressure_min_efficiency', 'target_multiple', 'max_entries_per_opportunity', 'cooldown_minutes', 'require_retest', 'retest_tolerance_atr', 'invalidate_on_zone_return', 'max_plan_lifetime_bars']
-    const setupFieldLabels = { enabled: '允许交易', allowed_directions: '允许方向', entry_mode: '入场方式', confirmation_bars: '确认 K 线数', min_displacement_atr: '最小位移 ATR', min_body_atr: '突破实体 ATR', require_reclaim: '要求回收', min_real_risk_reward: '最低盈亏比', entry_zone_atr: '入场 ATR', stop_buffer_atr: '止损 ATR', target_buffer_atr: '止盈 ATR', pressure_min_rejections: '密集区拒绝次数', pressure_min_displacement_atr: '密集区最小位移 ATR', pressure_min_efficiency: '密集区最小效率', target_multiple: '目标倍数', max_entries_per_opportunity: '机会最大入场次数', cooldown_minutes: '冷却分钟', require_retest: '要求回踩', retest_tolerance_atr: '回踩容差 ATR', invalidate_on_zone_return: '回到区域即失效', max_plan_lifetime_bars: '最大计划 K 线数' }
+    const setupFieldKeys = ['enabled', 'allowed_directions', 'entry_mode', 'confirmation_bars', 'min_displacement_atr', 'min_body_atr', 'require_reclaim', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'target_buffer_atr', 'pressure_min_rejections', 'pressure_min_displacement_atr', 'pressure_min_efficiency', 'target_multiple', 'max_entries_per_opportunity', 'cooldown_minutes', 'require_retest', 'retest_tolerance_atr', 'invalidate_on_zone_return', 'false_breakout_require_reclaim_close', 'false_breakout_confirmation_bars', 'false_breakout_min_reclaim_atr', 'max_plan_lifetime_bars']
+    const setupFieldLabels = { enabled: '允许交易', allowed_directions: '允许方向', entry_mode: '入场方式', confirmation_bars: '确认 K 线数', min_displacement_atr: '最小位移 ATR', min_body_atr: '突破实体 ATR', require_reclaim: '要求回收', min_real_risk_reward: '最低盈亏比', entry_zone_atr: '入场 ATR', stop_buffer_atr: '止损 ATR', target_buffer_atr: '止盈 ATR', pressure_min_rejections: '密集区拒绝次数', pressure_min_displacement_atr: '密集区最小位移 ATR', pressure_min_efficiency: '密集区最小效率', target_multiple: '目标倍数', max_entries_per_opportunity: '机会最大入场次数', cooldown_minutes: '冷却分钟', require_retest: '要求回踩', retest_tolerance_atr: '回踩容差 ATR', invalidate_on_zone_return: '回到区域即失效', false_breakout_require_reclaim_close: '假突破要求收盘回收', false_breakout_confirmation_bars: '假突破确认 K 线数', false_breakout_min_reclaim_atr: '假突破最小回收 ATR', max_plan_lifetime_bars: '最大计划 K 线数' }
     // The API may return an older/incomplete setup_defaults row.  Keep the
     // editor aligned with the runtime resolver by filling every setup field
     // from the same conservative public defaults before applying saved
@@ -1817,7 +1822,9 @@ export default {
       pressure_min_displacement_atr: 0.8, pressure_min_efficiency: 0.55,
       target_multiple: 2, max_entries_per_opportunity: 1, cooldown_minutes: 0,
       require_retest: true, retest_tolerance_atr: 0.35,
-      invalidate_on_zone_return: true, max_plan_lifetime_bars: 100,
+      invalidate_on_zone_return: true,
+      false_breakout_require_reclaim_close: true, false_breakout_confirmation_bars: 1,
+      false_breakout_min_reclaim_atr: 0.1, max_plan_lifetime_bars: 100,
     }
     const makeSetupDefault = setupType => ({
       ...setupRuntimeDefaults,
@@ -2509,7 +2516,11 @@ export default {
       pressure_min_displacement_atr: null, pressure_min_efficiency: null,
       target_multiple: null, max_entries_per_opportunity: null,
       cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null,
-      invalidate_on_zone_return: null, max_plan_lifetime_bars: null,
+      invalidate_on_zone_return: null,
+      false_breakout_require_reclaim_close: null,
+      false_breakout_confirmation_bars: null,
+      false_breakout_min_reclaim_atr: null,
+      max_plan_lifetime_bars: null,
     })
     const selectStructureSetupScope = scope => {
       if (!scope) return

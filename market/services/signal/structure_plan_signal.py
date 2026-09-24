@@ -67,7 +67,7 @@ STRUCTURE_PLAN_DEFAULT_CONFIG = {
     "triangle_breakout_min_close_extension_atr": 0.1,
     "triangle_breakout_require_swing_external_alignment": True,
     "range_plan_valid_bars": 12, "location_plan_valid_bars": 6,
-    "require_range_boundary_reclaim": False, "require_location_reclaim": True,
+    "require_location_reclaim": True,
     # Trend continuation accepts either a held retest or two consecutive
     # closes outside the broken level.  M1 gets a slightly longer observation
     # window because five one-minute bars are still a short-lived event.
@@ -117,6 +117,12 @@ STRUCTURE_PLAN_DEFAULT_CONFIG = {
     "pressure_plan_valid_bars": 6,
     "pressure_breakout_target_multiple": 2.0,
     "pressure_min_event_confidence": 65,
+    # False-breakout entries require a confirmed close back inside the range.
+    # Keep these controls specific to this setup instead of overloading the
+    # generic confirmation fields used by other structure families.
+    "false_breakout_require_reclaim_close": True,
+    "false_breakout_confirmation_bars": 1,
+    "false_breakout_min_reclaim_atr": 0.1,
     # Setup 覆盖字段（默认值为空/继承公共值）
     "pressure_min_rejections": 3,
     "pressure_min_displacement_atr": 0.8,
@@ -259,7 +265,6 @@ class StructurePlanBuilder:
                     self.params["trend_continuation_hold_bars"] = profile["confirmation_bars"]
                 if "require_reclaim" in profile:
                     self.params["require_location_reclaim"] = profile["require_reclaim"]
-                    self.params["require_range_boundary_reclaim"] = profile["require_reclaim"]
                 # 密集区 Setup 的专属参数使用同名配置；兼容旧版优化器的
                 # target_multiple / min_body_atr 命名，避免保存后实际不生效。
                 if "target_multiple" in profile:
@@ -276,11 +281,7 @@ class StructurePlanBuilder:
         configured = str(self._param("entry_mode", "") or "").strip().lower()
         if configured in {"touch_or_near", "touch_and_reclaim"}:
             return configured
-        return (
-            "touch_and_reclaim"
-            if self._param("require_range_boundary_reclaim", False)
-            else "touch_or_near"
-        )
+        return "touch_or_near"
 
     @staticmethod
     def _direction_bias(value) -> str:
@@ -1552,6 +1553,17 @@ class StructurePlanBuilder:
                 reason=f"{period} 箱体{('上沿' if failed == 'up' else '下沿')}假突破后收盘回到区间",
                 valid_from=bar_time, expires_at=expires,
                 invalidation_price=sl, structure_snapshot=snapshot,
+                validation_evidence={
+                    "false_breakout_require_reclaim_close": bool(
+                        self._param("false_breakout_require_reclaim_close", True)
+                    ),
+                    "false_breakout_confirmation_bars": max(
+                        1, min(10, int(self._param("false_breakout_confirmation_bars", 1)))
+                    ),
+                    "false_breakout_min_reclaim_atr": max(
+                        0.0, _number(self._param("false_breakout_min_reclaim_atr", 0.1))
+                    ),
+                },
             )
             return [plan] if plan else []
 
@@ -2297,7 +2309,74 @@ class StructurePlanSignalGenerator:
         self._cache[key] = plans
         return plans
 
-    def _triggered(self, plan: Dict, price: float) -> bool:
+    def _latest_closed_bar(self, symbol: str, period: str, now: Optional[int] = None) -> Optional[Dict]:
+        """Return the latest completed bar, never the currently forming bar."""
+        rows = self.kline_store.get_all_klines(symbol, str(period or "M5").upper())
+        if not rows:
+            return None
+        now = int(now or time.time())
+        interval = PERIOD_SECONDS.get(str(period or "M5").upper(), 300)
+        for row in reversed(rows):
+            bar_time = _bar_time(row)
+            if bar_time > 0 and bar_time + interval <= now:
+                return row
+        return None
+
+    def _false_breakout_reclaim_confirmed(
+        self, plan: Dict, closed_bar: Optional[Dict], effective_config: Dict,
+    ) -> bool:
+        """Require one or more completed closes clearly back inside the range."""
+        evidence = plan.get("validation_evidence") or {}
+        require_close = bool(effective_config.get(
+            "false_breakout_require_reclaim_close",
+            evidence.get("false_breakout_require_reclaim_close", True),
+        ))
+        if not require_close:
+            return True
+        if not closed_bar:
+            return False
+        direction = str(plan.get("direction") or "")
+        entry = _number(plan.get("entry_price"))
+        atr = _number((plan.get("structure_snapshot") or {}).get("atr"))
+        if direction not in {"buy", "sell"} or entry <= 0 or atr <= 0:
+            return False
+        close = _number(closed_bar.get("close") or closed_bar.get("close_price"))
+        bar_time = _bar_time(closed_bar)
+        if close <= 0 or bar_time <= 0:
+            return False
+        reclaim_distance = max(0.0, _number(effective_config.get(
+            "false_breakout_min_reclaim_atr",
+            evidence.get("false_breakout_min_reclaim_atr", 0.1),
+        ))) * atr
+        range_snapshot = (plan.get("structure_snapshot") or {}).get("range") or {}
+        top = _number(range_snapshot.get("top"))
+        bottom = _number(range_snapshot.get("bottom"))
+        if direction == "sell":
+            qualifies = close <= entry - reclaim_distance and (bottom <= 0 or close >= bottom)
+        else:
+            qualifies = close >= entry + reclaim_distance and (top <= 0 or close <= top)
+
+        last_bar = int(plan.get("false_breakout_last_confirmation_bar") or 0)
+        confirmed_bars = int(plan.get("false_breakout_confirmation_bars_seen") or 0)
+        required_bars = max(1, min(10, int(effective_config.get(
+            "false_breakout_confirmation_bars",
+            evidence.get("false_breakout_confirmation_bars", 1),
+        ))))
+        if bar_time != last_bar:
+            confirmed_bars = confirmed_bars + 1 if qualifies else 0
+            changes = {
+                "false_breakout_last_confirmation_bar": bar_time,
+                "false_breakout_confirmation_bars_seen": confirmed_bars,
+                "false_breakout_reclaim_confirmed": confirmed_bars >= required_bars,
+            }
+            plan.update(changes)
+            self.repository.update_payload(plan.get("plan_id"), changes)
+        return bool(plan.get("false_breakout_reclaim_confirmed"))
+
+    def _triggered(
+        self, plan: Dict, price: float, effective_config: Optional[Dict] = None,
+        closed_bar: Optional[Dict] = None,
+    ) -> bool:
         setup_type = str(plan.get("setup_type") or "")
         if setup_type == "pressure_zone_breakout":
             return self._triggered_pressure_breakout(plan, price)
@@ -2319,6 +2398,12 @@ class StructurePlanSignalGenerator:
                         "touch_state": "unvisited",
                         "boundary_state": "left_boundary",
                     }
+                    if setup_type == "range_false_breakout":
+                        changes.update({
+                            "false_breakout_last_confirmation_bar": 0,
+                            "false_breakout_confirmation_bars_seen": 0,
+                            "false_breakout_reclaim_confirmed": False,
+                        })
                     plan.update(changes)
                     self._tick_state[str(plan.get("plan_id") or "")] = {"touched": False}
                     self.repository.update_payload(plan.get("plan_id"), changes)
@@ -2384,6 +2469,11 @@ class StructurePlanSignalGenerator:
             (direction == "buy" and price >= entry)
             or (direction == "sell" and price <= entry)
         ))
+        if result and setup_type == "range_false_breakout":
+            if not self._false_breakout_reclaim_confirmed(
+                plan, closed_bar, effective_config or {},
+            ):
+                return False
         if result:
             changes = {
                 "touch_seen": True,
@@ -2718,7 +2808,13 @@ class StructurePlanSignalGenerator:
                     else:
                         waiting.append(plan)
                     continue
-                if self._triggered(plan, float(current_price)):
+                closed_bar = (
+                    self._latest_closed_bar(symbol, period)
+                    if setup_type == "range_false_breakout" else None
+                )
+                if self._triggered(
+                    plan, float(current_price), effective_config, closed_bar,
+                ):
                     active.append((config, plan))
                 else:
                     waiting.append(plan)

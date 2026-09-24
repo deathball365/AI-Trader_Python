@@ -117,6 +117,70 @@ class StructurePlanTriggerLatchTests(unittest.TestCase):
         self.assertFalse(self.gen._triggered(plan, 95.5))
         self.assertEqual(plan["touch_state"], "unvisited")
 
+    def test_false_breakout_requires_reclaiming_close_before_sell(self):
+        plan = {
+            "plan_id": "gold-false-up",
+            "setup_type": "range_false_breakout",
+            "direction": "sell",
+            "entry_mode": "touch_and_reclaim",
+            "entry_price": 100.0,
+            "entry_zone": {"lower": 99.0, "upper": 101.0},
+            "touch_seen": True,
+            "touch_state": "touched",
+            "boundary_state": "touched",
+            "structure_snapshot": {
+                "atr": 2.0,
+                "range": {"top": 100.0, "bottom": 90.0},
+            },
+        }
+        config = {
+            "false_breakout_require_reclaim_close": True,
+            "false_breakout_confirmation_bars": 2,
+            "false_breakout_min_reclaim_atr": 0.1,
+        }
+        self.assertFalse(self.gen._triggered(
+            plan, 100.0, config,
+            {"timestamp": 1000, "close": 99.9},
+        ))
+        self.assertFalse(self.gen._triggered(
+            plan, 100.0, config,
+            {"timestamp": 1060, "close": 99.7},
+        ))
+        self.assertTrue(self.gen._triggered(
+            plan, 100.0, config,
+            {"timestamp": 1120, "close": 99.7},
+        ))
+
+    def test_false_breakout_requires_reclaiming_close_before_buy(self):
+        plan = {
+            "plan_id": "silver-false-down",
+            "setup_type": "range_false_breakout",
+            "direction": "buy",
+            "entry_mode": "touch_and_reclaim",
+            "entry_price": 100.0,
+            "entry_zone": {"lower": 99.0, "upper": 101.0},
+            "touch_seen": True,
+            "touch_state": "touched",
+            "boundary_state": "touched",
+            "structure_snapshot": {
+                "atr": 2.0,
+                "range": {"top": 110.0, "bottom": 100.0},
+            },
+        }
+        config = {
+            "false_breakout_require_reclaim_close": True,
+            "false_breakout_confirmation_bars": 1,
+            "false_breakout_min_reclaim_atr": 0.1,
+        }
+        self.assertFalse(self.gen._triggered(
+            plan, 100.0, config,
+            {"timestamp": 1000, "close": 100.1},
+        ))
+        self.assertTrue(self.gen._triggered(
+            plan, 100.0, config,
+            {"timestamp": 1060, "close": 100.3},
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()
