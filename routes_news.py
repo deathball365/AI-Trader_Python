@@ -122,6 +122,42 @@ def _normalize_symbols(value: object) -> List[str]:
     ))
 
 
+def _normalize_impacts(value: object) -> List[Dict]:
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol") or "").strip()
+        if not symbol:
+            continue
+        severity = str(item.get("severity") or item.get("level") or "").strip().lower()
+        if severity in {"high", "h", "3"}:
+            severity = "high"
+        elif severity in {"medium", "mid", "m", "2"}:
+            severity = "medium"
+        elif severity in {"low", "l", "1"}:
+            severity = "low"
+        else:
+            severity = "medium" if item.get("affected", True) else "low"
+        bias = str(item.get("bias") or "neutral").strip().lower()
+        if bias not in {"bullish", "bearish", "mixed", "neutral"}:
+            bias = "neutral"
+        affected = item.get("affected")
+        if affected is None:
+            affected = bias != "neutral" or severity != "low"
+        result.append({
+            **item,
+            "symbol": symbol,
+            "bias": bias,
+            "severity": severity,
+            "affected": bool(affected),
+            "note": str(item.get("note") or "").strip(),
+        })
+    return result
+
+
 def _require_items(payload: Dict, field: str) -> List[Dict]:
     items = payload.get(field)
     if items is None:
@@ -214,6 +250,7 @@ def _normalize_key_events(day: str, items: List[Dict]) -> List[Dict]:
                 item.get("importance", item.get("star", 0))
             ),
             "symbols": _normalize_symbols(item.get("symbols")),
+            "impacts": _normalize_impacts(item.get("impacts")),
         })
     return result
 

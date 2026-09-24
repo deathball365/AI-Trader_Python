@@ -16,14 +16,15 @@ class HermesIngestTests(unittest.TestCase):
             "importance": 3,
             "symbols": ["GOLD#", "US100Cash#"],
             "impacts": [
-                {"symbol": "GOLD#", "bias": "bearish", "note": "实际利率预期上升"},
-                {"symbol": "US100Cash#", "bias": "bearish", "note": "风险资产承压"},
+                {"symbol": "GOLD#", "bias": "bearish", "severity": "high", "affected": True, "note": "实际利率预期上升"},
+                {"symbol": "US100Cash#", "bias": "bearish", "severity": "high", "affected": True, "note": "风险资产承压"},
             ],
             "summary": "讲话强化继续限制性政策预期。",
         }])
         self.assertEqual(events[0]["title"], "美联储官员偏鹰讲话")
         self.assertEqual(events[0]["symbols"], ["GOLD#", "US100Cash#"])
         self.assertEqual(events[0]["impacts"][0]["bias"], "bearish")
+        self.assertEqual(events[0]["impacts"][0]["severity"], "high")
 
     def test_hermes_token_is_required(self):
         request = type("Req", (), {"method": "POST"})()

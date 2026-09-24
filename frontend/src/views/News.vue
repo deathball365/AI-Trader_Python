@@ -208,15 +208,15 @@
                   <v-chip size="x-small" variant="tonal">{{ item.category || '重要事件' }}</v-chip>
                 </div>
                 <p>{{ item.summary || item.description || item.content || '暂无补充说明' }}</p>
-                <div v-if="item.impacts && item.impacts.length" class="impact-row">
+                <div v-if="visibleImpacts(item).length" class="impact-row">
                   <v-chip
-                    v-for="impact in item.impacts"
-                    :key="impact.symbol + impact.bias"
+                    v-for="impact in visibleImpacts(item)"
+                    :key="impact.symbol + impact.bias + impact.severity"
                     size="x-small"
-                    :color="impactBiasColor(impact.bias)"
+                    :color="impactSeverityColor(impact.severity)"
                     variant="tonal"
                   >
-                    {{ impact.symbol }} {{ impactBiasLabel(impact.bias) }}
+                    {{ impact.symbol }} {{ impactBiasLabel(impact.bias) }} · {{ impactSeverityLabel(impact.severity) }}
                   </v-chip>
                 </div>
                 <div class="symbol-row">
@@ -463,6 +463,18 @@ function impactBiasLabel(value) {
 
 function impactBiasColor(value) {
   return { bullish: 'success', bearish: 'error', mixed: 'warning', neutral: 'grey' }[String(value || '').toLowerCase()] || 'info'
+}
+
+function visibleImpacts(item) {
+  return (item?.impacts || []).filter(impact => impact?.affected !== false)
+}
+
+function impactSeverityLabel(value) {
+  return { high: '高', medium: '中', low: '低' }[String(value || '').toLowerCase()] || '中'
+}
+
+function impactSeverityColor(value) {
+  return { high: 'error', medium: 'warning', low: 'grey' }[String(value || '').toLowerCase()] || 'warning'
 }
 
 function importanceLabel(value) {

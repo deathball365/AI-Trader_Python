@@ -1,11 +1,12 @@
 ---
 name: market-event-48h-impact
-description: Score 48h macro news vs live symbols and post to calendar.
+description: Score unseen important Jin10 flashes vs live symbols.
 ---
 
-# 48-hour market event impact
+# Market event impact
 
-Search public news from the last 48 hours. Score only events that can move the symbols we currently trade. Write the result to the AI-Trader key-events calendar.
+Do not crawl websites. Score only the unseen important Jin10 flashes in the prompt.
+Write the result to the AI-Trader key-events calendar.
 
 ## Symbols in scope
 
@@ -19,15 +20,9 @@ Search public news from the last 48 hours. Score only events that can move the s
 - AUDUSD#
 - USDJPY#
 
-## What to collect
-
-Look for central-bank speeches, rates/inflation/employment prints, energy supply headlines, geopolitics, and equity-index risk events. Ignore routine, unscheduled chatter unless price impact is already visible.
-
-Use public web search. Prefer primary or high-quality sources: Fed, BLS, EIA, Reuters, Bloomberg, CNBC, Jin10, official government releases.
-
 ## Output contract
 
-Return JSON only, no markdown. Then POST it.
+Return JSON only, then POST it.
 
 ```json
 {
@@ -37,12 +32,14 @@ Return JSON only, no markdown. Then POST it.
     {
       "title": "short headline",
       "event_time": "HH:MM",
-      "importance": 2,
+      "importance": 3,
       "category": "HERMES 48小时评估",
       "summary": "what happened and why it matters",
-      "symbols": ["GOLD#"],
+      "symbols": ["GOLD#", "US100Cash#"],
       "impacts": [
-        {"symbol": "GOLD#", "bias": "bearish", "note": "one-line reason"}
+        {"symbol": "GOLD#", "bias": "bearish", "severity": "high", "affected": true, "note": "实际利率预期上升"},
+        {"symbol": "US100Cash#", "bias": "bearish", "severity": "high", "affected": true, "note": "风险资产承压"},
+        {"symbol": "AUDUSD#", "bias": "neutral", "severity": "low", "affected": false, "note": "无直接冲击"}
       ]
     }
   ]
@@ -51,30 +48,17 @@ Return JSON only, no markdown. Then POST it.
 
 Rules:
 
-- `date` is Beijing date for the assessment, usually today.
-- `event_time` is Beijing `HH:MM`. If unknown, use the search timestamp converted to Beijing time.
-- `importance`: 3 = market-moving, 2 = material, never below 2.
-- `bias` is one of `bullish`, `bearish`, `mixed`, `neutral`.
-- Keep 3 to 8 events. Skip noise.
-- Every event must name at least one in-scope symbol.
+- Score only items in the prompt. Never recrawl or reuse already-seen IDs.
+- Every in-scope symbol must appear in `impacts`.
+- `affected` is true only if the event can move that symbol.
+- `severity` is `high`, `medium`, or `low`.
+- A Fed hawkish hike speech is usually `high` for GOLD#, SILVER#, US100Cash#, US500Cash#.
+- `bias` is `bullish`, `bearish`, `mixed`, or `neutral`.
+- `importance`: 3 = market-moving, 2 = material.
+- Keep 1 to 5 events. If none are material, POST `"events": []`.
 
 ## Posting
 
-POST the JSON to the AI-Trader backend:
-
-- URL: `http://39.106.142.123/api/news/hermes/assessments`
-- Header: `X-Hermes-Token: $HERMES_INGEST_TOKEN`
-- Header: `Content-Type: application/json`
-
-Read `HERMES_INGEST_TOKEN` from `/root/.hermes/.env`. Do not print it.
-
-Example:
-
-```bash
-curl -sS -X POST "$AI_TRADER_NEWS_URL/news/hermes/assessments" \
-  -H "Content-Type: application/json" \
-  -H "X-Hermes-Token: $HERMES_INGEST_TOKEN" \
-  -d @payload.json
-```
-
-Do not print the token. After a successful POST, reply with the count and the event titles only.
+POST to `http://39.106.142.123/api/news/hermes/assessments`.
+Read `X-Hermes-Token` from `/root/.hermes/.env`.
+Do not print the token. After success, reply with count and titles only.
