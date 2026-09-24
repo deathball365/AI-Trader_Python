@@ -1,6 +1,6 @@
 ---
 name: market-event-48h-impact
-description: Assess last 48h macro news vs live symbols and post to calendar.
+description: Score 48h macro news vs live symbols and post to calendar.
 ---
 
 # 48-hour market event impact
