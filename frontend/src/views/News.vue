@@ -196,33 +196,35 @@
         </v-window-item>
 
         <v-window-item value="key-events">
-          <div v-if="keyEvents.length" class="key-grid">
-            <article v-for="item in keyEvents" :key="item.id" class="key-card">
-              <div class="key-time">{{ formatEventTime(item.event_time) }}</div>
-              <div class="event-title-line">
-                <v-chip size="x-small" :color="importanceColor(item.importance)" variant="tonal">
-                  {{ importanceLabel(item.importance) }}
-                </v-chip>
-                <span>{{ item.category || '重要事件' }}</span>
-              </div>
-              <h3>{{ item.title }}</h3>
-              <p>{{ item.summary || item.description || item.content || '暂无补充说明' }}</p>
-              <div v-if="item.impacts && item.impacts.length" class="impact-row">
-                <v-chip
-                  v-for="impact in item.impacts"
-                  :key="impact.symbol + impact.bias"
-                  size="x-small"
-                  :color="impactBiasColor(impact.bias)"
-                  variant="tonal"
-                >
-                  {{ impact.symbol }} {{ impactBiasLabel(impact.bias) }}
-                </v-chip>
-              </div>
-              <div class="symbol-row">
-                <v-chip v-for="symbol in item.symbols || []" :key="symbol" size="x-small" variant="outlined">
-                  {{ symbol }}
-                </v-chip>
-                <small>{{ item.source || 'external' }}</small>
+          <div v-if="sortedKeyEvents.length" class="key-list">
+            <article v-for="item in sortedKeyEvents" :key="item.id" class="key-row">
+              <time>{{ formatEventTime(item.event_time_beijing || item.event_time) }}</time>
+              <div class="event-copy">
+                <div class="event-title-line">
+                  <strong>{{ item.title }}</strong>
+                  <v-chip size="x-small" :color="importanceColor(item.importance)" variant="tonal">
+                    {{ importanceLabel(item.importance) }}
+                  </v-chip>
+                  <v-chip size="x-small" variant="tonal">{{ item.category || '重要事件' }}</v-chip>
+                </div>
+                <p>{{ item.summary || item.description || item.content || '暂无补充说明' }}</p>
+                <div v-if="item.impacts && item.impacts.length" class="impact-row">
+                  <v-chip
+                    v-for="impact in item.impacts"
+                    :key="impact.symbol + impact.bias"
+                    size="x-small"
+                    :color="impactBiasColor(impact.bias)"
+                    variant="tonal"
+                  >
+                    {{ impact.symbol }} {{ impactBiasLabel(impact.bias) }}
+                  </v-chip>
+                </div>
+                <div class="symbol-row">
+                  <v-chip v-for="symbol in item.symbols || []" :key="symbol" size="x-small" variant="outlined">
+                    {{ symbol }}
+                  </v-chip>
+                  <small>{{ item.source || 'external' }}</small>
+                </div>
               </div>
             </article>
           </div>
@@ -340,6 +342,26 @@ async function loadCalendar() {
 async function loadKeyEvents() {
   const response = await marketAPI.getMarketKeyEvents(selectedDate.value)
   keyEvents.value = response.data || []
+}
+
+const sortedKeyEvents = computed(() => [...keyEvents.value].sort((left, right) => {
+  const rightTime = eventSortValue(right)
+  const leftTime = eventSortValue(left)
+  if (rightTime !== leftTime) return rightTime - leftTime
+  return String(right.title || '').localeCompare(String(left.title || ''), 'zh-CN')
+}))
+
+function eventSortValue(item) {
+  const timestamp = Number(item?.event_timestamp)
+  if (Number.isFinite(timestamp) && timestamp > 0) return timestamp * 1000
+  const raw = item?.event_time_beijing || item?.event_time || item?.publish_time || ''
+  const parsed = Date.parse(raw)
+  if (!Number.isNaN(parsed)) return parsed
+  const match = String(raw).match(/^(\d{1,2}):(\d{2})/)
+  if (!match) return 0
+  const [hours, minutes] = [Number(match[1]), Number(match[2])]
+  const day = selectedDate.value || localDateInput()
+  return Date.parse(`${day}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00+08:00`) || 0
 }
 
 async function loadRiskCalendar() {
@@ -544,11 +566,10 @@ onUnmounted(() => {
 .value-strip span { display: grid; gap: 3px; }
 .value-strip b { color: #344c45; font-size: .85rem; }
 .value-strip .actual { color: #b24f39; }
-.key-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; padding: 20px; }
-.key-card { position: relative; padding: 20px; border: 1px solid #e0e7e2; border-radius: 16px; background: #fbfcfa; }
-.key-time { position: absolute; top: 18px; right: 18px; color: #1d6755; font-weight: 800; }
-.key-card h3 { margin: 14px 0 8px; color: #263f38; font-family: Georgia, serif; }
-.key-card p { min-height: 42px; color: #697771; font-size: .88rem; line-height: 1.55; }
+.key-list { padding: 8px 20px 24px; }
+.key-row { display: grid; grid-template-columns: 80px minmax(220px, 1fr); align-items: start; gap: 18px; padding: 18px 8px; border-bottom: 1px solid #e7ebe8; }
+.key-row time { color: #1d6755; font: 700 1.05rem Georgia, serif; }
+.key-row p { margin: 8px 0 0; color: #697771; font-size: .88rem; line-height: 1.55; }
 .symbol-row small { margin-left: auto; color: #929b97; }
 .flash-row { display: grid; grid-template-columns: 125px 1fr; gap: 18px; padding: 20px 8px; border-bottom: 1px solid #e7ebe8; }
 .flash-time { color: #8d7060; font: 700 .78rem Georgia, serif; }
@@ -562,7 +583,7 @@ onUnmounted(() => {
   .event-hero, .toolbar { align-items: flex-start; flex-direction: column; }
   .metric-grid { grid-template-columns: 1fr; }
   .toolbar-actions { width: 100%; min-width: 0; }
-  .calendar-row, .flash-row { grid-template-columns: 1fr; gap: 8px; }
+  .calendar-row, .flash-row, .key-row { grid-template-columns: 1fr; gap: 8px; }
   .risk-row { grid-template-columns: 1fr; gap: 8px; }
   .value-strip { flex-wrap: wrap; }
   .key-grid { grid-template-columns: 1fr; }
