@@ -948,6 +948,37 @@ class TradingStrategy:
         """获取周期权重（兼容旧版）"""
         return self.period_weights.get(period, 0)
 
+    @staticmethod
+    def parse_datetime(value):
+        """Accept ISO strings, unix seconds, or datetime objects."""
+        if value in (None, ""):
+            return None
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                try:
+                    value = float(value)
+                except ValueError:
+                    return None
+        try:
+            ts = float(value)
+        except (TypeError, ValueError):
+            return None
+        if ts > 1_000_000_000_000:
+            ts /= 1000.0
+        try:
+            return datetime.fromtimestamp(ts)
+        except (OverflowError, OSError, ValueError):
+            return None
+
+    @classmethod
+    def format_datetime(cls, value) -> Optional[str]:
+        parsed = value if isinstance(value, datetime) else cls.parse_datetime(value)
+        return parsed.isoformat() if parsed else None
+
     def to_dict(self) -> Dict:
         """转换为字典"""
         return {
@@ -959,10 +990,7 @@ class TradingStrategy:
             "enabled": True,
             "lifecycle_status": self.lifecycle_status,
             "lifecycle_label": StrategyLifecycle.LABELS[self.lifecycle_status],
-            "lifecycle_updated_at": (
-                self.lifecycle_updated_at.isoformat()
-                if self.lifecycle_updated_at else None
-            ),
+            "lifecycle_updated_at": self.format_datetime(self.lifecycle_updated_at),
             "lifecycle_history": self.lifecycle_history,
             "signal_config": self.signal_config,
             "signal_sources": self.signal_sources,
@@ -984,26 +1012,16 @@ class TradingStrategy:
             "source_strategy_id": self.source_strategy_id,
             "source_owner_user_id": self.source_owner_user_id,
             "source_owner_username": self.source_owner_username,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "created_at": self.format_datetime(self.created_at),
+            "updated_at": self.format_datetime(self.updated_at),
         }
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'TradingStrategy':
         """从字典创建"""
-        created_at = data.get('created_at')
-        if isinstance(created_at, str):
-            created_at = datetime.fromisoformat(created_at)
-
-        updated_at = data.get('updated_at')
-        if isinstance(updated_at, str):
-            updated_at = datetime.fromisoformat(updated_at)
-
-        lifecycle_updated_at = data.get('lifecycle_updated_at')
-        if isinstance(lifecycle_updated_at, str):
-            lifecycle_updated_at = datetime.fromisoformat(
-                lifecycle_updated_at
-            )
+        created_at = cls.parse_datetime(data.get('created_at'))
+        updated_at = cls.parse_datetime(data.get('updated_at'))
+        lifecycle_updated_at = cls.parse_datetime(data.get('lifecycle_updated_at'))
 
         # 历史配置没有生命周期字段，按原有行为视为已经可用于实盘。
         lifecycle_status = data.get(

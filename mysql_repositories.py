@@ -3835,6 +3835,7 @@ class StrategyConfigRepository:
                 }
             item["params"] = params
             signal_sources.append(item)
+        from market.models.trading_strategy import TradingStrategy
         payload.update({
             "strategy_id": reference.strategy_id,
             # Keep the recipient's broker-native symbol while inheriting the
@@ -3848,11 +3849,10 @@ class StrategyConfigRepository:
             "source_strategy_id": source.strategy_id,
             "source_owner_user_id": int(reference.source_owner_user_id),
             "source_owner_username": reference.source_owner_username,
-            "created_at": reference.created_at.isoformat(),
-            "updated_at": source.updated_at.isoformat(),
+            "created_at": TradingStrategy.format_datetime(reference.created_at),
+            "updated_at": TradingStrategy.format_datetime(source.updated_at),
         })
         payload["signal_sources"] = signal_sources
-        from market.models.trading_strategy import TradingStrategy
         return TradingStrategy.from_dict(payload)
 
     def get_all_strategies(self, user_id: int) -> List["TradingStrategy"]:

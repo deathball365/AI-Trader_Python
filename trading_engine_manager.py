@@ -313,7 +313,7 @@ class TradingEngineManager:
                         user_id, strategy, symbol, int(row["account_id"]),
                     ):
                         strategy_by_id[str(strategy.strategy_id)] = strategy
-                except (KeyError, TypeError, ValueError):
+                except (KeyError, TypeError, ValueError, AttributeError):
                     continue
         except Exception as exc:
             print(f"[TradingEngineManager] Paper部署快照补充失败: {exc}")

@@ -1101,7 +1101,26 @@ class PaperTradingService:
             try:
                 runtime_strategy = self._deployment_strategy(user_id, deployment)
                 strategy = TradingStrategy.from_dict(runtime_strategy)
-            except ValueError:
+            except Exception as exc:
+                # One corrupt/legacy strategy must not abort the remaining
+                # Paper deployments on this Tick. GOLD M5 used to crash
+                # to_dict() on a unix updated_at and skip AUDUSD/OIL/BTC M1.
+                account_id = int(deployment.get("account_id") or 0)
+                strategy_key = str(deployment.get("strategy_id") or "")
+                try:
+                    self.execution_gate_audits.record(
+                        user_id=int(user_id), account_id=account_id,
+                        deployment_id=str(deployment.get("deployment_id") or ""),
+                        strategy_id=strategy_key,
+                        tick_id=str(getattr(execution_context, "tick_id", "")),
+                        execution_mode="paper", symbol=str(symbol),
+                        status="blocked", reason_code="strategy_load_failed",
+                        message=f"模拟部署策略加载失败：{exc}",
+                    )
+                except Exception:
+                    print(
+                        f"[PaperTrading] 策略加载失败 strategy={strategy_key}: {exc}"
+                    )
                 continue
             if not self._strategy_matches_quote(
                 user_id, strategy, symbol, quote_account_id
