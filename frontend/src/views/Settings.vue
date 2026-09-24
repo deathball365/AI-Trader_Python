@@ -506,7 +506,7 @@
 
               <v-window-item value="risk">
                 <div class="detail-section-title"><div><h3>仓位与风险约束</h3><p>控制每次交易的规模，以及策略能够同时持有的仓位。</p></div></div>
-                <v-row><v-col cols="12" sm="6" md="3"><v-text-field v-model.number="selectedStrategy.fixed_volume" label="固定手数" type="number" step="0.01" min="0.01" :readonly="selectedStrategy.readonly_reference"></v-text-field></v-col><v-col cols="12" sm="6" md="3"><v-text-field v-model.number="selectedStrategy.max_positions" label="最大持仓数" type="number" min="1" :readonly="selectedStrategy.readonly_reference"></v-text-field></v-col><v-col cols="12" sm="6" md="3"><v-text-field v-model.number="selectedStrategy.max_same_direction" label="同向最大持仓" type="number" min="1" :readonly="selectedStrategy.readonly_reference"></v-text-field></v-col><v-col cols="12" sm="6" md="3"><v-text-field v-model.number="selectedStrategy.risk_percent" label="单笔风险比例" type="number" min="0.1" step="0.1" suffix="%" :readonly="selectedStrategy.readonly_reference"></v-text-field></v-col></v-row>
+                <v-row><v-col cols="12" sm="6" md="3"><v-select v-model="selectedStrategy.volume_mode" :items="volumeModeOptions" label="手数模式" item-title="title" item-value="value" :disabled="selectedStrategy.readonly_reference" hint="固定手数或按账户资金风险比例计算" persistent-hint></v-select></v-col><v-col cols="12" sm="6" md="3"><v-text-field v-model.number="selectedStrategy.fixed_volume" label="固定手数" type="number" step="0.01" min="0.01" :readonly="selectedStrategy.readonly_reference"></v-text-field></v-col><v-col cols="12" sm="6" md="3"><v-text-field v-model.number="selectedStrategy.max_positions" label="最大持仓数" type="number" min="1" :readonly="selectedStrategy.readonly_reference"></v-text-field></v-col><v-col cols="12" sm="6" md="3"><v-text-field v-model.number="selectedStrategy.max_same_direction" label="同向最大持仓" type="number" min="1" :readonly="selectedStrategy.readonly_reference"></v-text-field></v-col><v-col cols="12" sm="6" md="3"><v-text-field v-model.number="selectedStrategy.risk_percent" label="单笔风险比例" type="number" min="0.1" step="0.1" suffix="%" :readonly="selectedStrategy.readonly_reference"></v-text-field></v-col></v-row>
                 <div class="detail-section-title mt-5"><div><h3>持仓管理方案</h3><p>策略创建时已完成方案绑定；方案内容和账户运行状态统一在交易账户页面查看。</p></div><v-btn to="/accounts" variant="text" color="primary" prepend-icon="mdi-bank-outline">查看交易账户</v-btn></div>
                 <v-text-field
                   :model-value="positionPolicyOptions.find(item => item.value === selectedStrategy.position_management_policy_id)?.title || '未绑定持仓管理方案'"
@@ -3756,6 +3756,10 @@ export default {
       { title: '多数信号一致（至少60%同向）', value: 'majority' },
       { title: '所有信号一致', value: 'all' }
     ]
+    const volumeModeOptions = [
+      { title: '固定手数', value: 'fixed' },
+      { title: '按资金风险比例', value: 'risk_percent' }
+    ]
 
     const loadPositionPolicies = async () => {
       positionPoliciesLoading.value = true
@@ -3955,6 +3959,9 @@ export default {
         ? 'shared'
         : 'private'
       strategy.is_shared = strategy.visibility === 'shared'
+      strategy.volume_mode = strategy.volume_mode === 'risk_percent'
+        ? 'risk_percent'
+        : 'fixed'
       return strategy
     }
 
@@ -4234,6 +4241,7 @@ export default {
           signal_sources: serializeSignalSources(strategy),
           signal_weights: strategy.signal_weights,
           fixed_volume: strategy.fixed_volume,
+          volume_mode: strategy.volume_mode || 'fixed',
           max_positions: strategy.max_positions,
           max_same_direction: strategy.max_same_direction,
           risk_percent: strategy.risk_percent,
@@ -4877,6 +4885,7 @@ export default {
       newStrategySymbol,
       newStrategyName,
       consistencyOptions,
+      volumeModeOptions,
       positionPolicies,
       positionPoliciesLoading,
       positionPoliciesError,
