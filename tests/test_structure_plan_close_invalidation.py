@@ -76,6 +76,38 @@ class StructurePlanCloseInvalidationTests(unittest.TestCase):
             "结构段已切换，原交易机会失效",
         )
 
+    def test_location_plan_dies_when_hl_closes_broken(self):
+        plan = {
+            "direction": "buy",
+            "setup_type": "structure_location_pullback",
+            "status": "active",
+            "entry_price": 100.0,
+            "validation_evidence": {"location_entry_level": 100.0},
+            "close_invalidation_rules": [],
+        }
+        structure = {"structure_segment_id": "seg-1", "atr": 1.0}
+        self.assertEqual(
+            close_invalidate_reason(plan, structure, 99.9, atr=1.0),
+            "HL 被收盘跌破，原回撤计划失效",
+        )
+        # A wick is not represented by close_price and therefore remains valid.
+        self.assertEqual(close_invalidate_reason(plan, structure, 100.0, atr=1.0), "")
+
+    def test_location_sell_plan_dies_when_lh_closes_broken(self):
+        plan = {
+            "direction": "sell",
+            "setup_type": "structure_location_pullback",
+            "status": "active",
+            "entry_price": 100.0,
+            "validation_evidence": {"location_entry_level": 100.0},
+            "close_invalidation_rules": [],
+        }
+        structure = {"structure_segment_id": "seg-1", "atr": 1.0}
+        self.assertEqual(
+            close_invalidate_reason(plan, structure, 100.1, atr=1.0),
+            "LH 被收盘突破，原回撤计划失效",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

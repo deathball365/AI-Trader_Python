@@ -1442,6 +1442,19 @@ class StructurePlanBuilder:
             key=lambda item: (abs(item["price"] - close), -int(item["confidence"])),
         )
         entry = _number(level["price"])
+        # Once a completed candle has closed through the selected HL/LH, this
+        # is no longer a valid pullback to that level.  Do not create a fresh
+        # waiter from an already-broken location; a later rebound must wait
+        # for a new structure plan.
+        if (direction == "buy" and close < entry) or (
+            direction == "sell" and close > entry
+        ):
+            self._reject(
+                f"最新收盘已{'跌破' if direction == 'buy' else '突破'} "
+                f"原始{'HL' if direction == 'buy' else 'LH'} {entry:.2f}，"
+                "等待新的结构位置"
+            )
+            return []
         configured_entry_mode = str(self._param("entry_mode", "") or "").strip().lower()
         entry_mode = configured_entry_mode if configured_entry_mode in {
             "touch_or_near", "touch_and_reclaim"
@@ -1456,17 +1469,15 @@ class StructurePlanBuilder:
             "internal_bias": internal_bias,
             "entry_level_type": "HL" if direction == "buy" else "LH",
             "entry_level_source": level["source"],
+            "location_entry_level": entry,
         }
         if entry_mode == "touch_and_reclaim":
             accepted, reclaim_evidence, rejection = self._location_reclaim_confirmation(
                 rows, entry, direction, atr
             )
             validation_evidence["reclaim"] = reclaim_evidence
-            if not accepted:
-                self._reject(
-                    f"{level['source']} {entry:.2f} 回收确认不足：{rejection}"
-                )
-                return []
+            validation_evidence["initial_reclaim_confirmed"] = accepted
+            validation_evidence["initial_reclaim_rejection"] = rejection
         stop_buffer = atr * max(0.0, _number(self._param("stop_buffer_atr", 0.25)))
         target_buffer = atr * max(0.0, _number(self._param("target_buffer_atr", 0.1)))
         protected = self._protected_reference(hierarchy, direction, entry)
@@ -1500,8 +1511,8 @@ class StructurePlanBuilder:
             confidence=int(level["confidence"]),
             reason=(
                 f"{period} {'上涨' if direction == 'buy' else '下跌'}结构中，"
-                f"Internal/Swing/External 同向；价格触及并有效回收 "
-                f"{level['source']} {entry:.2f}，顺势"
+                f"Internal/Swing/External 同向；等待价格回到 "
+                f"{level['source']} {entry:.2f} 并重新收盘确认，顺势"
                 f"{'买入' if direction == 'buy' else '卖出'}"
             ),
             valid_from=bar_time, expires_at=bar_time + seconds * valid_bars,
@@ -2373,6 +2384,44 @@ class StructurePlanSignalGenerator:
             self.repository.update_payload(plan.get("plan_id"), changes)
         return bool(plan.get("false_breakout_reclaim_confirmed"))
 
+    def _location_entry_reclaim_confirmed(
+        self, plan: Dict, closed_bar: Optional[Dict], effective_config: Dict,
+    ) -> bool:
+        """Re-check the latest completed reclaim candle at the actual entry."""
+        if str(plan.get("entry_mode") or "") != "touch_and_reclaim":
+            return True
+        if not closed_bar:
+            return False
+        entry = _number(plan.get("entry_price"))
+        direction = str(plan.get("direction") or "")
+        atr = _number((plan.get("structure_snapshot") or {}).get("atr"))
+        if entry <= 0 or atr <= 0 or direction not in {"buy", "sell"}:
+            return False
+        bar_time = _bar_time(closed_bar)
+        if bar_time <= 0:
+            return False
+        last_bar = int(plan.get("location_entry_confirmation_bar") or 0)
+        if bar_time == last_bar:
+            return bool(plan.get("location_entry_reclaim_confirmed"))
+        accepted, evidence, rejection = location_reclaim_confirmation(
+            [closed_bar], entry, direction, atr,
+            min_body_atr=max(0.0, _number(effective_config.get(
+                "location_reclaim_min_body_atr", 0.3
+            ))),
+            min_close_extension_atr=max(0.0, _number(effective_config.get(
+                "location_reclaim_min_close_extension_atr", 0.1
+            ))),
+        )
+        changes = {
+            "location_entry_confirmation_bar": bar_time,
+            "location_entry_reclaim_confirmed": accepted,
+            "location_entry_reclaim_evidence": evidence,
+            "location_entry_reclaim_rejection": rejection,
+        }
+        plan.update(changes)
+        self.repository.update_payload(plan.get("plan_id"), changes)
+        return accepted
+
     def _triggered(
         self, plan: Dict, price: float, effective_config: Optional[Dict] = None,
         closed_bar: Optional[Dict] = None,
@@ -2403,6 +2452,13 @@ class StructurePlanSignalGenerator:
                             "false_breakout_last_confirmation_bar": 0,
                             "false_breakout_confirmation_bars_seen": 0,
                             "false_breakout_reclaim_confirmed": False,
+                        })
+                    elif setup_type == "structure_location_pullback":
+                        changes.update({
+                            "location_entry_confirmation_bar": 0,
+                            "location_entry_reclaim_confirmed": False,
+                            "location_entry_reclaim_evidence": {},
+                            "location_entry_reclaim_rejection": "等待重新收盘确认",
                         })
                     plan.update(changes)
                     self._tick_state[str(plan.get("plan_id") or "")] = {"touched": False}
@@ -2471,6 +2527,11 @@ class StructurePlanSignalGenerator:
         ))
         if result and setup_type == "range_false_breakout":
             if not self._false_breakout_reclaim_confirmed(
+                plan, closed_bar, effective_config or {},
+            ):
+                return False
+        if result and setup_type == "structure_location_pullback":
+            if not self._location_entry_reclaim_confirmed(
                 plan, closed_bar, effective_config or {},
             ):
                 return False
@@ -2810,7 +2871,8 @@ class StructurePlanSignalGenerator:
                     continue
                 closed_bar = (
                     self._latest_closed_bar(symbol, period)
-                    if setup_type == "range_false_breakout" else None
+                    if setup_type in {"range_false_breakout", "structure_location_pullback"}
+                    else None
                 )
                 if self._triggered(
                     plan, float(current_price), effective_config, closed_bar,

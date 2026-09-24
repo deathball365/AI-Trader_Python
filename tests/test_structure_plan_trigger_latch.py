@@ -181,6 +181,34 @@ class StructurePlanTriggerLatchTests(unittest.TestCase):
             {"timestamp": 1060, "close": 100.3},
         ))
 
+    def test_location_pullback_rechecks_latest_close_at_entry(self):
+        plan = {
+            "plan_id": "gold-location-entry",
+            "setup_type": "structure_location_pullback",
+            "direction": "buy",
+            "entry_mode": "touch_and_reclaim",
+            "entry_price": 100.0,
+            "entry_zone": {"lower": 99.0, "upper": 101.0},
+            "touch_seen": True,
+            "touch_state": "touched",
+            "boundary_state": "touched",
+            "structure_snapshot": {"atr": 2.0},
+        }
+        config = {
+            "location_reclaim_min_body_atr": 0.3,
+            "location_reclaim_min_close_extension_atr": 0.1,
+        }
+        self.assertFalse(self.gen._triggered(
+            plan, 100.0, config,
+            {"timestamp": 1000, "open": 100.1, "high": 100.4,
+             "low": 99.8, "close": 100.1},
+        ))
+        self.assertTrue(self.gen._triggered(
+            plan, 100.0, config,
+            {"timestamp": 1060, "open": 99.6, "high": 100.4,
+             "low": 99.5, "close": 100.3},
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()

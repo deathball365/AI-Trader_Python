@@ -164,6 +164,21 @@ def close_invalidate_reason(
         if direction == "sell" and close_price >= invalid + buffer:
             return "保护高点被收盘破坏"
 
+    # A location pullback is tied to the specific HL/LH selected when the
+    # plan was created.  A completed candle through that level kills the old
+    # thesis immediately; a later rebound must wait for a new structure plan.
+    # This intentionally ignores intrabar wicks.
+    if setup == "structure_location_pullback":
+        evidence = plan.get("validation_evidence") or {}
+        location_level = _as_float(
+            evidence.get("location_entry_level") or plan.get("entry_price")
+        )
+        if location_level > 0:
+            if direction == "buy" and close_price < location_level:
+                return "HL 被收盘跌破，原回撤计划失效"
+            if direction == "sell" and close_price > location_level:
+                return "LH 被收盘突破，原回撤计划失效"
+
     if "range_structure_break" in rules:
         box = structure.get("range") or {}
         box_status = str(box.get("status") or "")

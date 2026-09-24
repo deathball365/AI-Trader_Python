@@ -756,8 +756,9 @@ class StructurePlanTests(unittest.TestCase):
         plans = StructurePlanBuilder().build(
             "source-1", "BTCUSD", "M5", self.store.rows, structure,
         )
-        self.assertEqual(plans[0]["setup_type"], "no_trade")
-        self.assertIn("实体方向", plans[0]["reason"])
+        self.assertEqual(plans[0]["setup_type"], "structure_location_pullback")
+        self.assertFalse(plans[0]["validation_evidence"]["initial_reclaim_confirmed"])
+        self.assertIn("实体方向", plans[0]["validation_evidence"]["initial_reclaim_rejection"])
 
     def test_location_plan_saves_alignment_and_reclaim_evidence(self):
         structure = _trend_structure("up")
