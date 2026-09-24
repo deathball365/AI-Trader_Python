@@ -99,6 +99,7 @@ class TradingAccountRecord:
     single_position_loss_limit_amount: float = 30.0
     manual_order_daily_limit_enabled: bool = True
     manual_order_daily_limit: int = 10
+    manual_losing_order_daily_limit: int = 3
 
 
 _STORAGE: Optional[MySQLStorage] = None
@@ -139,6 +140,7 @@ class TradingAccountRepository:
                COALESCE(a.single_position_loss_limit_amount, 30.0) AS single_position_loss_limit_amount,
                COALESCE(a.manual_order_daily_limit_enabled, 1) AS manual_order_daily_limit_enabled,
                COALESCE(a.manual_order_daily_limit, 10) AS manual_order_daily_limit,
+               COALESCE(a.manual_losing_order_daily_limit, 3) AS manual_losing_order_daily_limit,
                COALESCE(c.last_seen_at, a.last_seen_at) AS last_seen_at,
                COALESCE(c.mt5_login, a.mt5_login) AS mt5_login,
                COALESCE(c.mt5_server, a.mt5_server) AS mt5_server,
@@ -300,6 +302,7 @@ class TradingAccountRepository:
         single_position_loss_limit_amount: Optional[float] = None,
         manual_order_daily_limit_enabled: Optional[bool] = None,
         manual_order_daily_limit: Optional[int] = None,
+        manual_losing_order_daily_limit: Optional[int] = None,
     ) -> TradingAccountRecord:
         account = self.get_by_id(user_id, account_id)
         if account is None:
@@ -319,6 +322,7 @@ class TradingAccountRepository:
             "single_position_loss_limit_amount": account.single_position_loss_limit_amount,
             "manual_order_daily_limit_enabled": account.manual_order_daily_limit_enabled,
             "manual_order_daily_limit": account.manual_order_daily_limit,
+            "manual_losing_order_daily_limit": account.manual_losing_order_daily_limit,
         }
         if account_name is not None:
             name = str(account_name).strip()
@@ -360,6 +364,10 @@ class TradingAccountRepository:
             )
         if manual_order_daily_limit is not None:
             values["manual_order_daily_limit"] = int(manual_order_daily_limit)
+        if manual_losing_order_daily_limit is not None:
+            values["manual_losing_order_daily_limit"] = int(
+                manual_losing_order_daily_limit
+            )
         if values["auto_flatten_enabled"] and not values["auto_flatten_time"]:
             raise ValueError("开启自动清仓后必须填写北京时间")
         if not 1 <= values["max_total_positions"] <= 100:
@@ -376,6 +384,8 @@ class TradingAccountRepository:
             raise ValueError("单笔持仓最大亏损金额必须在 1 到 1000000 之间")
         if not 1 <= values["manual_order_daily_limit"] <= 1000:
             raise ValueError("每日手动下单上限必须在 1 到 1000 之间")
+        if not 1 <= values["manual_losing_order_daily_limit"] <= 1000:
+            raise ValueError("每日允许亏损的手动单必须在 1 到 1000 之间")
         now = _now_ts()
         with self.storage._lock, self.storage._connect() as conn:
             conn.execute(
@@ -389,7 +399,8 @@ class TradingAccountRepository:
                     single_position_loss_limit_enabled = ?,
                     single_position_loss_limit_amount = ?,
                     manual_order_daily_limit_enabled = ?,
-                    manual_order_daily_limit = ?, updated_at = ?
+                    manual_order_daily_limit = ?,
+                    manual_losing_order_daily_limit = ?, updated_at = ?
                 WHERE id = ? AND user_id = ?
                 """,
                 (
@@ -402,6 +413,7 @@ class TradingAccountRepository:
                     values["single_position_loss_limit_amount"],
                     int(values["manual_order_daily_limit_enabled"]),
                     values["manual_order_daily_limit"],
+                    values["manual_losing_order_daily_limit"],
                     now, account_id, user_id,
                 ),
             )
@@ -912,6 +924,9 @@ class TradingAccountRepository:
             ),
             manual_order_daily_limit=int(
                 row.get("manual_order_daily_limit", 10) or 10
+            ),
+            manual_losing_order_daily_limit=int(
+                row.get("manual_losing_order_daily_limit", 3) or 3
             ),
             archived_at=(
                 int(row["archived_at"])

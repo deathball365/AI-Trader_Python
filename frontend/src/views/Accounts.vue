@@ -705,7 +705,15 @@
             label="每日手动下单上限"
             type="number" min="1" max="1000" variant="outlined"
             :disabled="!accountForm.manualOrderDailyLimitEnabled"
-            hint="无备注的持仓视为手动单。北京时间 0 点起累计，超过上限后新看到的手动单会立即平仓"
+            hint="无备注的持仓视为手动单。北京时间 0 点起累计，总笔数或亏损笔数任一达到上限后，新看到的手动单会立即平仓"
+            persistent-hint
+          />
+          <v-text-field
+            v-model.number="accountForm.manualLosingOrderDailyLimit"
+            label="每日允许亏损的手动单"
+            type="number" min="1" max="1000" variant="outlined"
+            :disabled="!accountForm.manualOrderDailyLimitEnabled"
+            hint="含已平亏损单和当前浮亏单。达到该笔数后，之后出现的无备注手动单会立即平仓"
             persistent-hint
           />
           <div class="paper-actions mt-2">
@@ -784,6 +792,7 @@ const accountForm = reactive({
   autoFlattenEnabled: false, autoFlattenTime: '',
   singlePositionLossLimitEnabled: true, singlePositionLossLimitAmount: 30,
   manualOrderDailyLimitEnabled: true, manualOrderDailyLimit: 10,
+  manualLosingOrderDailyLimit: 3,
 })
 const strategyDialog = ref(false)
 const selectedAccount = ref(null)
@@ -1189,6 +1198,7 @@ function openAccountManager(account) {
     singlePositionLossLimitAmount: account.single_position_loss_limit_amount ?? 30,
     manualOrderDailyLimitEnabled: account.manual_order_daily_limit_enabled !== false,
     manualOrderDailyLimit: account.manual_order_daily_limit ?? 10,
+    manualLosingOrderDailyLimit: account.manual_losing_order_daily_limit ?? 3,
   })
   accountDialog.value = true
 }
@@ -1211,6 +1221,7 @@ async function saveAccountControls() {
       single_position_loss_limit_amount: accountForm.singlePositionLossLimitAmount,
       manual_order_daily_limit_enabled: accountForm.manualOrderDailyLimitEnabled,
       manual_order_daily_limit: accountForm.manualOrderDailyLimit,
+      manual_losing_order_daily_limit: accountForm.manualLosingOrderDailyLimit,
     })
     messageType.value = 'success'
     message.value = data.message

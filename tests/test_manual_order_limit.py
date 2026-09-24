@@ -23,11 +23,12 @@ class _RuntimeRepository:
 
 
 class _AccountRepository:
-    def __init__(self, enabled=True, limit=10):
+    def __init__(self, enabled=True, limit=10, losing_limit=3):
         self.storage = None
         self.account = SimpleNamespace(
             manual_order_daily_limit_enabled=enabled,
             manual_order_daily_limit=limit,
+            manual_losing_order_daily_limit=losing_limit,
             currency="USD",
         )
 
@@ -146,3 +147,75 @@ class ManualOrderLimitTests(unittest.TestCase):
             storage=_Storage(history),
         )
         self.assertEqual(tickets, [])
+
+    def test_fourth_manual_is_closed_after_three_losers(self):
+        started = risk_day_start_timestamp()
+        history = [
+            {"position_id": 1, "opened_at": started + 1, "closed_pnl": -2},
+            {"position_id": 2, "opened_at": started + 2, "closed_pnl": -3},
+            {"position_id": 3, "opened_at": started + 3, "closed_pnl": -1},
+        ]
+        server = self._server()
+        events = _EventRepository()
+        tickets = apply_manual_order_daily_limit(
+            server, user_id=1, account_id=21, symbol="GOLD#",
+            positions=[{
+                "ticket": 4, "symbol": "GOLD#", "comment": "",
+                "open_timestamp": started + 4, "volume": 0.1, "profit": 8,
+            }],
+            account_repository=_AccountRepository(),
+            event_repository=events,
+            storage=_Storage(history),
+        )
+        self.assertEqual(tickets, [4])
+        self.assertEqual(len(events.events), 1)
+        self.assertIn("亏损", events.events[0][0][4])
+
+    def test_first_three_losers_are_kept(self):
+        started = risk_day_start_timestamp()
+        history = [
+            {"position_id": index, "opened_at": started + index, "closed_pnl": 0}
+            for index in range(1, 4)
+        ]
+        server = self._server()
+        tickets = apply_manual_order_daily_limit(
+            server, user_id=1, account_id=21, symbol="GOLD#",
+            positions=[
+                {
+                    "ticket": index, "symbol": "GOLD#", "comment": "",
+                    "open_timestamp": started + index, "profit": -1,
+                }
+                for index in range(1, 4)
+            ],
+            account_repository=_AccountRepository(),
+            event_repository=_EventRepository(),
+            storage=_Storage(history),
+        )
+        self.assertEqual(tickets, [])
+
+    def test_earlier_winner_is_kept_after_three_losers(self):
+        started = risk_day_start_timestamp()
+        history = [
+            {"position_id": 1, "opened_at": started + 1, "closed_pnl": 0},
+            {"position_id": 2, "opened_at": started + 2, "closed_pnl": -2},
+            {"position_id": 3, "opened_at": started + 3, "closed_pnl": -2},
+            {"position_id": 4, "opened_at": started + 4, "closed_pnl": -2},
+        ]
+        server = self._server()
+        tickets = apply_manual_order_daily_limit(
+            server, user_id=1, account_id=21, symbol="GOLD#",
+            positions=[
+                {
+                    "ticket": 1, "symbol": "GOLD#", "comment": "",
+                    "open_timestamp": started + 1, "profit": 5,
+                },
+                {
+                    "ticket": 5, "symbol": "GOLD#", "comment": "",
+                    "open_timestamp": started + 5, "profit": 3,
+                },
+            ],
+            account_repository=_AccountRepository(),
+            event_repository=_EventRepository(),
+            storage=_Storage(history),
+        )
+        self.assertEqual(tickets, [5])
