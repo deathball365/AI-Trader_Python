@@ -165,6 +165,25 @@ class SinglePositionLossLimitTestCase(unittest.TestCase):
         self.assertEqual(server._close_position_instructions["SILVER#"], [])
         self.assertEqual(events.events, [])
 
+    def test_owner_snapshot_queues_close_on_the_losing_symbol(self):
+        server = self._server()
+        events = _EventRepository()
+        tickets = _apply_single_position_loss_limit(
+            server, user_id=1, account_id=21, symbol="GOLD#",
+            positions=[
+                {"ticket": 11, "symbol": "GOLD#", "profit": -1.5},
+                {"ticket": 22, "symbol": "US100Cash#", "profit": -16.0, "volume": 0.1},
+            ],
+            account_repository=_AccountRepository(amount=15),
+            event_repository=events,
+        )
+
+        self.assertEqual(tickets, [22])
+        self.assertEqual(server._close_position_instructions["GOLD#"], [])
+        queued = server._close_position_instructions["US100Cash#"][0]
+        self.assertEqual(queued["ticket"], 22)
+        self.assertEqual(events.events[0][1]["symbol"], "US100Cash#")
+
 
 class PositionUpdateDeliveryTestCase(unittest.TestCase):
     def _server(self):

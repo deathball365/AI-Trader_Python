@@ -53,13 +53,14 @@ def _apply_single_position_loss_limit(
             continue
         if ticket <= 0 or profit > -limit:
             continue
+        pos_symbol = str(position.get("symbol") or symbol or "").strip() or str(symbol)
         instruction_id = f"position-loss-limit-{account_id}-{ticket}"
         prior = None
         runtime = getattr(trading_server, "_runtime_repository", None)
         if runtime is not None:
             prior = runtime.get_entity("close_instruction", instruction_id)
         trading_server.add_close_position_instruction(
-            symbol, ticket, instruction_id=instruction_id,
+            pos_symbol, ticket, instruction_id=instruction_id,
         )
         triggered.append(ticket)
         if prior is None:
@@ -70,7 +71,7 @@ def _apply_single_position_loss_limit(
                     f"单笔持仓浮亏 {profit:.2f} {account.currency} 已达到上限 "
                     f"{limit:.2f} {account.currency}，已生成平仓指令"
                 ),
-                symbol=str(symbol), ticket=ticket,
+                symbol=pos_symbol, ticket=ticket,
                 rule_type="single_position_loss_limit", status="triggered",
                 price=float(position.get("priceCurrent") or 0),
                 stop_loss=float(position.get("sl") or 0),
@@ -165,12 +166,18 @@ def create_position_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 item for item in positions
                 if str(item.get("symbol") or symbol) == str(symbol)
             ]
+            # The account-owner chart reports every open position.  Loss-limit
+            # closes must scan that full snapshot, not only the owner symbol,
+            # otherwise a GOLD chart would never flatten a losing US100 ticket.
+            loss_limit_positions = (
+                positions if full_account_snapshot else symbol_positions
+            )
             loss_limit_tickets = _apply_single_position_loss_limit(
                 trading_server,
                 user_id=identity.user_id,
                 account_id=identity.account_id,
                 symbol=symbol,
-                positions=symbol_positions,
+                positions=loss_limit_positions,
                 account_repository=TradingAccountRepository(repositories.storage),
                 event_repository=repositories.position_events,
             )
