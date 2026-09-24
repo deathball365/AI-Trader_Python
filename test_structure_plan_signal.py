@@ -566,6 +566,99 @@ class StructurePlanTests(unittest.TestCase):
             )[0]["setup_type"],
             "no_trade",
         )
+        lower = {**base, "internal_events": [{
+            "type": "liquidity_sweep", "direction": "down",
+            "level": 108.0, "confirmed_at": 39,
+        }]}
+        buy = StructurePlanBuilder({"enable_structure_location": False}).build(
+            "source-1", "BTCUSD", "M5", self.store.rows, lower,
+        )[0]
+        self.assertEqual(buy["setup_type"], "liquidity_sweep_reclaim")
+        self.assertEqual(buy["direction"], "buy")
+
+    def test_ascending_range_rejects_upper_sweep_sell(self):
+        structure = {
+            "atr": 2.0, "major_state": "sideways", "current_state": "sideways",
+            "trend_regime": "ascending_range",
+            "trend_regime_evidence": {
+                "higher_highs": True, "higher_lows": True,
+                "support_slope_atr": 0.08, "resistance_slope_atr": 0.06,
+                "minimum_slope_atr": 0.05,
+            },
+            "range": {"active": True, "top": 112, "bottom": 100,
+                      "high_slope": 0.2, "low_slope": 0.16},
+            "structure_hierarchy": {},
+            "internal_events": [{
+                "type": "liquidity_sweep", "direction": "up",
+                "level": 112.0, "confirmed_at": 39,
+            }],
+        }
+        plans = StructurePlanBuilder({
+            "enable_range": False, "enable_structure_location": False,
+        }).build("source-1", "BTCUSD", "M5", self.store.rows, structure)
+        self.assertEqual(plans[0]["setup_type"], "no_trade")
+        self.assertIn("震荡上升", plans[0]["reason"])
+        self.assertIn("扫高点", plans[0]["reason"])
+
+    def test_descending_range_rejects_lower_sweep_buy(self):
+        structure = {
+            "atr": 2.0, "major_state": "undetermined",
+            "trend_regime": "descending_range",
+            "trend_regime_evidence": {
+                "lower_highs": True, "lower_lows": True,
+                "support_slope_atr": -0.08, "resistance_slope_atr": -0.06,
+                "minimum_slope_atr": 0.05,
+            },
+            "range": {}, "structure_hierarchy": {},
+            "internal_events": [{
+                "type": "liquidity_sweep", "direction": "down",
+                "level": 108.0, "confirmed_at": 39,
+            }],
+        }
+        plans = StructurePlanBuilder({"enable_structure_location": False}).build(
+            "source-1", "BTCUSD", "M5", self.store.rows, structure,
+        )
+        self.assertEqual(plans[0]["setup_type"], "no_trade")
+        self.assertIn("震荡下降", plans[0]["reason"])
+        self.assertIn("扫低点", plans[0]["reason"])
+
+    def test_ascending_range_still_allows_lower_sweep_buy(self):
+        structure = {
+            "atr": 2.0, "major_state": "undetermined",
+            "trend_regime": "ascending_range",
+            "range": {}, "structure_hierarchy": {},
+            "internal_events": [{
+                "type": "liquidity_sweep", "direction": "down",
+                "level": 108.0, "confirmed_at": 39,
+            }],
+        }
+        plans = StructurePlanBuilder({"enable_structure_location": False}).build(
+            "source-1", "BTCUSD", "M5", self.store.rows, structure,
+        )
+        self.assertEqual(plans[0]["setup_type"], "liquidity_sweep_reclaim")
+        self.assertEqual(plans[0]["direction"], "buy")
+        self.assertEqual(plans[0]["structure_snapshot"]["trend_regime"], "ascending_range")
+
+    def test_tick_skips_sweep_sell_in_ascending_range_snapshot(self):
+        repository = _Repository()
+        generator = StructurePlanSignalGenerator(self.store, repository, 1, 2)
+        strategy = _Strategy()
+        repository.plans = [{
+            "plan_id": "btc-sweep", "status": "active",
+            "direction": "sell", "setup_type": "liquidity_sweep_reclaim",
+            "setup_family": "reversal", "entry_mode": "touch_and_reclaim",
+            "entry_zone": {"lower": 109.0, "upper": 111.0},
+            "entry_price": 110.0, "stop_loss": 112.0, "take_profit": 104.0,
+            "reason": "扫高点", "valid_from": 1, "expires_at": 0,
+            "structure_snapshot": {
+                "major_state": "sideways", "internal_state": "down",
+                "external_state": "up", "trend_regime": "ascending_range",
+            },
+        }]
+        generator._cache[("market-structure", "BTCUSD", "M5")] = list(repository.plans)
+        signal = generator.generate_signals_for_strategy("BTCUSD", 110.0, strategy)[0]
+        self.assertFalse(signal.state_ready)
+        self.assertEqual(signal.action, "none")
 
     def test_downtrend_near_lh_builds_sell_location_plan(self):
         structure = _trend_structure("down")

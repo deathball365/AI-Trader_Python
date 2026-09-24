@@ -324,6 +324,40 @@ class StructurePlanBuilder:
         return "sideways"
 
     @classmethod
+    def slope_drift(cls, structure: Optional[Dict] = None) -> str:
+        """Rising/falling channel even when Swing is still labelled sideways."""
+        structure = structure or {}
+        regime = str(structure.get("trend_regime") or "").strip().lower()
+        if regime == "ascending_range":
+            return "up"
+        if regime == "descending_range":
+            return "down"
+        evidence = structure.get("trend_regime_evidence") or {}
+        min_atr = max(0.05, _number(evidence.get("minimum_slope_atr"), 0.05))
+        support_atr = _number(evidence.get("support_slope_atr"))
+        resistance_atr = _number(evidence.get("resistance_slope_atr"))
+        if (
+            support_atr >= min_atr and resistance_atr >= min_atr
+            and evidence.get("higher_highs") and evidence.get("higher_lows")
+        ):
+            return "up"
+        if (
+            support_atr <= -min_atr and resistance_atr <= -min_atr
+            and evidence.get("lower_highs") and evidence.get("lower_lows")
+        ):
+            return "down"
+        atr = max(_number(structure.get("atr")), 1e-9)
+        box = structure.get("range") or {}
+        min_slope = 0.05 * atr
+        high_slope = _number(box.get("high_slope"))
+        low_slope = _number(box.get("low_slope"))
+        if high_slope >= min_slope and low_slope >= min_slope:
+            return "up"
+        if high_slope <= -min_slope and low_slope <= -min_slope:
+            return "down"
+        return ""
+
+    @classmethod
     def counter_trend_reason(
         cls, direction: str, structure: Optional[Dict] = None,
         setup_type: str = "", config: Optional[Dict] = None,
@@ -339,13 +373,20 @@ class StructurePlanBuilder:
             return ""
         layers = cls.structure_layers(structure)
         bias = cls.background_bias(structure)
+        drift = cls.slope_drift(structure) if setup == "liquidity_sweep_reclaim" else ""
+        if bias == "sideways" and drift in {"up", "down"}:
+            bias = drift
         detail = (
             f"Internal={layers['internal']}，Swing={layers['swing']}，"
             f"External={layers['external']}"
         )
         if bias == "up" and direction == "sell":
+            if drift == "up" and layers["swing"] not in {"up", "down"}:
+                return f"震荡上升通道，禁止扫高点开空（{detail}）"
             return f"Swing 上涨，禁止开空（{detail}）"
         if bias == "down" and direction == "buy":
+            if drift == "down" and layers["swing"] not in {"up", "down"}:
+                return f"震荡下降通道，禁止扫低点开多（{detail}）"
             return f"Swing 下跌，禁止开多（{detail}）"
         return ""
 
@@ -1033,10 +1074,12 @@ class StructurePlanBuilder:
             "external_state": structure.get("external_state"),
             "trend_phase": structure.get("trend_phase", "undetermined"),
             "trend_phase_evidence": structure.get("trend_phase_evidence") or {},
+            "trend_regime": structure.get("trend_regime") or "",
+            "trend_regime_evidence": structure.get("trend_regime_evidence") or {},
             "range": {key: box.get(key) for key in (
                 "active", "pattern", "status", "top", "bottom", "start_index",
                 "high_touches", "low_touches", "inside_ratio", "width_atr",
-                "breakout_direction",
+                "breakout_direction", "high_slope", "low_slope",
             )},
             "structure_levels": self._hierarchy_snapshot(hierarchy),
             "zone_pressure": structure.get("zone_pressure") or {},
@@ -1934,11 +1977,13 @@ class StructurePlanBuilder:
             # 未确认边界时，内部 Pivot 扫单只能作为证据，不能单独下单。
             if major in {"sideways", "range"} and not bool(box.get("active")):
                 return []
-            # 趋势中的 sweep 仅用于顺势回收：上涨结构扫低点做多，
-            # 下跌结构扫高点做空，避免内部噪声逆主结构交易。
-            if major == "up" and direction != "buy":
-                return []
-            if major == "down" and direction != "sell":
+            # 趋势和仍在抬高/走低的震荡通道里，扫单只做顺势回收：
+            # 上涨或震荡上升只许扫低点买，下跌或震荡下降只许扫高点卖。
+            blocked = self.counter_trend_reason(
+                direction, structure, "liquidity_sweep_reclaim",
+            )
+            if blocked:
+                self._reject(blocked)
                 return []
             entry = _number(latest.get("level"))
             protected = self._protected_reference(hierarchy, direction, entry)
