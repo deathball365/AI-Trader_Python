@@ -121,21 +121,6 @@
               <div><div class="text-subtitle-1 font-weight-bold">结构配置总览矩阵</div><div class="text-caption text-medium-emphasis">公共默认 → 品种/周期 → SETUP，点击查看最终生效值与来源。</div></div>
               <div class="d-flex ga-2"><v-btn size="small" variant="text" :loading="structureOverviewLoading" @click="loadStructureOverview">刷新</v-btn></div>
             </div>
-            <v-card variant="outlined" color="deep-purple" class="mb-5 structure-optimizer-card">
-              <v-card-text class="d-flex align-center justify-space-between flex-wrap ga-3">
-                <div>
-                  <div class="text-subtitle-1 font-weight-bold"><v-icon size="small" class="mr-1">mdi-chart-box-outline</v-icon>历史优化建议</div>
-                  <div class="text-caption text-medium-emphasis mt-1">独立于当前选中的公共/品种周期/SETUP 配置。系统会按最近 30 天已平仓的结构计划订单，分别分析品种、周期和 SETUP，并生成可预览的配置建议。</div>
-                  <div class="text-caption text-medium-emphasis mt-1">触发方式：管理员手动点击；保存配置、切换 SETUP 或刷新页面都不会自动触发。每个品种/周期/SETUP 至少需要 3 笔已平仓订单，之后还会进行大模型复核。</div>
-                </div>
-                <div class="d-flex flex-wrap align-center ga-2">
-                  <v-select v-model="structureOptimizerRangeMode" :items="[{title:'最近7天',value:'7'},{title:'最近14天',value:'14'},{title:'最近30天',value:'30'},{title:'最近90天',value:'90'},{title:'自定义时间',value:'custom'}]" item-title="title" item-value="value" label="分析时间范围" density="compact" variant="outlined" hide-details style="width:150px" />
-                  <v-text-field v-if="structureOptimizerRangeMode === 'custom'" v-model="structureOptimizerStart" type="datetime-local" label="开始时间（北京时间）" density="compact" variant="outlined" hide-details style="width:205px" />
-                  <v-text-field v-if="structureOptimizerRangeMode === 'custom'" v-model="structureOptimizerEnd" type="datetime-local" label="结束时间（北京时间）" density="compact" variant="outlined" hide-details style="width:205px" />
-                  <v-btn color="deep-purple" variant="flat" :loading="structureOptimizerRunning" prepend-icon="mdi-lightbulb-on-outline" @click="optimizeStructureSetups">生成历史优化建议</v-btn>
-                </div>
-              </v-card-text>
-            </v-card>
             <v-alert v-if="structureOverview && !structureOverview.items?.length" type="info" variant="tonal" density="compact" class="mb-3">当前还没有品种/周期专属覆盖，所有配置均继承公共默认。</v-alert>
             <v-table v-if="structureOverview?.items?.length" density="compact" class="mb-5"><thead><tr><th>品种</th><th>周期</th><th>专属覆盖</th><th>SETUP</th><th class="text-right">操作</th></tr></thead><tbody><tr v-for="row in structureOverview.items" :key="`${row.symbol}-${row.period}`"><td><strong>{{ row.symbol }}</strong></td><td>{{ row.period }}</td><td><v-chip size="x-small" :color="row.has_profile ? 'primary' : 'grey'" variant="tonal">{{ row.has_profile ? '品种/周期' : '仅 SETUP' }}</v-chip></td><td><v-chip v-for="setup in row.setups" :key="setup.setup_type" size="x-small" class="mr-1" variant="outlined">{{ setupTypeLabel(setup.setup_type) }}</v-chip><span v-if="!row.setups?.length">--</span></td><td class="text-right"><v-btn size="small" variant="text" @click="openEffectiveConfig(row.symbol,row.period)">查看最终配置</v-btn><v-btn size="small" variant="text" color="error" prepend-icon="mdi-delete-outline" :loading="structureOverviewDeleting === `${row.symbol}::${row.period}`" @click="deleteStructureOverviewRow(row)">删除专项</v-btn></td></tr></tbody></v-table>
             <div class="d-flex flex-wrap ga-2 align-center mb-3">
@@ -289,47 +274,7 @@
               <v-text-field v-model.number="structureSetupProfileDraft.max_plan_lifetime_bars" :class="setupFieldClass('max_plan_lifetime_bars')" type="number" min="10" max="1000" label="计划安全兜底（K线）" hint="结构事件未发生时的最长保留上限" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
               <v-btn color="primary" variant="tonal" :loading="structureEngineSaving" @click="saveStructureSetupConfig">{{ structureSetupScope?.startsWith('default::') ? '保存公共 SETUP 默认' : '保存当前 SETUP 专项' }}</v-btn>
             </div>
-            <v-dialog v-model="structureOptimizerPreviewOpen" max-width="1100">
-              <v-card>
-                <v-card-title>结构配置历史优化建议预览</v-card-title>
-                <v-card-text>
-                  <p class="text-body-2 mb-3">品种+周期与 SETUP 专项建议分开生成、分开应用。不同 SETUP 的参数冲突只保留在 SETUP 专项层，不会自动合并。</p>
-                  <v-alert v-if="structureOptimizerLLMReview" type="secondary" variant="tonal" density="compact" class="mb-3"><strong>大模型二次审核：</strong>{{ structureOptimizerLLMReview.summary || '已完成审核，请结合下方建议确认。' }}<div v-for="item in (structureOptimizerLLMReview.recommendations || [])" :key="`${item.symbol}-${item.period}-${item.setup_type || 'symbol_period'}`" class="text-caption mt-1">{{ item.symbol }} · {{ item.period }} · {{ item.setup_type || '品种周期整体' }}：{{ item.decision }} · {{ item.reason }}</div><div v-for="note in (structureOptimizerLLMReview.global_notes || [])" :key="note" class="text-caption mt-1">{{ note }}</div></v-alert>
-                  <v-alert v-if="structureOptimizerConflicts.length" type="warning" variant="tonal" density="compact" class="mb-3">检测到不同 SETUP 对同一品种/周期的参数建议冲突。系统不会自动把 SETUP 参数合并到品种+周期层，请在下表中分别确认。</v-alert>
-                  <v-table v-if="structureOptimizerConflicts.length" density="compact" class="mb-4">
-                    <thead><tr><th>品种/周期</th><th>冲突字段</th><th>各 SETUP 建议值</th><th>处理方式</th></tr></thead>
-                    <tbody><tr v-for="item in structureOptimizerConflicts" :key="`${item.symbol}-${item.period}-${item.field}`"><td>{{ item.symbol }} · {{ item.period }}</td><td>{{ item.field_label || item.field }}</td><td><span v-for="(entry, index) in (item.values || [])" :key="`${entry.setup_type}-${index}`" class="mr-3">{{ entry.setup_type }}={{ formatOptimizationValue(entry.value) }}</span></td><td class="text-caption">仅应用到各 SETUP 专项层</td></tr></tbody>
-                  </v-table>
-                  <h4 class="text-subtitle-1 mb-2">一、品种 + 周期整体建议</h4>
-                  <v-table v-if="structureOptimizerProfilePreview.length" density="compact" class="mb-4">
-                    <thead><tr><th style="width:48px"><v-checkbox-btn :model-value="structureOptimizerProfileAllSelected" @update:model-value="toggleAllStructureProfileOptimization" /></th><th>品种/周期</th><th>历史表现</th><th>建议变更</th><th>原因</th></tr></thead>
-                    <tbody><tr v-for="item in structureOptimizerProfilePreview" :key="`${item.symbol}-${item.period}`"><td><v-checkbox-btn v-model="structureOptimizerProfileSelected" :value="`${item.symbol}::${item.period}`" /></td><td>{{ item.symbol }} · {{ item.period }}</td><td>{{ item.orders }} 笔 · 胜率 {{ item.win_rate }}% · 净盈亏 {{ item.net_pnl }}</td><td>{{ item.changes || '保持' }}</td><td>{{ (item.reasons || []).join('；') }}</td></tr></tbody>
-                  </v-table>
-                  <v-alert v-else type="info" variant="tonal" density="compact" class="mb-4">暂无满足样本条件的品种+周期整体建议。</v-alert>
-                  <h4 class="text-subtitle-1 mb-2">二、品种默认建议</h4>
-                  <v-table v-if="structureOptimizerSymbolPreview.length" density="compact" class="mb-4">
-                    <thead><tr><th>选择</th><th>品种</th><th>历史表现</th><th>建议变更</th><th>原因</th></tr></thead>
-                    <tbody><tr v-for="item in structureOptimizerSymbolPreview" :key="item.symbol"><td><v-checkbox-btn v-model="structureOptimizerSymbolSelected" :value="`${item.symbol}::*`" /></td><td>{{ item.symbol }} · 所有周期</td><td>{{ item.orders }} 笔 · 胜率 {{ item.win_rate }}% · 净盈亏 {{ item.net_pnl }}</td><td>{{ item.changes || '保持' }}</td><td>{{ (item.reasons || []).join('；') }}</td></tr></tbody>
-                  </v-table>
-                  <v-alert v-else type="info" variant="tonal" density="compact" class="mb-4">暂无满足样本条件的品种级建议。</v-alert>
-                  <h4 class="text-subtitle-1 mb-2">三、品种 + 周期 SETUP 建议</h4>
-                  <v-table density="compact">
-                    <thead><tr><th style="width:48px"><v-checkbox-btn :model-value="structureOptimizerAllSelected" @update:model-value="toggleAllStructureOptimization" /></th><th>品种/周期</th><th>SETUP</th><th>历史表现</th><th>建议变更</th><th>原因</th></tr></thead>
-                    <tbody>
-                      <tr v-for="item in structureOptimizerPreview" :key="`${item.symbol}-${item.period}-${item.setup_type}`">
-                        <td><v-checkbox-btn v-model="structureOptimizerSelected" :value="`${item.symbol}-${item.period}-${item.setup_type}`" /></td>
-                        <td>{{ item.symbol }} · {{ item.period }}</td><td>{{ item.setup_type }}</td>
-                        <td>{{ item.orders }} 笔 · 胜率 {{ item.win_rate }}% · 净盈亏 {{ item.net_pnl }}<br><small>近2天 {{ item.recent_net_pnl }}</small></td>
-                        <td>{{ item.proposed_enabled === false ? '停用' : '启用' }}<br><small>{{ item.changes || '保持' }}</small></td>
-                        <td>{{ (item.reasons || []).join('；') }}</td>
-                      </tr>
-                    </tbody>
-                  </v-table>
-                </v-card-text>
-                <v-card-actions><span class="text-caption">品种周期 {{ structureOptimizerProfileSelected.length }} / {{ structureOptimizerProfilePreview.length }}；SETUP {{ structureOptimizerSelected.length }} / {{ structureOptimizerPreview.length }}</span><v-spacer /><v-btn variant="text" @click="structureOptimizerPreviewOpen=false">取消</v-btn><v-btn color="primary" :disabled="!structureOptimizerSelected.length && !structureOptimizerProfileSelected.length" :loading="structureOptimizerApplying" @click="applyStructureOptimization">确认应用选中建议</v-btn></v-card-actions>
-              </v-card>
-            </v-dialog>
-          </v-card-text>
+                      </v-card-text>
         </v-card>
       </v-col>
     </v-row>
@@ -1683,23 +1628,6 @@ export default {
     const structureSetupDefaults = ref({})
     const saveAsStructureSetupOpen = ref(false)
     const saveAsStructureSetupDraft = ref({ symbol: '', period: 'M5', setup_type: '' })
-    const structureOptimizerRunning = ref(false)
-    const structureOptimizerRangeMode = ref('30')
-    const structureOptimizerStart = ref('')
-    const structureOptimizerEnd = ref('')
-    const structureOptimizerApplying = ref(false)
-    const structureOptimizerPreviewOpen = ref(false)
-    const structureOptimizerPreview = ref([])
-    const structureOptimizerProfilePreview = ref([])
-    const structureOptimizerSymbolPreview = ref([])
-    const structureOptimizerPayload = ref(null)
-    const structureOptimizerLLMReview = ref(null)
-    const structureOptimizerSelected = ref([])
-    const structureOptimizerProfileSelected = ref([])
-    const structureOptimizerSymbolSelected = ref([])
-    const structureOptimizerAllSelected = computed(() => structureOptimizerPreview.value.length > 0 && structureOptimizerSelected.value.length === structureOptimizerPreview.value.length)
-    const structureOptimizerProfileAllSelected = computed(() => structureOptimizerProfilePreview.value.length > 0 && structureOptimizerProfileSelected.value.length === structureOptimizerProfilePreview.value.length)
-    const structureOptimizerConflicts = ref([])
     const structureOverview = ref(null)
     const structureOverviewLoading = ref(false)
     const structureOverviewDeleting = ref('')
@@ -1762,9 +1690,6 @@ export default {
       if (typeof value === 'object') return JSON.stringify(value)
       return String(value)
     }
-    // Optimization previews can contain booleans, arrays, or null values;
-    // keep the conflict table readable instead of exposing raw JSON values.
-    const formatOptimizationValue = value => formatStructureValue(value)
     const structureSetupProfileDraft = ref({ symbol: '', period: 'M5', setup_type: 'structure_location_pullback', enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '', confirmation_bars: null, min_displacement_atr: null, min_body_atr: null, require_reclaim: null, min_real_risk_reward: null, entry_zone_atr: null, stop_buffer_atr: null, target_buffer_atr: null, target_multiple: null, max_entries_per_opportunity: null, cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null, invalidate_on_zone_return: null, false_breakout_require_reclaim_close: null, false_breakout_confirmation_bars: null, false_breakout_min_reclaim_atr: null })
     const setupTypeNames = { structure_location_pullback: '结构位置回撤', range_lower_reversal: '箱体下沿反转', range_upper_reversal: '箱体上沿反转', range_breakout: '箱体突破', range_false_breakout: '箱体假突破', triangle_breakout: '三角形突破', triangle_breakout_watch: '三角形突破观察', triangle_prebreakout_pullback: '三角形提前回撤', choch_reversal: 'CHOCH反转', liquidity_sweep_reclaim: '流动性扫单回收', trend_continuation: '趋势延续', structure_reversal: '结构反转' }
     const setupTypeLabel = type => setupTypeNames[type] || type
@@ -2583,100 +2508,6 @@ export default {
       } finally {
         structureEngineSaving.value = false
       }
-    }
-    const optimizeStructureSetups = async () => {
-      structureOptimizerRunning.value = true
-      try {
-        let range = {}
-        if (structureOptimizerRangeMode.value === 'custom') {
-          const start = Date.parse(structureOptimizerStart.value)
-          const end = Date.parse(structureOptimizerEnd.value)
-          if (!Number.isFinite(start) || !Number.isFinite(end)) throw new Error('请选择有效的开始时间和结束时间')
-          range = { start_at: Math.floor(start / 1000), end_at: Math.floor(end / 1000) }
-        }
-        const data = await marketAPI.optimizeStructureSetups(false, Number(structureOptimizerRangeMode.value) || 30, range)
-        const proposals = Array.isArray(data.proposals) ? data.proposals : []
-        structureOptimizerPreview.value = Array.isArray(data.diagnostics) ? data.diagnostics : []
-        structureOptimizerProfilePreview.value = Array.isArray(data.profile_diagnostics) ? data.profile_diagnostics : []
-        structureOptimizerSymbolPreview.value = Array.isArray(data.symbol_default_diagnostics) ? data.symbol_default_diagnostics : []
-        structureOptimizerConflicts.value = Array.isArray(data.conflicts) ? data.conflicts : []
-        structureOptimizerSelected.value = structureOptimizerPreview.value.map(item => `${item.symbol}-${item.period}-${item.setup_type}`)
-        structureOptimizerProfileSelected.value = structureOptimizerProfilePreview.value
-          .filter(item => item.proposed)
-          .map(item => `${item.symbol}::${item.period}`)
-        structureOptimizerSymbolSelected.value = structureOptimizerSymbolPreview.value.filter(item => item.proposed).map(item => `${item.symbol}::*`)
-        structureOptimizerPayload.value = data
-        structureOptimizerLLMReview.value = null
-        try {
-          const review = await marketAPI.reviewStructureSetups({
-            proposals: data.proposals || [],
-            diagnostics: data.diagnostics || [],
-            symbol_profiles: data.symbol_profiles || [],
-            symbol_default_profiles: data.symbol_default_profiles || [],
-            profile_diagnostics: data.profile_diagnostics || [],
-            conflicts: data.conflicts || [],
-          })
-          if (review.status === 'ok') structureOptimizerLLMReview.value = review.review || {}
-        } catch (err) { console.warn('优化建议大模型审核失败', err) }
-        structureOptimizerPreviewOpen.value = true
-        successMessage.value = proposals.length ? `已生成 ${proposals.length} 条优化建议（${new Date(data.start_at * 1000).toLocaleString()} ～ ${new Date(data.end_at * 1000).toLocaleString()}），请核对后确认应用` : '样本不足，暂未生成优化配置（至少需要同一品种/周期/Setup 3 笔已平仓订单）'
-        showSuccess.value = true
-      } catch (err) {
-        errorMessage.value = err.response?.data?.detail || '生成优化配置失败'
-        showError.value = true
-      } finally { structureOptimizerRunning.value = false }
-    }
-    const applyStructureOptimization = async () => {
-      const data = structureOptimizerPayload.value
-      if (!data) return
-      const selectedSetups = new Set(structureOptimizerSelected.value)
-      const selectedProfiles = new Set(structureOptimizerProfileSelected.value)
-      const proposals = (data.proposals || []).filter(item => selectedSetups.has(`${item.symbol}-${item.period}-${item.setup_type}`))
-      const symbolProfiles = (data.symbol_profiles || []).filter(item => selectedProfiles.has(`${item.symbol}::${item.period}`))
-      const symbolDefaultProfiles = (data.symbol_default_profiles || []).filter(item => structureOptimizerSymbolSelected.value.includes(`${item.symbol}::*`))
-      structureOptimizerApplying.value = true
-      try {
-        const applied = await marketAPI.applyStructureSetups(
-          proposals, [...symbolProfiles, ...symbolDefaultProfiles], data.days || 30,
-          { start_at: data.start_at, end_at: data.end_at },
-        )
-        const appliedProposals = Array.isArray(applied.proposals) ? applied.proposals : proposals
-        const current = [...structureSetupProfiles.value]
-        for (const item of appliedProposals) {
-          const index = current.findIndex(x => x.symbol === item.symbol && x.period === item.period && x.setup_type === item.setup_type)
-          if (index >= 0) current.splice(index, 1, item); else current.push(item)
-        }
-        structureSetupProfiles.value = current
-        if (Array.isArray(applied.symbol_profiles) && applied.symbol_profiles.length) {
-          const profiles = [...structureProfiles.value]
-          for (const item of applied.symbol_profiles) {
-            const index = profiles.findIndex(x => x.symbol === item.symbol && x.period === item.period)
-            if (index >= 0) profiles.splice(index, 1, { ...profiles[index], ...item })
-            else profiles.push(item)
-          }
-          structureProfiles.value = profiles
-        }
-        // Persist the two independently selected layers as one normalized
-        // configuration payload.  Do not let whichever editor scope happens
-        // to be open overwrite a profile that was not selected in the dialog.
-        await saveStructureEngineConfig(true, true)
-        structureOptimizerPreviewOpen.value = false
-        successMessage.value = `已应用 ${symbolProfiles.length} 条品种周期建议、${appliedProposals.length} 条 SETUP 优化配置`
-        showSuccess.value = true
-      } catch (err) {
-        errorMessage.value = err.response?.data?.detail || '生成优化配置失败'
-        showError.value = true
-      } finally { structureOptimizerApplying.value = false }
-    }
-    const toggleAllStructureOptimization = checked => {
-      structureOptimizerSelected.value = checked
-        ? structureOptimizerPreview.value.map(item => `${item.symbol}-${item.period}-${item.setup_type}`)
-        : []
-    }
-    const toggleAllStructureProfileOptimization = checked => {
-      structureOptimizerProfileSelected.value = checked
-        ? structureOptimizerProfilePreview.value.map(item => `${item.symbol}::${item.period}`)
-        : []
     }
     const removeStructureSetupProfile = async item => {
       structureSetupProfiles.value = structureSetupProfiles.value.filter(x => !(normalizeSetupScopeSymbol(x.symbol) === normalizeSetupScopeSymbol(item.symbol) && normalizeSetupScopePeriod(x.period) === normalizeSetupScopePeriod(item.period) && normalizeSetupScopeType(x.setup_type) === normalizeSetupScopeType(item.setup_type)))
@@ -4638,22 +4469,6 @@ export default {
       clearCurrentStructureSetupOverride,
       openSaveAsStructureSetup,
       saveAsStructureSetup,
-      structureOptimizerRunning,
-      structureOptimizerRangeMode,
-      structureOptimizerStart,
-      structureOptimizerEnd,
-      structureOptimizerApplying,
-      structureOptimizerPreviewOpen,
-      structureOptimizerPreview,
-      structureOptimizerProfilePreview,
-      structureOptimizerSymbolPreview,
-      structureOptimizerLLMReview,
-      structureOptimizerSelected,
-      structureOptimizerProfileSelected,
-      structureOptimizerSymbolSelected,
-      structureOptimizerAllSelected,
-      structureOptimizerProfileAllSelected,
-      structureOptimizerConflicts,
       structureSetupProfileDraft,
       structureSetupTypes,
       setupTypeLabel,
@@ -4661,15 +4476,11 @@ export default {
       clearCurrentStructureProfile,
       saveStructureSetupProfile,
       selectStructureSetupProfile,
-      optimizeStructureSetups,
-      applyStructureOptimization,
-      toggleAllStructureOptimization,
-      toggleAllStructureProfileOptimization,
       removeStructureSetupProfile,
       structureOverview, structureOverviewLoading, structureOverviewDeleting, loadStructureOverview, deleteStructureOverviewRow,
       structureEffective, structureEffectiveLoading, structureEffectiveDialog, structureEffectiveTarget, openEffectiveConfig,
       structureHistory, structureHistoryLoading, loadStructureHistory,
-      structureFieldLabels, structureSourceLabel, formatStructureValue, formatOptimizationValue,
+      structureFieldLabels, structureSourceLabel, formatStructureValue,
       tradeConfig,
       newSymbol,
       newVolume,
