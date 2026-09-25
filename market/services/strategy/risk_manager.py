@@ -44,6 +44,7 @@ class RiskManager:
         self._daily_order_count: int = 0
         self._account_max_positions: int = 10
         self._account_max_single_volume: float = 10.0
+        self._single_order_risk_limit: float = 15.0
         self._daily_realized_pnl: float = 0.0
         self._circuit_breaker: bool = False
         self._circuit_breaker_reason: str = ""
@@ -75,6 +76,7 @@ class RiskManager:
         daily_loss_limit: float,
         daily_order_limit: int,
         daily_risk_limit: float = 0.0,
+        single_order_risk_limit: float = 15.0,
     ) -> None:
         """应用当前交易账户自己的风控阈值。"""
         with self._lock:
@@ -83,6 +85,7 @@ class RiskManager:
             self._daily_loss_limit = max(0.1, float(daily_loss_limit))
             self._daily_risk_limit = max(0.0, float(daily_risk_limit or 0))
             self._daily_order_limit = max(1, int(daily_order_limit))
+            self._single_order_risk_limit = max(0.1, min(100.0, float(single_order_risk_limit or 15)))
             self._sync_daily_loss_breaker()
             self._persist_state()
 
@@ -235,9 +238,12 @@ class RiskManager:
         # 账户信息是否已初始化
         account_initialized = account_balance > 0 or free_margin > 0
 
-        if risk_percent > 5:
+        if risk_percent > self._single_order_risk_limit:
             allowed = False
-            warnings.append(f"单笔风险 {risk_percent:.2f}% 超过5%")
+            warnings.append(
+                f"单笔风险 {risk_percent:.2f}% 超过"
+                f"{self._single_order_risk_limit:.2f}%"
+            )
 
         if volume > self._account_max_single_volume:
             allowed = False
@@ -280,6 +286,7 @@ class RiskManager:
             "circuit_breaker": circuit_breaker,
             "warnings": warnings,
             "account_initialized": account_initialized,
+            "single_order_risk_limit": self._single_order_risk_limit,
         }
 
     def check_aggregate_position_risk(self, symbol: str, positions,
@@ -517,6 +524,7 @@ class RiskManager:
             "account_max_single_volume": self._account_max_single_volume,
             "daily_realized_pnl": self._daily_realized_pnl,
             "daily_loss_limit": self._daily_loss_limit,
+            "single_order_risk_limit": self._single_order_risk_limit,
             "circuit_breaker": self._circuit_breaker,
             "circuit_breaker_reason": self._circuit_breaker_reason,
             "recorded_order_ids": sorted(self._recorded_order_ids),
@@ -542,6 +550,7 @@ class RiskManager:
             "daily_risk_limit": self._daily_risk_limit,
             "daily_risk_used": self._daily_risk_used,
             "daily_loss_limit": self._daily_loss_limit,
+            "single_order_risk_limit": self._single_order_risk_limit,
             "daily_order_count": self._daily_order_count,
             "daily_order_limit": self._daily_order_limit,
             "daily_realized_pnl": self._daily_realized_pnl,

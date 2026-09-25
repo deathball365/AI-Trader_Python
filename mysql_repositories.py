@@ -100,6 +100,7 @@ class TradingAccountRecord:
     manual_order_daily_limit_enabled: bool = True
     manual_order_daily_limit: int = 10
     manual_losing_order_daily_limit: int = 3
+    single_order_risk_limit: float = 15.0
 
 
 _STORAGE: Optional[MySQLStorage] = None
@@ -141,6 +142,7 @@ class TradingAccountRepository:
                COALESCE(a.manual_order_daily_limit_enabled, 1) AS manual_order_daily_limit_enabled,
                COALESCE(a.manual_order_daily_limit, 10) AS manual_order_daily_limit,
                COALESCE(a.manual_losing_order_daily_limit, 3) AS manual_losing_order_daily_limit,
+               COALESCE(a.single_order_risk_limit, 15) AS single_order_risk_limit,
                COALESCE(c.last_seen_at, a.last_seen_at) AS last_seen_at,
                COALESCE(c.mt5_login, a.mt5_login) AS mt5_login,
                COALESCE(c.mt5_server, a.mt5_server) AS mt5_server,
@@ -303,6 +305,7 @@ class TradingAccountRepository:
         manual_order_daily_limit_enabled: Optional[bool] = None,
         manual_order_daily_limit: Optional[int] = None,
         manual_losing_order_daily_limit: Optional[int] = None,
+        single_order_risk_limit: Optional[float] = None,
     ) -> TradingAccountRecord:
         account = self.get_by_id(user_id, account_id)
         if account is None:
@@ -323,6 +326,7 @@ class TradingAccountRepository:
             "manual_order_daily_limit_enabled": account.manual_order_daily_limit_enabled,
             "manual_order_daily_limit": account.manual_order_daily_limit,
             "manual_losing_order_daily_limit": account.manual_losing_order_daily_limit,
+            "single_order_risk_limit": account.single_order_risk_limit,
         }
         if account_name is not None:
             name = str(account_name).strip()
@@ -368,6 +372,8 @@ class TradingAccountRepository:
             values["manual_losing_order_daily_limit"] = int(
                 manual_losing_order_daily_limit
             )
+        if single_order_risk_limit is not None:
+            values["single_order_risk_limit"] = float(single_order_risk_limit)
         if values["auto_flatten_enabled"] and not values["auto_flatten_time"]:
             raise ValueError("开启自动清仓后必须填写北京时间")
         if not 1 <= values["max_total_positions"] <= 100:
@@ -386,6 +392,8 @@ class TradingAccountRepository:
             raise ValueError("每日手动下单上限必须在 1 到 1000 之间")
         if not 1 <= values["manual_losing_order_daily_limit"] <= 1000:
             raise ValueError("每日允许亏损的手动单必须在 1 到 1000 之间")
+        if not 0.1 <= values["single_order_risk_limit"] <= 100:
+            raise ValueError("单笔风险上限必须在 0.1% 到 100% 之间")
         now = _now_ts()
         with self.storage._lock, self.storage._connect() as conn:
             conn.execute(
@@ -400,7 +408,8 @@ class TradingAccountRepository:
                     single_position_loss_limit_amount = ?,
                     manual_order_daily_limit_enabled = ?,
                     manual_order_daily_limit = ?,
-                    manual_losing_order_daily_limit = ?, updated_at = ?
+                    manual_losing_order_daily_limit = ?,
+                    single_order_risk_limit = ?, updated_at = ?
                 WHERE id = ? AND user_id = ?
                 """,
                 (
@@ -414,6 +423,7 @@ class TradingAccountRepository:
                     int(values["manual_order_daily_limit_enabled"]),
                     values["manual_order_daily_limit"],
                     values["manual_losing_order_daily_limit"],
+                    values["single_order_risk_limit"],
                     now, account_id, user_id,
                 ),
             )
@@ -927,6 +937,9 @@ class TradingAccountRepository:
             ),
             manual_losing_order_daily_limit=int(
                 row.get("manual_losing_order_daily_limit", 3) or 3
+            ),
+            single_order_risk_limit=float(
+                row.get("single_order_risk_limit", 15) or 15
             ),
             archived_at=(
                 int(row["archived_at"])

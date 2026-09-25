@@ -62,6 +62,30 @@ class RiskManagerVolumeTest(unittest.TestCase):
         result = manager.check_risk("X", 0.01, 1)
         self.assertNotIn("账户已熔断", " ".join(result["warnings"]))
 
+    def test_single_order_risk_limit_defaults_to_15(self):
+        manager = RiskManager()
+        manager.update_account_info(1000, 1000, 1000)
+        blocked = manager.check_risk("X", 1, 160)
+        self.assertFalse(blocked["allowed"])
+        self.assertTrue(any("超过15.00%" in item for item in blocked["warnings"]))
+        allowed = manager.check_risk("X", 1, 140)
+        self.assertTrue(allowed["allowed"])
+
+    def test_single_order_risk_limit_is_configurable(self):
+        manager = RiskManager()
+        manager.update_account_info(1000, 1000, 1000)
+        manager.set_account_limits(
+            max_positions=10,
+            max_single_volume=10,
+            daily_loss_limit=5,
+            daily_order_limit=100,
+            daily_risk_limit=0,
+            single_order_risk_limit=20,
+        )
+        result = manager.check_risk("X", 1, 160)
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["single_order_risk_limit"], 20)
+
     def test_disabled_daily_risk_limit_does_not_block(self):
         manager = RiskManager()
         manager.update_account_info(1000, 1000, 1000)

@@ -941,6 +941,7 @@ class MySQLStorage:
                         ("manual_order_daily_limit_enabled", "TINYINT NOT NULL DEFAULT 1"),
                         ("manual_order_daily_limit", "INT NOT NULL DEFAULT 10"),
                         ("manual_losing_order_daily_limit", "INT NOT NULL DEFAULT 3"),
+                        ("single_order_risk_limit", "DOUBLE NOT NULL DEFAULT 15"),
                     ),
                     "account_instrument_specs": (
                         ("price_digits", "INT NOT NULL DEFAULT 0"),

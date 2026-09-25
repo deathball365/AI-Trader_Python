@@ -482,6 +482,9 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
                 manual_losing_order_daily_limit=payload.get(
                     "manual_losing_order_daily_limit"
                 ),
+                single_order_risk_limit=payload.get(
+                    "single_order_risk_limit"
+                ),
             )
             return {
                 "status": "ok",
@@ -1240,6 +1243,7 @@ def _account_payload(
         "manual_order_daily_limit_enabled": account.manual_order_daily_limit_enabled,
         "manual_order_daily_limit": account.manual_order_daily_limit,
         "manual_losing_order_daily_limit": account.manual_losing_order_daily_limit,
+        "single_order_risk_limit": account.single_order_risk_limit,
         "archived_at": account.archived_at,
         "is_default": (
             account.account_key == TradingAccountRepository.DEFAULT_ACCOUNT_KEY

@@ -733,6 +733,7 @@ class TradingServer:
                 daily_loss_limit=account.daily_loss_limit,
                 daily_risk_limit=account.daily_risk_limit,
                 daily_order_limit=account.daily_order_limit,
+                single_order_risk_limit=getattr(account, "single_order_risk_limit", 15),
             )
             # The EA owner sends the authoritative financial heartbeat, but a
             # fresh snapshot is also persisted on the account record. Seed the
