@@ -202,8 +202,10 @@
               <v-col cols="12"><div class="text-subtitle-2 mt-2">3.4 回踩确认</div><div class="text-caption text-medium-emphasis">解决“突破后是追出去，还是等价格回到突破位再进”的问题。刚突破、趋势还很强时，可以直接顺着走；趋势走了一段、回撤已经变深（成熟阶段），再追高很容易买在头顶。打开「成熟趋势仅允许回踩」后，成熟/衰竭阶段必须等价格回到结构位附近，才生成趋势单。</div></v-col>
               <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('trend_mature_retest_only')" v-model="structureEngineConfig.trend_mature_retest_only" color="primary" inset hint="打开后：趋势已经走熟，只等回踩，不再追突破。例如黄金从 4250 冲到 4290 后开始回头，这时只在回踩到前高/HL 附近才买，不在 4290 继续追多。" persistent-hint label="成熟趋势仅允许回踩" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('breakout_retest_valid_bars')" v-model.number="structureEngineConfig.breakout_retest_valid_bars" type="number" min="1" max="50" label="突破回踩有效K线数" hint="突破后最多等这么多根K线来回踩。例如设 6，黄金 M5 就是大约 30 分钟；超时还没回到突破位，这张回踩计划作废，避免过期单突然成交。" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12"><div class="text-subtitle-2 mt-2">3.5 回收确认</div><div class="text-caption text-medium-emphasis">回踩是“回到结构位附近”；回收是“先扫破结构位，再收盘站回来”。黄金扫掉前低后又重新站上，才更像真的守住支撑。打开「结构位置要求回收确认」后，趋势回撤单不会只因为价格碰到 HL/LH 就进，必须看到收盘重新站回结构位。</div></v-col>
+              <v-col cols="12"><div class="text-subtitle-2 mt-2">3.5 回收确认</div><div class="text-caption text-medium-emphasis">回踩是“回到结构位附近”；回收是“先扫破结构位，再收盘站回来”。结构位置回撤默认还要等 Internal 小结构转回趋势方向：这是 Internal 的 CHoCH/BOS，不是 Swing 反转。它用小级别高低点，连续收盘确认即可，不要求像 Swing CHoCH 那样再回踩站稳，但比“价格碰到 HL 就买”更严。</div></v-col>
               <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('require_location_reclaim')" v-model="structureEngineConfig.require_location_reclaim" color="primary" inset hint="打开后：结构位置单要先刺破再收回。例如上涨回踩时扫了一下 HL，收盘重新站上才买；关掉则价格靠近结构位就可以进，更容易被浅扫止损。" persistent-hint label="结构位置要求回收确认" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('location_require_internal_confirmation')" v-model="structureEngineConfig.location_require_internal_confirmation" color="primary" inset hint="打开后：Swing 上涨时，Internal 必须已经从小下跌转回向上（Internal CHoCH/BOS），才允许买 HL。关掉则只要价格靠近 HL 就可以等回收，不等 Internal 翻完。" persistent-hint label="回撤结束需 Internal 确认" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('location_require_swing_external_alignment')" v-model="structureEngineConfig.location_require_swing_external_alignment" color="primary" inset hint="打开后：Swing 和 External 必须同向才做趋势回撤。关掉则只看 Swing，大级别相反时也可能出单。" persistent-hint label="回撤要求 Swing/External 同向" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('location_reclaim_min_body_atr')" v-model.number="structureEngineConfig.location_reclaim_min_body_atr" type="number" min="0.1" max="3" step="0.1" label="回收最小实体（ATR）" hint="过滤十字星和弱反弹/反压" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('location_reclaim_min_close_extension_atr')" v-model.number="structureEngineConfig.location_reclaim_min_close_extension_atr" type="number" min="0" max="2" step="0.05" label="回收收盘越界（ATR）" hint="收盘必须明显重新站回结构位" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12"><div class="structure-zone-heading mt-2"><div class="text-subtitle-2">四、SETUP 执行 · 通用条件</div><div class="text-caption text-medium-emphasis">事件成立还不等于下单。这里管“值不值得做”：趋势是不是已经坏了、止损会不会太大、盈亏比够不够。账户风险仍在交易账户页。</div></div></v-col>
@@ -230,7 +232,7 @@
             <v-alert type="info" variant="tonal" density="compact" class="mt-4 mb-3">
               配置按四层生效：<strong>公共结构 → 品种/周期结构 → 公共 SETUP → 品种/周期/SETUP</strong>。越靠后优先级越高；没填的字段沿用上一层。账户风险仍在交易账户页配置，不在这里。
             </v-alert>
-            <div class="llm-section-head compact mt-4"><div><h3>五、SETUP 专项配置</h3><p>每个 SETUP 绑定「形态 + 事件 + 方向层级 + 入场层级」。Swing 上升、Internal 箱体时：方向看 Swing，入场看 Internal 的回收/假突破，不会把 Internal 震荡当成新的方向。</p></div><div class="d-flex ga-2"><v-btn size="small" variant="tonal" color="secondary" :disabled="structureEngineSaving || !structureSetupScope" @click="openSaveAsStructureSetup">另存为当前范围 SETUP</v-btn></div></div>
+            <div class="llm-section-head compact mt-4"><div><h3>五、SETUP 专项配置</h3><p>方向层级决定做多还是做空，入场层级决定什么时候进。两者可以不是同一层。例如 Swing 上涨、Internal 在箱体里震荡：方向仍看 Swing，入场看 Internal 的下沿回收或假突破，不会把 Internal 震荡当成新的方向。</p></div><div class="d-flex ga-2"><v-btn size="small" variant="tonal" color="secondary" :disabled="structureEngineSaving || !structureSetupScope" @click="openSaveAsStructureSetup">另存为当前范围 SETUP</v-btn></div></div>
             <div class="d-flex flex-wrap ga-2 align-center mb-2">
               <v-select v-model="structureSetupRange" :items="structureSetupRangeOptions" item-title="label" item-value="value" label="当前查看的 SETUP 配置范围" density="compact" variant="outlined" hide-details style="min-width:340px;max-width:520px" @update:model-value="selectStructureSetupRange" />
               <v-chip v-if="structureSetupScope?.startsWith('default::')" color="primary" variant="tonal">公共默认</v-chip>
@@ -261,7 +263,10 @@
                 <v-btn size="small" color="warning" variant="text" :loading="structureEngineSaving" @click="clearCurrentStructureSetupOverride">清除专项，恢复公共默认</v-btn>
               </div>
             </v-alert>
-            <p class="text-caption text-medium-emphasis mb-3">{{ currentSetupSummary }}</p>
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3">
+              <div><strong>{{ currentSetupSummary }}</strong></div>
+              <p class="text-body-2 mt-2 mb-0">{{ currentSetupGuide }}</p>
+            </v-alert>
             <div class="d-flex flex-wrap ga-2 align-center">
               <v-switch v-model="structureSetupProfileDraft.enabled" :class="setupFieldClass('enabled')" color="primary" inset hide-details label="允许交易" />
               <v-select v-model="structureSetupProfileDraft.allowed_directions" :class="setupFieldClass('allowed_directions')" :items="[{title:'买入',value:'buy'},{title:'卖出',value:'sell'}]" item-title="title" item-value="value" label="允许方向" multiple chips density="compact" variant="outlined" hide-details style="max-width:190px" />
@@ -1605,7 +1610,7 @@ export default {
       const profile = structureProfiles.value.find(x => x.symbol === symbol && x.period === period)
       if (!profile) return []
       const labels = {
-        allowed_setups: '允许交易 SETUP', allowed_directions: '允许交易方向', blocked_hours: '禁止交易时段', pivot_legs: '小级别 Pivot 腿数', medium_pivot_legs: '中级别 Pivot 腿数', large_pivot_legs: '大级别 Pivot 腿数', min_reversal_atr: '最小反转幅度', break_buffer_atr: '突破缓冲', break_confirm_bars: '突破确认根数', entry_zone_atr: '入场区域', stop_buffer_atr: '止损缓冲', min_real_risk_reward: '最低真实盈亏比', trend_min_real_risk_reward: '趋势最低盈亏比', min_breakout_displacement_atr: '趋势突破最小位移', require_location_reclaim: '结构位置回收确认', enable_range_boundary: '箱体边界计划', enable_range_breakout: '箱体突破计划', enable_choch: 'CHOCH 计划', enable_liquidity_sweep: '扫单计划', enable_trend: '趋势计划'
+        allowed_setups: '允许交易 SETUP', allowed_directions: '允许交易方向', blocked_hours: '禁止交易时段', pivot_legs: '小级别 Pivot 腿数', medium_pivot_legs: '中级别 Pivot 腿数', large_pivot_legs: '大级别 Pivot 腿数', min_reversal_atr: '最小反转幅度', break_buffer_atr: '突破缓冲', break_confirm_bars: '突破确认根数', entry_zone_atr: '入场区域', stop_buffer_atr: '止损缓冲', min_real_risk_reward: '最低真实盈亏比', trend_min_real_risk_reward: '趋势最低盈亏比', min_breakout_displacement_atr: '趋势突破最小位移', require_location_reclaim: '结构位置回收确认', location_require_internal_confirmation: '回撤结束需 Internal 确认', location_require_swing_external_alignment: '回撤要求 Swing/External 同向', enable_range_boundary: '箱体边界计划', enable_range_breakout: '箱体突破计划', enable_choch: 'CHOCH 计划', enable_liquidity_sweep: '扫单计划', enable_trend: '趋势计划'
       }
       return Object.keys(profile).filter(key => {
         if (['symbol', 'period', 'profiles', 'setup_profiles'].includes(key) || profile[key] === undefined) return false
@@ -1784,12 +1789,31 @@ export default {
       const type = String(structureSetupProfileDraft.value?.setup_type || '')
       return (setupFieldVisibility[type] || ['entry_mode', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'max_plan_lifetime_bars']).includes(key)
     }
+    const setupGuideTexts = {
+      structure_location_pullback: 'Swing 向上只做多。买点是 HL：优先 Internal 自己的 HL；没有够近的 Internal HL，才用 Swing 的 HL。价格回到这个 HL 附近即可，一根 K 线砸到也行，只要没收盘跌破。默认还要求 Internal 仍是向上（浅回撤本来就不会翻向下）。若 Internal 已经跌破自己的 HL 翻成向下，原来的买点作废。若开着回收，要先刺破 HL 再收盘站回来。Internal 已经是箱体时，这个 SETUP 不出单。',
+      range_false_breakout: 'Swing 定方向。箱体优先用 Internal 的上下沿；Internal 没有箱体，才用 Swing 箱体。下沿假突破：先跌破下沿，再收盘回到箱内，买点就是这条下沿。上沿假突破：先升破上沿，再收盘回到箱内，卖点就是这条上沿。Swing 上涨时只保留下沿那笔买，上沿空单会被挡住。',
+      range_lower_reversal: 'Swing 定方向。买点是箱体下沿：优先 Internal 箱体下沿，没有才用 Swing 箱体下沿。价格回到下沿附近买入，目标看对边上沿。Swing 下跌时这笔买单会被挡住。',
+      range_upper_reversal: 'Swing 定方向。卖点是箱体上沿：优先 Internal 箱体上沿，没有才用 Swing 箱体上沿。价格回到上沿附近卖出，目标看对边下沿。Swing 上涨时这笔空单会被挡住。',
+      range_breakout: '方向和入场都看 Swing 自己的箱体，不用 Internal 小箱体。收盘站上 Swing 上沿后，买点就是这条上沿，等回踩再进；收盘跌破下沿则卖点是下沿。',
+      range_breakout_watch: '只观察 Swing 箱体有没有收盘突破，不挂单。真的收盘突破后，交给「箱体突破」去回踩那条沿。',
+      triangle_breakout: '方向和入场都看 Swing 自己的三角形。收盘站上上沿后，买点是这条上沿，等回踩；收盘跌破下沿，卖点是下沿。实体太小或没越过边界，不算突破。',
+      triangle_breakout_watch: '只观察 Swing 三角形有没有收盘突破，不挂单。',
+      triangle_prebreakout_pullback: 'Swing 定方向。在三角形末端，买点是 Internal 附近的上升支撑线（投影下沿）；没有清楚的 Internal 支撑，才用 Swing 三角形下沿。上升三角形只做这笔买，不做对边。',
+      trend_continuation: 'Swing 向上只做多。入场看 Internal 同向 BOS：买点是被 Internal 向上打掉的那根高点。价格回到这根高点再进，不在突破当下追。这是趋势推进，不是反转。',
+      choch_reversal: '方向和入场都看 Swing。向上 CHoCH：买点是被打掉的那根 Swing 高点（常见是 LH），等回踩这根线。向下 CHoCH：卖点是被打掉的那根 Swing 低点（常见是 HL）。Internal 自己翻一下只当回撤，不会单独开反转单。',
+      structure_reversal: 'Swing 已经 CHoCH 翻完后，新方向再出现 BOS。买/卖点是这根新的 BOS 结构位，再回踩。比 CHOCH 反转更晚。若只想留一种反转，可先关掉这个。',
+      liquidity_sweep_reclaim: 'Swing 定方向。扫的是 Internal 结构位：上涨只做扫 Internal 低点后收回，买点就是被扫的那根低点；下跌只做扫 Internal 高点后收回，卖点就是那根高点。上涨时扫高点不卖。',
+    }
     const currentSetupSummary = computed(() => {
       const draft = structureSetupProfileDraft.value || {}
       const pattern = { range: '箱体', triangle: '三角形', trend: '趋势' }[draft.bind_pattern] || draft.bind_pattern || '--'
       const event = { bos: 'BOS', choch: 'CHoCH', retest: '回踩', reclaim: '回收', false_breakout: '假突破', liquidity_sweep: '扫单', breakout_confirmed: '突破确认' }[draft.bind_event] || draft.bind_event || '--'
       const entry = { touch_or_near: '触碰或接近', touch_and_reclaim: '触碰并收回', breakout_retest: '突破回踩', close_breakout: '收盘突破' }[draft.entry_mode] || draft.entry_mode || '沿用系统'
       return `${setupTypeLabel(draft.setup_type)}：看 ${pattern} 的 ${event}，方向层 ${draft.direction_layer || 'swing'}，入场层 ${draft.entry_layer || 'internal'}，入场方式 ${entry}`
+    })
+    const currentSetupGuide = computed(() => {
+      const type = String(structureSetupProfileDraft.value?.setup_type || '')
+      return setupGuideTexts[type] || '方向层级决定做多还是做空，入场层级决定什么时候进。改这两个下拉后，上面的摘要会跟着变。'
     })
     const normalizeSetupScopeSymbol = value => String(value || '').trim().toUpperCase()
     const normalizeSetupScopePeriod = value => String(value || '').trim().toUpperCase()
@@ -4547,6 +4571,7 @@ export default {
       setupFieldClass,
       setupShowsField,
       currentSetupSummary,
+      currentSetupGuide,
       saveAsStructureSetupOpen,
       saveAsStructureSetupDraft,
       selectStructureSetupScope,
