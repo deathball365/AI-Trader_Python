@@ -745,7 +745,11 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
                     plan = json.loads(plan_row.get("payload_json") or "{}")
                 except (TypeError, ValueError, json.JSONDecodeError):
                     plan = {}
-        return {"status": "ok", "brief": build_decision_brief(attribution, plan, position)}
+        saved = attribution.get("decision_brief")
+        if isinstance(saved, dict) and saved.get("available"):
+            return {"status": "ok", "brief": saved}
+        frozen_plan = attribution.get("decision_plan") if isinstance(attribution.get("decision_plan"), dict) else {}
+        return {"status": "ok", "brief": build_decision_brief(attribution, frozen_plan or plan, position)}
 
     @router.get("/accounts/{account_id}/paper/runtime-logs")
     async def get_paper_runtime_logs(

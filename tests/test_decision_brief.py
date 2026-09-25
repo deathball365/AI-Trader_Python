@@ -1,4 +1,4 @@
-from market.services.decision_brief import build_decision_brief
+from market.services.decision_brief import build_decision_brief, freeze_opening_decision_brief
 
 
 def test_liquidity_sweep_buy_brief_matches_gold_style_attribution():
@@ -95,3 +95,124 @@ def test_range_lower_reversal_describes_internal_box_not_uptrend():
     assert "Internal 箱体" in bodies
     assert "Internal 上涨趋势" not in bodies
     assert "箱沿附近" in bodies
+
+
+def test_pullback_brief_explains_internal_not_downtrend():
+    brief = build_decision_brief(
+        attribution={
+            "direction": "buy",
+            "setup_type": "structure_location_pullback",
+            "strategy_name": "AUDUSD# · M1 结构信号策略",
+            "signal_source_period": "M1",
+            "entry_mode": "touch_and_reclaim",
+            "initial_stop_loss": 0.70188,
+            "initial_take_profit": 0.70420,
+            "initial_volume": 0.05,
+            "entry_reason": "单一信号(structure_plan)建议buy | 综合判断: buy，一致率100%",
+        },
+        plan={
+            "setup_type": "structure_location_pullback",
+            "direction": "buy",
+            "period": "M1",
+            "direction_layer": "swing",
+            "entry_layer": "internal",
+            "entry_mode": "touch_and_reclaim",
+            "entry_price": 0.70305,
+            "reason": "M1 上涨结构回撤：Swing/External 仍向上；Internal 上次确认也还是上涨",
+            "validation_evidence": {
+                "internal_bias": "up",
+                "swing_bias": "up",
+                "external_bias": "up",
+                "entry_level_source": "swing HL",
+                "location_entry_level": 0.70305,
+            },
+            "structure_snapshot": {
+                "major_state": "up",
+                "internal_state": "up",
+                "external_state": "up",
+                "structure_levels": {
+                    "internal": {"protected_low": 0.70305, "protected_high": 0.70346},
+                },
+                "structure_hierarchy": {
+                    "swing": {"bias": "up", "pattern": "trend"},
+                    "internal": {
+                        "bias": "up",
+                        "pattern": "trend",
+                        "event": {
+                            "type": "liquidity_sweep",
+                            "direction": "down",
+                            "level": 0.70305,
+                            "confirmation": "wick_rejected",
+                        },
+                    },
+                    "external": {"bias": "up", "pattern": "trend"},
+                },
+            },
+        },
+        position={
+            "symbol": "AUDUSD#", "direction": "buy",
+            "entry_price": 0.70301, "volume": 0.05, "opened_at": 1790354182,
+        },
+    )
+    bodies = " ".join(item["body"] for item in brief["sections"])
+    assert "Swing 定方向" in bodies
+    assert "Internal 找买点" in bodies
+    assert "上次确认仍是上涨" in bodies
+    assert "还不算下降趋势" in bodies
+    assert "保护低点" in bodies
+    assert "0.70305" in bodies
+    assert "Internal 上涨趋势" not in bodies
+    assert "先碰到 swing HL" in bodies
+
+
+def test_opening_brief_is_frozen_onto_attribution():
+    attribution = {
+        "direction": "buy",
+        "setup_type": "structure_location_pullback",
+        "strategy_name": "AUDUSD# · M1",
+        "signal_source_period": "M1",
+        "entry_mode": "touch_and_reclaim",
+        "trade_plan_id": "plan-frozen",
+    }
+    plan = {
+        "setup_type": "structure_location_pullback",
+        "direction": "buy",
+        "period": "M1",
+        "direction_layer": "swing",
+        "entry_layer": "internal",
+        "entry_mode": "touch_and_reclaim",
+        "entry_price": 0.70305,
+        "reason": "M1 上涨结构回撤",
+        "validation_evidence": {
+            "entry_level_source": "swing HL",
+            "location_entry_level": 0.70305,
+        },
+        "structure_snapshot": {
+            "structure_hierarchy": {
+                "swing": {"bias": "up", "pattern": "trend"},
+                "internal": {
+                    "bias": "up",
+                    "pattern": "trend",
+                    "event": {
+                        "type": "liquidity_sweep",
+                        "direction": "down",
+                        "level": 0.70305,
+                        "confirmation": "wick_rejected",
+                    },
+                },
+                "external": {"bias": "up", "pattern": "trend"},
+            },
+            "structure_levels": {"internal": {"protected_low": 0.70305}},
+        },
+    }
+    freeze_opening_decision_brief(
+        attribution, plan=plan,
+        position={"symbol": "AUDUSD#", "direction": "buy", "entry_price": 0.70305, "volume": 0.05},
+    )
+    assert attribution["decision_brief"]["available"] is True
+    assert attribution["decision_brief"]["frozen"] is True
+    assert "还不算下降趋势" in attribution["decision_brief"]["sections"][1]["body"]
+    assert attribution["decision_plan"]["entry_price"] == 0.70305
+    plan["reason"] = "later rewrite"
+    plan["structure_snapshot"]["structure_hierarchy"]["internal"]["bias"] = "down"
+    assert "later rewrite" not in attribution["decision_brief"]["sections"][1]["body"]

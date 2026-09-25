@@ -62,9 +62,13 @@ def assemble_structure_plan_execution(
 
     divergence_monitor = ExecutionDivergenceMonitor()
     consumed = {
-        "claimed", "triggered", "ordered", "filled", "rejected",
-        "expired", "canceled",
+        "claimed", "triggered", "ordered", "pending", "accepted",
+        "filled", "partially_filled", "closed",
     }
+    eligible = [
+        deployment for deployment in subscribed
+        if deployment.get("account_execution_enabled")
+    ]
     for plan in items or []:
         plan_id = str(plan.get("plan_id") or "")
         rows_out, counts = [], {}
@@ -79,13 +83,20 @@ def assemble_structure_plan_execution(
                 "execution_reason": str(execution.get("reason") or "") if execution else "",
                 "consumed_at": int(execution.get("updated_at") or 0) if execution else 0,
             })
-        consumed_count = sum(value for key, value in counts.items() if key in consumed)
+        eligible_ids = {str(item.get("deployment_id") or "") for item in eligible}
+        consumed_count = sum(
+            1 for row in rows_out
+            if str(row.get("deployment_id") or "") in eligible_ids
+            and str(row.get("execution_status") or "") in consumed
+        )
+        expected_count = len(eligible)
         plan["subscriptions"] = rows_out
         plan["subscription_summary"] = {
             "strategy_count": len(strategies),
             "deployment_count": len(subscribed),
+            "expected_count": expected_count,
             "consumed_count": consumed_count,
-            "unconsumed_count": max(0, len(subscribed) - consumed_count),
+            "unconsumed_count": max(0, expected_count - consumed_count),
             "status_counts": counts,
         }
         matrix = divergence_monitor.build_matrix(

@@ -23,8 +23,10 @@ from market.models import (
     PositionManagementPolicy, SignalSource, TradingSignal, TradingStrategy,
 )
 from market.services.position_manager import PositionManager
+from market.services.decision_brief import freeze_opening_decision_brief
 from market.services.position_attribution import (
     build_position_attribution, close_position_attribution,
+    load_trade_plan_payload,
 )
 from market.services.llm_service import LLMService
 from market.services.signal.signal_rules import (
@@ -2325,6 +2327,18 @@ class M1BacktestEngine:
             entry_reason=str(decision.decision_reason or ""),
             initial_stop_loss=float(decision.sl),
             initial_take_profit=float(decision.tp),
+        )
+        freeze_opening_decision_brief(
+            attribution,
+            plan=load_trade_plan_payload(str(attribution.get("trade_plan_id") or "")),
+            position={
+                "symbol": symbol,
+                "direction": str(decision.action or ""),
+                "entry_price": float(decision.entry_price),
+                "volume": float(decision.volume),
+                "opened_at": requested_at,
+                "strategy_id": str(decision.strategy_id or ""),
+            },
         )
         order = SimOrder(
             order_id=uuid.uuid4().hex[:16],

@@ -5,7 +5,10 @@ import uuid
 from dataclasses import dataclass
 from typing import Dict
 
-from market.services.position_attribution import build_position_attribution
+from market.services.decision_brief import freeze_opening_decision_brief
+from market.services.position_attribution import (
+    build_position_attribution, load_trade_plan_payload,
+)
 from repositories.instrument_specs import InstrumentSpecRepository, normalize_volume
 
 
@@ -122,6 +125,18 @@ class PaperOrderService:
             initial_stop_loss=sl,
             initial_take_profit=tp,
             initial_volume=requested_volume,
+        )
+        freeze_opening_decision_brief(
+            attribution,
+            plan=load_trade_plan_payload(str(attribution.get("trade_plan_id") or "")),
+            position={
+                "symbol": str(decision.get("symbol") or ""),
+                "direction": str(decision.get("action") or ""),
+                "entry_price": entry,
+                "volume": requested_volume,
+                "opened_at": now,
+                "strategy_id": str(decision.get("strategy_id") or ""),
+            },
         )
         reason_code = ""
         if requested_volume <= 0:

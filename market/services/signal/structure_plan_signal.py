@@ -1440,6 +1440,9 @@ class StructurePlanBuilder:
             target = target - target_buffer if direction == "buy" else target + target_buffer
         entry_buffer = atr * max(0.0, _number(self._param("entry_zone_atr", 0.35)))
         valid_bars = max(1, int(self._param("location_plan_valid_bars", 6)))
+        entry_text = (
+            f"{entry:.5f}" if entry < 10 else f"{entry:.3f}" if entry < 1000 else f"{entry:.2f}"
+        )
         plan = self._tradable_plan(
             source_id=source_id, symbol=symbol, period=period,
             anchor=_bar_time(rows[min(len(rows) - 1, max(0, level["anchor_index"]))]),
@@ -1452,10 +1455,13 @@ class StructurePlanBuilder:
             ),
             confidence=int(level["confidence"]),
             reason=(
-                f"{period} {'上涨' if direction == 'buy' else '下跌'}结构中，"
-                f"Internal/Swing/External 同向；等待价格回到 "
-                f"{level['source']} {entry:.2f} 并重新收盘确认，顺势"
-                f"{'买入' if direction == 'buy' else '卖出'}"
+                f"{period} {'上涨' if direction == 'buy' else '下跌'}结构回撤："
+                f"Swing/External 仍{'向上' if direction == 'buy' else '向下'}；"
+                f"Internal 上次确认也还是{'上涨' if internal_bias == 'up' else '下跌' if internal_bias == 'down' else internal_bias}，"
+                f"当前回踩 {level['source']} "
+                f"{entry_text}，"
+                f"收盘未破保护位所以还不算转{'空' if direction == 'buy' else '多'}；"
+                f"等待收回后顺势{'买入' if direction == 'buy' else '卖出'}"
             ),
             valid_from=bar_time, expires_at=bar_time + seconds * valid_bars,
             invalidation_price=sl, structure_snapshot=snapshot,

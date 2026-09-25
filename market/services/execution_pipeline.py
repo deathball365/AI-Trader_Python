@@ -10,7 +10,8 @@ from __future__ import annotations
 from typing import Optional
 
 from ..models import TradingDecision
-from .position_attribution import build_position_attribution
+from .decision_brief import freeze_opening_decision_brief
+from .position_attribution import build_position_attribution, load_trade_plan_payload
 
 
 class ExecutionPipeline:
@@ -35,6 +36,17 @@ class ExecutionPipeline:
             initial_stop_loss=decision.sl,
             initial_take_profit=decision.tp,
             initial_volume=decision.volume,
+        )
+        freeze_opening_decision_brief(
+            attribution,
+            plan=load_trade_plan_payload(str(attribution.get("trade_plan_id") or "")),
+            position={
+                "symbol": decision.symbol,
+                "direction": decision.action,
+                "entry_price": decision.entry_price,
+                "volume": decision.volume,
+                "strategy_id": decision.strategy_id,
+            },
         )
         order_id = pending_order_service.create_order(
             symbol=decision.symbol,

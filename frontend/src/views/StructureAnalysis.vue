@@ -42,7 +42,7 @@
                 <v-card-text>
                   <div v-if="layerPlans(layer).length" class="plan-grid compact-plans">
                     <article v-for="plan in layerPlans(layer)" :key="plan.plan_id">
-                      <div class="card-head"><v-chip size="x-small" :color="plan.direction==='buy'?'success':plan.direction==='sell'?'error':'info'" variant="tonal">{{ plan.direction==='buy'?'买入':plan.direction==='sell'?'卖出':'观察' }}</v-chip><strong>{{ plan.setup_type }}</strong><span>{{ plan.status==='event_suppressed'?'暂停触发':(plan.status==='active'?'等待价格':'等待确认') }}</span></div>
+                      <div class="card-head"><v-chip size="x-small" :color="plan.direction==='buy'?'success':plan.direction==='sell'?'error':'info'" variant="tonal">{{ plan.direction==='buy'?'买入':plan.direction==='sell'?'卖出':'观察' }}</v-chip><strong>{{ plan.setup_type }}</strong><span>{{ planConsumptionLabel(plan) }}</span></div>
                       <div class="plan-values"><span>入场 {{ formatPlanPrice(plan.entry_price) }}</span><span>止损 {{ formatPlanPrice(plan.stop_loss) }}</span><span>止盈 {{ formatPlanPrice(plan.take_profit) }}</span></div>
                       <p>{{ plan.reason || '结构条件尚未满足' }}</p>
                     </article>
@@ -156,6 +156,17 @@ const layerPlans=layer=>{
     const entryLayer=String(plan.entry_layer||directionLayer)
     return directionLayer===layer || entryLayer===layer
   })
+}
+const planStageLabel=plan=>{
+  if(String(plan?.status||'')==='event_suppressed') return '暂停触发'
+  return String(plan?.status||'')==='active'?'等待价格':'等待确认'
+}
+const planConsumptionLabel=plan=>{
+  const summary=plan?.subscription_summary||{}
+  const expected=Number(summary.expected_count ?? 0)
+  const consumed=Number(summary.consumed_count || 0)
+  const stage=planStageLabel(plan)
+  return `${stage} · 已消费 ${consumed} 次 / 应消费 ${expected} 次`
 }
 const formatPlanTime=value=>value?new Date(Number(value)*1000).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}):'--'
 const formatPlanPrice=value=>{const number=Number(value);if(!Number.isFinite(number)||number<=0)return '--';const decimals=number<10?5:number<1000?3:2;return number.toLocaleString('zh-CN',{minimumFractionDigits:decimals,maximumFractionDigits:decimals})}

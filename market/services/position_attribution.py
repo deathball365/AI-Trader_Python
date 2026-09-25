@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from typing import Dict, Optional
 
 
@@ -101,3 +102,25 @@ def close_position_attribution(
     result["exit_reason"] = str(exit_reason or "")
     result["realized_r"] = round(float(realized_r or 0), 6)
     return result
+
+
+def load_trade_plan_payload(plan_id: str) -> Dict:
+    if not str(plan_id or "").strip():
+        return {}
+    try:
+        from mysql_repositories import get_storage
+        row = get_storage().fetchone(
+            "SELECT payload_json FROM structure_trade_plans WHERE plan_id=? LIMIT 1",
+            (str(plan_id),),
+        )
+    except Exception:
+        return {}
+    if not row:
+        return {}
+    value = row["payload_json"] if isinstance(row, dict) or hasattr(row, "keys") else row[0]
+    if isinstance(value, dict):
+        return value
+    try:
+        return json.loads(value or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
