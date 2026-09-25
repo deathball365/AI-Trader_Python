@@ -21,10 +21,10 @@
               <v-card class="summary">
                 <v-card-title class="d-flex align-center justify-space-between flex-wrap ga-2">
                   <span>{{ hierarchyLabels[layer] }}</span>
-                  <v-chip size="small" :color="patternColor(layerState(layer).pattern, layerState(layer).bias)" variant="tonal">{{ patternLabel(layerState(layer).pattern, layerState(layer).bias) }}</v-chip>
+                  <v-chip size="small" :color="patternColor(layerState(layer).pattern, layerState(layer).bias)" variant="tonal">{{ patternLabel(layerState(layer).pattern, layerState(layer).bias, layerState(layer).pattern_detail) }}</v-chip>
                 </v-card-title>
                 <v-card-text>
-                  <div class="state-row"><span>Pattern</span><strong>{{ patternLabel(layerState(layer).pattern, layerState(layer).bias) }}</strong></div>
+                  <div class="state-row"><span>Pattern</span><strong>{{ patternLabel(layerState(layer).pattern, layerState(layer).bias, layerState(layer).pattern_detail) }}</strong></div>
                   <div class="state-row"><span>Phase</span><strong>{{ patternPhaseLabel(layerState(layer).pattern, layerState(layer).pattern_phase || layerState(layer).phase) }}</strong></div>
                   <div class="state-row"><span>Event</span><v-chip size="x-small" :color="eventColor(layerState(layer).event)" variant="tonal">{{ eventLabel(layerState(layer).event) }}</v-chip></div>
                   <p v-if="patternDetail(layerState(layer).pattern_detail)">{{ patternDetail(layerState(layer).pattern_detail) }}</p>
@@ -170,13 +170,17 @@ const gateColor=value=>value==='eligible'?'success':(['snapshot_missing','claim_
 const hierarchyLabels={internal:'Internal 内部结构',swing:'Swing 主结构',external:'External 外部结构'}
 const primaryStructureLabel=value=>({trend_up:'上涨趋势',trend_down:'下跌趋势',range:'箱体背景',transition:'结构过渡'}[value]||'结构过渡')
 const primaryColor=value=>value==='trend_up'?'success':value==='trend_down'?'error':value==='range'?'info':'warning'
-const patternLabel=(value,bias)=>{
+const patternLabel=(value,bias,detail)=>{
   const pattern=String(value||'')
   if(pattern==='trend'){
-    if(bias==='up') return '上涨趋势'
-    if(bias==='down') return '下跌趋势'
+    const channel=String(detail?.channel_bias||'')
+    const dir=channel||bias
+    if(dir==='up') return '上涨趋势'
+    if(dir==='down') return '下跌趋势'
     return '趋势'
   }
+  if(pattern==='descending_channel') return '下降趋势'
+  if(pattern==='ascending_channel') return '上升趋势'
   return {range:'箱体震荡',triangle:'三角形',converging_triangle:'收敛三角形',diverging_triangle:'扩散三角形',ascending_triangle:'上升三角形',descending_triangle:'下降三角形',trendline:'趋势线',none:'未形成'}[pattern]||pattern||'未识别'
 }
 const patternColor=(value,bias)=>{

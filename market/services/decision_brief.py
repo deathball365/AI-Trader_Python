@@ -101,7 +101,8 @@ def _layer_describe(hierarchy: Dict, layer: str, fallback_bias: str = "") -> str
         edges = f"（下沿 {_price(bottom)} / 上沿 {_price(top)}）" if top and bottom else ""
         return f"{name} {shape}{edges}"
     if pattern in {"trend", "up", "down"} or bias in {"up", "down"}:
-        return f"{name} {_bias_label(bias or pattern)}趋势"
+        channel = _text(detail.get("channel_bias")).lower()
+        return f"{name} {_bias_label(channel or bias or pattern)}趋势"
     if bias:
         return f"{name} {_bias_label(bias)}"
     return ""

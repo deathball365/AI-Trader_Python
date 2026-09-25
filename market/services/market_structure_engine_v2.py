@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -9,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 
 
 _CACHE: Dict[str, Dict] = {}
-ENGINE_VERSION = "hierarchical-structure-v12"
+ENGINE_VERSION = "hierarchical-structure-v13"
 DEFAULT_CONFIG = {
     "pivot_legs": 3, "medium_pivot_legs": 8, "large_pivot_legs": 25,
     "min_reversal_atr": 0.5, "break_buffer_atr": 0.10,
@@ -17,7 +18,8 @@ DEFAULT_CONFIG = {
     "trend_retest_required": True,
     "range_touch_tolerance": 0.003, "range_touch_atr": 0.45,
     "range_min_touches": 2, "range_min_inside_ratio": 0.65,
-    "range_max_atr": 8.0, "range_min_bars": 24, "min_segment_bars": 12,
+    "range_max_atr": 8.0, "range_min_bars": 24, "range_flat_angle_degrees": 10.0,
+    "min_segment_bars": 12,
     "trendline_touch_atr": 0.5, "trendline_min_touches": 2,
     "trendline_min_bars": 18,
     "trendline_regime_min_slope_atr": 0.05,
@@ -235,18 +237,26 @@ def _range(rows: List[Dict], pivots: List[Dict], atr: float, config: Dict) -> Op
         top, bottom = hi + hs * end, li + ls * end
         if top <= bottom:
             continue
-        epsilon = atr * 0.025
-        hf, lf = abs(hs) <= epsilon, abs(ls) <= epsilon
+        length = max(1, end - start)
+        span = max(top - bottom, atr * 0.5, 1e-12)
+        high_angle = math.degrees(math.atan(hs * length / span))
+        low_angle = math.degrees(math.atan(ls * length / span))
+        flat = max(1.0, float(config.get("range_flat_angle_degrees") or 10.0))
+        hf, lf = abs(high_angle) <= flat, abs(low_angle) <= flat
         if hf and lf:
             pattern = "range"
-        elif hs < -epsilon and ls > epsilon:
+        elif high_angle < -flat and low_angle > flat:
             pattern = "triangle"
-        elif hf and ls > epsilon:
+        elif hf and low_angle > flat:
             pattern = "ascending_triangle"
-        elif hs < -epsilon and lf:
+        elif high_angle < -flat and lf:
             pattern = "descending_triangle"
-        elif hs > epsilon and ls < -epsilon:
+        elif high_angle > flat and low_angle < -flat:
             pattern = "broadening"
+        elif high_angle < -flat and low_angle < -flat:
+            pattern = "descending_channel"
+        elif high_angle > flat and low_angle > flat:
+            pattern = "ascending_channel"
         else:
             continue
         tolerance = max(abs(top) * float(config["range_touch_tolerance"]),
@@ -263,6 +273,7 @@ def _range(rows: List[Dict], pivots: List[Dict], atr: float, config: Dict) -> Op
         item = {"active": active, "status": "confirmed" if active else "candidate", "pattern": pattern,
                 "start_index": start, "end_index": end, "top": top, "bottom": bottom,
                 "high_slope": hs, "low_slope": ls, "high_intercept": hi, "low_intercept": li,
+                "high_angle": round(high_angle, 2), "low_angle": round(low_angle, 2),
                 "high_touches": ht, "low_touches": lt, "inside_ratio": round(inside, 3),
                 "width_atr": round(width_atr, 2), "score": round(score, 2)}
         if best is None or item["score"] > best["score"]:
@@ -630,13 +641,22 @@ def _window_geometry(rows: List[Dict], pivots: List[Dict], start: int, end: int,
             if event.get("index") is not None:
                 event["index"] = start + int(event.get("index") or 0)
             box["lifecycle_event"] = event
+        raw_pattern = str(box.get("pattern") or "range")
+        if raw_pattern in {"descending_channel", "ascending_channel"}:
+            channel_bias = "down" if raw_pattern.startswith("desc") else "up"
+            return {
+                "pattern": "trend",
+                "phase": "continuation",
+                "detail": {**box, **detail, "channel_bias": channel_bias},
+                "box": None,
+            }
         pattern = {
             "range": "range",
             "triangle": "triangle",
             "ascending_triangle": "ascending_triangle",
             "descending_triangle": "descending_triangle",
             "broadening": "broadening",
-        }.get(str(box.get("pattern") or ""), str(box.get("pattern") or "range"))
+        }.get(raw_pattern, raw_pattern)
         status = str(box.get("status") or "candidate")
         phase = "breakout_confirmed" if status == "breakout_confirmed" else (
             "mature" if bool(box.get("active")) else "forming"
