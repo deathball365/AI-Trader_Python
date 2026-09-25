@@ -993,15 +993,12 @@ def analyze(symbol: str, period: str, rows: List[Dict], config: Dict = None) -> 
     major_events, major_candidates, major_state = _event_stream(rows, levels["medium"], atrs, cfg, "major")
     external_events, external_candidates, external_state = _event_stream(rows, levels["large"], atrs, cfg, "external")
     box = _range(rows, levels["medium"] or levels["small"], atr, cfg)
-    segments = _segments(
-        rows,
-        major_events,
-        None,
-        levels["small"],
-        levels["medium"],
-        atr,
-        cfg,
-    )
+    layer_segments = {
+        "internal": _segments(rows, internal_events, None, levels["small"], levels["small"], atr, cfg),
+        "swing": _segments(rows, major_events, None, levels["small"], levels["medium"], atr, cfg),
+        "external": _segments(rows, external_events, None, levels["medium"], levels["large"], atr, cfg),
+    }
+    segments = layer_segments["swing"]
     active_candidate = next((item for item in reversed(major_candidates) if item.get("status") == "candidate"), None)
     # A local range/triangle is an annotation on top of the main Swing state;
     # it must never overwrite the directional bias.
@@ -1022,11 +1019,13 @@ def analyze(symbol: str, period: str, rows: List[Dict], config: Dict = None) -> 
     ):
         geometry = _scope_pattern(rows, levels[pivot_key], atr, cfg, state, name, events)
         last_event = events[-1] if events else None
+        scoped_segments = layer_segments[name]
         hierarchy[name].update({
             "pattern": geometry["pattern"],
             "pattern_phase": geometry["phase"],
             "pattern_detail": geometry["detail"],
-            "segment": geometry.get("segment") or {},
+            "segment": geometry.get("segment") or (scoped_segments[-1] if scoped_segments else {}),
+            "segments": scoped_segments[-5:],
             "event": last_event,
         })
     primary_structure = _primary_structure(hierarchy["swing"], hierarchy["external"])
@@ -1067,6 +1066,7 @@ def analyze(symbol: str, period: str, rows: List[Dict], config: Dict = None) -> 
             "internal_events": internal_events, "major_events": major_events,
             "external_events": external_events,
             "candidates": major_candidates + external_candidates[-5:] + internal_candidates[-10:], "segments": segments[-5:],
+            "layer_segments": {name: items[-5:] for name, items in layer_segments.items()},
             "structure_hierarchy": hierarchy, "local_patterns": local_patterns,
             "primary_structure": primary_structure,
             "active_segment": active_segment,
