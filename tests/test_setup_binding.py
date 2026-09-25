@@ -146,3 +146,37 @@ def test_builder_skips_location_pullback_when_internal_is_range():
         "market-structure", "GOLD#", "M5", _rows(), structure, snapshot, 1009, 300,
     )
     assert plans == []
+
+
+def test_watch_range_plan_does_not_block_location_pullback():
+    builder = StructurePlanBuilder(STRUCTURE_PLAN_DEFAULT_CONFIG)
+    selected = builder._select_structure_plans(
+        [{
+            "setup_type": "range_breakout_watch", "direction": "buy",
+            "status": "watching", "entry_price": 0,
+        }],
+        [],
+        [{
+            "setup_type": "structure_location_pullback", "direction": "buy",
+            "status": "active", "entry_price": 100,
+        }],
+    )
+    assert [plan["setup_type"] for plan in selected] == ["structure_location_pullback"]
+
+
+def test_active_event_and_location_plans_can_coexist():
+    builder = StructurePlanBuilder(STRUCTURE_PLAN_DEFAULT_CONFIG)
+    selected = builder._select_structure_plans(
+        [],
+        [{
+            "setup_type": "choch_reversal", "direction": "sell",
+            "status": "active", "entry_price": 110,
+        }],
+        [{
+            "setup_type": "structure_location_pullback", "direction": "buy",
+            "status": "active", "entry_price": 100,
+        }],
+    )
+    assert {plan["setup_type"] for plan in selected} == {
+        "choch_reversal", "structure_location_pullback",
+    }

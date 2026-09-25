@@ -220,6 +220,48 @@ class StructurePlanBuilder:
             and direction_allowed(plan)
         ]
 
+    @staticmethod
+    def _actionable_plans(plans: List[Dict]) -> List[Dict]:
+        result = []
+        for plan in plans or []:
+            setup = str(plan.get("setup_type") or "").strip().lower()
+            if setup in {"", "no_trade"}:
+                continue
+            if str(plan.get("direction") or "") not in {"buy", "sell"}:
+                continue
+            if str(plan.get("status") or "") != "active":
+                continue
+            if _number(plan.get("entry_price")) <= 0:
+                continue
+            result.append(plan)
+        return result
+
+    @staticmethod
+    def _watch_plans(plans: List[Dict]) -> List[Dict]:
+        result = []
+        for plan in plans or []:
+            setup = str(plan.get("setup_type") or "").strip().lower()
+            if setup in {"", "no_trade"}:
+                continue
+            if str(plan.get("status") or "") == "watching":
+                result.append(plan)
+        return result
+
+    def _select_structure_plans(
+        self, range_plans: List[Dict], event_plans: List[Dict], location_plans: List[Dict],
+    ) -> List[Dict]:
+        """Keep every executable SETUP. Watching plans must not block them."""
+        groups = (event_plans, range_plans, location_plans)
+        chosen = []
+        for group in groups:
+            chosen.extend(self._actionable_plans(group))
+        if chosen:
+            return chosen
+        watches = []
+        for group in groups:
+            watches.extend(self._watch_plans(group))
+        return watches
+
     def _activate_setup(self, setup_type: str) -> None:
         """Apply the most specific setup override before deriving a plan."""
         self._active_setup = str(setup_type or "").strip().lower()
@@ -1119,35 +1161,18 @@ class StructurePlanBuilder:
             "active_segment": structure.get("active_segment") or {},
         }
         snapshot["structure_state"] = derive_structure_state(snapshot)
-        # Density/pressure is structural context only. It is not a peer
-        # execution setup and therefore cannot win plan selection.
-        plans = self._range_plans(
+        # Evaluate range, event and location SETUPs independently. A watching
+        # box breakout must not hide a valid HL pullback on another layer.
+        range_plans = self._filter_allowed(self._range_plans(
             source_id, symbol, period, rows, structure, snapshot, bar_time, seconds,
-        )
-        plans = self._filter_allowed(plans)
-        if plans:
-            return plans
-        # Fresh structural events take precedence over ordinary location
-        # pullbacks.  If the event fails its own quality gates we still fall
-        # back to a valid HL/LH location plan below.
-        latest_event = (structure.get("internal_events") or [])[-1:]
-        if latest_event and latest_event[0].get("type") in {"choch", "bos"}:
-            plans = self._event_plans(
-                source_id, symbol, period, rows, structure, snapshot, bar_time, seconds,
-            )
-            plans = self._filter_allowed(plans)
-            if plans:
-                return plans
-        plans = self._location_plans(
+        ))
+        event_plans = self._filter_allowed(self._event_plans(
             source_id, symbol, period, rows, structure, snapshot, bar_time, seconds,
-        )
-        plans = self._filter_allowed(plans)
-        if plans:
-            return plans
-        plans = self._event_plans(
+        ))
+        location_plans = self._filter_allowed(self._location_plans(
             source_id, symbol, period, rows, structure, snapshot, bar_time, seconds,
-        )
-        plans = self._filter_allowed(plans)
+        ))
+        plans = self._select_structure_plans(range_plans, event_plans, location_plans)
         if plans:
             return plans
         state = str(structure.get("major_state") or "undetermined")
