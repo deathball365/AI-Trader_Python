@@ -1,11 +1,25 @@
 <template>
   <v-container fluid class="structure-page">
     <section class="hero">
-      <div><span>MARKET STRUCTURE</span><h1>{{ symbol }} · {{ period }} 结构分析</h1><p>连续滑动识别行情结构，保留最近 5 个已确认结构段。</p></div>
+      <div><span>MARKET STRUCTURE</span><h1>{{ symbol }} · {{ period }} 结构分析</h1><p>按 Internal / Swing / External 分别显示 bias、pattern、phase、event；主结构由 Swing 与 External 汇总。</p></div>
       <div class="controls"><v-select v-model="symbol" :items="symbols" label="品种" density="compact" hide-details variant="outlined"/><v-select v-model="period" :items="periods" label="周期" density="compact" hide-details variant="outlined"/><v-btn color="primary" :loading="loading" @click="load">刷新</v-btn></div>
     </section>
     <v-alert v-if="error" type="error" variant="tonal" class="mb-4">{{ error }}</v-alert>
-    <v-alert v-if="structureResult" type="info" variant="tonal" density="compact" class="mb-4"><strong>结构层级说明：</strong>背景主结构为 {{ stateLabel(structureResult.major_state || structureResult.current_state) }}；当前局部形态为 {{ localStateLabel(structureResult) }}。两者不一致时，表示大背景中的局部整理或回撤。</v-alert>
+    <v-alert v-if="structureResult" type="info" variant="tonal" density="compact" class="mb-4"><strong>主结构：</strong>{{ primaryStructureLabel(structureResult.primary_structure) }}。Internal 负责短线确认，Swing 决定当前方向，External 作为大级别过滤。phase 与 event 由已收盘 K 线动态计算，不手工填写。</v-alert>
+    <v-card v-if="structureResult?.structure_hierarchy" class="mt-4 structure-state-card">
+      <v-card-title class="d-flex align-center justify-space-between flex-wrap ga-2"><span>结构状态模型</span><v-chip size="small" :color="primaryColor(structureResult.primary_structure)" variant="tonal">主结构：{{ primaryStructureLabel(structureResult.primary_structure) }}</v-chip></v-card-title>
+      <v-card-subtitle>主结构由 Swing 与 External 汇总；Internal 只负责短线确认和入场时机。phase/event 均由已收盘 K 线动态计算。</v-card-subtitle>
+      <v-card-text><div class="hierarchy-grid"><article v-for="(item,key) in structureResult.structure_hierarchy" :key="key" class="hierarchy-item">
+        <div class="card-head"><strong>{{ hierarchyLabels[key] }}</strong><v-chip size="small" :color="colors[item.bias] || 'grey'" variant="tonal">{{ stateLabel(item.bias) }}</v-chip></div>
+        <div class="state-row"><span>Pattern</span><strong>{{ patternLabel(item.pattern) }}</strong></div>
+        <div class="state-row"><span>Phase</span><strong>{{ phaseLabel(item.pattern_phase || item.phase, item.bias) }}</strong></div>
+        <div class="state-row"><span>Event</span><v-chip size="x-small" :color="eventColor(item.event)" variant="tonal">{{ eventLabel(item.event) }}</v-chip></div>
+        <p v-if="item.pattern_detail">{{ patternDetail(item.pattern_detail) }}</p>
+        <small>{{ item.pivot_count || 0 }} 个 Pivot · {{ setupMappingLabel(item) }}</small>
+        <small v-if="item.protected_high">保护高点 {{ Number(item.protected_high.price).toFixed(2) }}</small><small v-if="item.protected_low">保护低点 {{ Number(item.protected_low.price).toFixed(2) }}</small>
+      </article></div></v-card-text>
+    </v-card>
+
     <v-card class="mb-4 plan-card">
       <v-card-title>结构交易计划</v-card-title>
       <v-card-subtitle>行情层统一生成；每个匹配部署独立订阅，并按“计划 + 部署”最多消费一次。</v-card-subtitle>
@@ -74,9 +88,8 @@
     </v-card>
     <v-card v-if="bars.length" class="chart-card mb-4"><v-card-title>K线与结构段</v-card-title><v-card-text><div ref="chartRef" class="chart" style="height:480px;width:100%"></div><div class="structure-strip-title">结构时间轴（按 K 线数量）</div><div class="structure-strip"><div v-for="(item,index) in segments" :key="`strip-${item.id}`" class="structure-strip-segment" :style="stripStyle(item,index)" :title="`${labels[item.type]||item.type} · ${item.start} → ${item.end} · 强度 ${item.strength ?? item.confidence ?? 0}%`"><span>{{ labels[item.type]||item.type }}</span></div></div><div class="legend"><span v-for="type in ['up','sideways','triangle','down','transition']" :key="type"><i :style="{background:legendColors[type]}"></i>{{ labels[type] }}</span></div></v-card-text></v-card>
     <v-row v-if="structureResult">
-      <v-col cols="12" md="4"><v-card class="summary"><v-card-text><small>主结构状态</small><h2>{{ stateLabel(structureResult.major_state || structureResult.current_state) }}</h2><div class="stats flex-wrap"><span>内部：{{ stateLabel(structureResult.internal_state) }}</span><span>大级别：{{ stateLabel(structureResult.external_state) }}</span><span>局部形态：{{ localStateLabel(structureResult) }}</span><span>阶段：{{ detailLabel(structureResult.state_detail) }}</span><span>趋势健康度：{{ trendPhaseLabel(structureResult.trend_phase) }}</span><span>ATR {{ Number(structureResult.atr || 0).toFixed(2) }}</span></div><v-alert v-if="structureResult.trend_phase==='weakening'" type="warning" density="compact" variant="tonal" class="mt-3">趋势推进力度衰减或回撤加深，已暂停追涨/追跌趋势延续计划。</v-alert><v-alert v-if="structureResult.trend_phase==='failed'" type="error" density="compact" variant="tonal" class="mt-3">保护结构已被收盘突破，原趋势延续计划失效，等待反转确认。</v-alert><v-alert v-if="structureResult.active_candidate" type="warning" density="compact" variant="tonal" class="mt-3">正在等待{{ structureResult.active_candidate.direction === 'up' ? '向上' : '向下' }}反转确认；K线图以橙色虚线显示候选段</v-alert><v-alert v-if="structureResult.range?.status === 'failed_breakout'" type="info" density="compact" variant="tonal" class="mt-2">价格突破后重新收回区间，当前判定为假突破并恢复原区间</v-alert></v-card-text></v-card></v-col>
-      <v-col cols="12" md="8"><v-card class="summary"><v-card-title>结构事件</v-card-title><v-card-text><div class="event-list"><span v-for="(event,index) in recentEvents" :key="`event-${index}`" :class="event.direction==='up'?'event-up':'event-down'">{{ event.type?.toUpperCase() }} · {{ event.direction==='up'?'向上':'向下' }} · {{ event.level ? Number(event.level).toFixed(2) : '流动性扫过' }} · {{ barStamp(event.index) }}</span><span v-if="!recentEvents.length" class="empty">暂无已确认结构事件</span></div></v-card-text></v-card></v-col>
-      <v-col cols="12"><v-card class="summary"><v-card-title>多级别结构证据</v-card-title><v-card-text><div class="stats"><span>小级别 Pivot {{ structureResult.structure_levels?.small?.pivot_count || 0 }}</span><span>中级别 Pivot {{ structureResult.structure_levels?.medium?.pivot_count || 0 }}</span><span>大级别 Pivot {{ structureResult.structure_levels?.large?.pivot_count || 0 }}</span><span>HH {{ structureResult.evidence?.higher_highs || 0 }}</span><span>HL {{ structureResult.evidence?.higher_lows || 0 }}</span><span>LH {{ structureResult.evidence?.lower_highs || 0 }}</span><span>LL {{ structureResult.evidence?.lower_lows || 0 }}</span><span>收盘突破 {{ structureResult.evidence?.close_breaks || 0 }}</span><span>影线扫过 {{ structureResult.evidence?.wick_sweeps || 0 }}</span></div></v-card-text></v-card></v-col>
+      <v-col cols="12" md="4"><v-card class="summary"><v-card-text><small>主结构</small><h2>{{ primaryStructureLabel(structureResult.primary_structure) }}</h2><div class="stats flex-wrap"><span>Internal：{{ stateLabel(structureResult.structure_hierarchy?.internal?.bias) }} / {{ patternLabel(structureResult.structure_hierarchy?.internal?.pattern) }}</span><span>Swing：{{ stateLabel(structureResult.structure_hierarchy?.swing?.bias) }} / {{ patternLabel(structureResult.structure_hierarchy?.swing?.pattern) }}</span><span>External：{{ stateLabel(structureResult.structure_hierarchy?.external?.bias) }} / {{ patternLabel(structureResult.structure_hierarchy?.external?.pattern) }}</span><span>趋势健康度：{{ trendPhaseLabel(structureResult.trend_phase) }}</span><span>ATR {{ Number(structureResult.atr || 0).toFixed(2) }}</span></div><v-alert v-if="structureResult.trend_phase==='weakening'" type="warning" density="compact" variant="tonal" class="mt-3">趋势推进力度衰减或回撤加深，已暂停追涨/追跌趋势延续计划。</v-alert><v-alert v-if="structureResult.trend_phase==='failed'" type="error" density="compact" variant="tonal" class="mt-3">保护结构已被收盘突破，原趋势延续计划失效，等待反转确认。</v-alert><v-alert v-if="structureResult.active_candidate" type="warning" density="compact" variant="tonal" class="mt-3">正在等待{{ structureResult.active_candidate.direction === 'up' ? '向上' : '向下' }}反转确认；K线图以橙色虚线显示候选段</v-alert><v-alert v-if="structureResult.range?.status === 'failed_breakout'" type="info" density="compact" variant="tonal" class="mt-2">价格突破后重新收回区间，当前判定为假突破并恢复原区间</v-alert></v-card-text></v-card></v-col>
+      <v-col cols="12" md="8"><v-card class="summary"><v-card-title>结构事件</v-card-title><v-card-text><div class="event-list"><span v-for="(event,index) in recentEvents" :key="`event-${index}`" :class="event.direction==='up'?'event-up':'event-down'">{{ eventLabel(event) }} · {{ event.direction==='up'?'向上':'向下' }} · {{ event.level ? Number(event.level).toFixed(2) : '--' }} · {{ barStamp(event.index) }}</span><span v-if="!recentEvents.length" class="empty">暂无已确认结构事件</span></div></v-card-text></v-card></v-col>
     </v-row>
     <v-row v-if="current">
       <v-col cols="12" md="4"><v-card class="summary"><v-card-text><small>当前结构</small><h2>{{ labels[current.type] || current.type }}</h2><v-chip :color="colors[current.type] || 'grey'" variant="tonal">{{ current.status }}</v-chip><p>{{ current.reason }}</p><div class="stats"><span>持续 {{ current.bars }} 根K线</span><span>结构强度 {{ current.strength ?? current.confidence }}%</span><span v-if="current.evidence">方向一致率 {{ Math.round((current.evidence.direction_ratio || 0) * 100) }}%</span><span v-if="current.evidence">方向效率 {{ Math.round((current.evidence.direction_efficiency || 0) * 100) }}%</span></div></v-card-text></v-card></v-col>
@@ -84,23 +97,6 @@
     </v-row>
     <v-card v-if="segments.length" class="mt-4"><v-card-title>最近 5 个结构段</v-card-title><v-card-text><div class="segment-grid"><article v-for="item in segments" :key="`card-${item.id}`" :class="{active:item.id===current?.id}"><div class="card-head"><v-chip size="small" :color="colors[item.type]||'grey'" variant="tonal">{{ labels[item.type]||item.type }}</v-chip><span>{{ item.bars }} 根</span></div><strong>{{ item.start }} → {{ item.end }}</strong><p>{{ item.reason }}</p><small v-if="item.confirmation">确认于 {{ item.confirmation }}；图形起点与确认时间分开</small><small v-else>当前段尚无独立反转确认时间</small><small class="d-block mt-1">支撑 {{ item.support.toFixed(2) }} · 压力 {{ item.resistance.toFixed(2) }}</small></article></div></v-card-text></v-card>
     <v-card v-else-if="!loading" class="empty mt-4"><v-card-text>暂无足够 K 线识别结构</v-card-text></v-card>
-    <v-card v-if="structureResult?.structure_hierarchy" class="mt-4 structure-state-card">
-      <v-card-title class="d-flex align-center justify-space-between flex-wrap ga-2"><span>结构状态模型</span><v-chip size="small" :color="primaryColor(structureResult.primary_structure)" variant="tonal">主结构：{{ primaryStructureLabel(structureResult.primary_structure) }}</v-chip></v-card-title>
-      <v-card-subtitle>主结构由 Swing 与 External 汇总；Internal 只负责短线确认和入场时机。phase/event 均由已收盘 K 线动态计算。</v-card-subtitle>
-      <v-card-text><div class="hierarchy-grid"><article v-for="(item,key) in structureResult.structure_hierarchy" :key="key" class="hierarchy-item">
-        <div class="card-head"><strong>{{ hierarchyLabels[key] }}</strong><v-chip size="small" :color="colors[item.bias] || 'grey'" variant="tonal">{{ stateLabel(item.bias) }}</v-chip></div>
-        <div class="state-row"><span>Pattern</span><strong>{{ patternLabel(item.pattern) }}</strong></div>
-        <div class="state-row"><span>Phase</span><strong>{{ phaseLabel(item.pattern_phase || item.phase, item.bias) }}</strong></div>
-        <div class="state-row"><span>Event</span><v-chip size="x-small" :color="eventColor(item.event)" variant="tonal">{{ eventLabel(item.event) }}</v-chip></div>
-        <p v-if="item.pattern_detail">{{ patternDetail(item.pattern_detail) }}</p>
-        <small>{{ item.pivot_count || 0 }} 个 Pivot · {{ setupMappingLabel(item) }}</small>
-        <small v-if="item.protected_high">保护高点 {{ Number(item.protected_high.price).toFixed(2) }}</small><small v-if="item.protected_low">保护低点 {{ Number(item.protected_low.price).toFixed(2) }}</small>
-      </article></div></v-card-text>
-    </v-card>
-    <v-card v-if="structureResult?.local_patterns?.length" class="mt-4">
-      <v-card-title>局部形态（不覆盖主趋势）</v-card-title>
-      <v-card-text><div class="pattern-list"><article v-for="(item,index) in structureResult.local_patterns" :key="`pattern-${index}`"><div class="card-head"><v-chip size="small" color="secondary" variant="tonal">{{ patternLabel(item.type) }}</v-chip><span>{{ patternStatus(item.status) }}</span></div><p v-if="item.start_index != null">覆盖 {{ barStamp(item.start_index) }} → {{ barStamp(item.end_index) }}</p><p v-if="item.high_touches != null">上沿触碰 {{ item.high_touches }} 次 · 下沿触碰 {{ item.low_touches }} 次 · 内部收盘 {{ Math.round((item.inside_ratio || 0) * 100) }}%</p><p v-if="item.breakout">突破方向：{{ item.breakout.direction === 'up' ? '向上' : '向下' }}</p></article></div></v-card-text>
-    </v-card>
   </v-container>
 </template>
 
@@ -151,19 +147,12 @@ const eventLabel=value=>{const event=typeof value==='string'?value:(value?.type|
 const eventColor=value=>{const event=typeof value==='string'?value:(value?.type||value?.event_type||'');return event==='choch'||event==='false_breakout'?'warning':event==='bos'||event==='breakout_confirmed'?'success':event==='liquidity_sweep'?'secondary':'grey'}
 const patternDetail=value=>{if(typeof value==='string')return value;if(!value||typeof value!=='object')return '';return Object.entries(value).filter(([,item])=>item!==null&&item!==undefined&&item!=='').slice(0,3).map(([key,item])=>`${key}: ${typeof item==='number'?Number(item).toFixed(2):item}`).join(' · ')}
 const setupMappingLabel=item=>{const pattern=item?.pattern;const event=typeof item?.event==='string'?item.event:item?.event?.type;if(event==='bos'||event==='breakout_confirmed')return '突破类 SETUP 可评估';if(event==='choch'||event==='false_breakout')return '反转/假突破类 SETUP 可评估';if(pattern==='trend')return '趋势回撤类 SETUP 可评估';return '等待事件满足执行条件'}
-const patternStatus=value=>({candidate:'候选',confirmed:'已确认',awaiting_breakout:'等待突破',breakout_candidate:'突破候选',breakout_confirmed:'突破已确认',failed_breakout:'假突破',active:'运行中',broken:'已突破'}[value]||value||'--')
-const zoneStatusLabel=value=>({candidate:'候选',active:'活跃',tested:'已测试',rejected:'受阻反转',breakout_watch:'突破观察',broken:'已破坏',invalidated:'已失效'}[value]||'未评估')
-const zoneStatusColor=value=>({candidate:'grey',active:'info',tested:'info',rejected:'warning',breakout_watch:'primary',broken:'error',invalidated:'grey'}[value]||'grey')
 // 结构时间轴条已停用，保留空样式函数避免旧模板调用导致渲染中断。
 const stripStyle=()=>({display:'none'})
 const stateLabel=value=>({up:'上涨趋势',down:'下跌趋势',bullish:'上涨趋势',bearish:'下跌趋势',range:'箱体/三角形',undetermined:'尚未确认'}[value]||'结构过渡')
-const localStateValue=result=>String(result?.range?.active?'sideways':(result?.current_state || result?.internal_state || 'undetermined'))
-const localStateLabel=result=>stateLabel(localStateValue(result))
-const detailLabel=value=>({up:'上涨已确认',down:'下跌已确认',range:'区间已确认',undetermined:'等待建立主结构',up_pullback:'上涨中的回撤',down_pullback:'下跌中的反弹',up_reversal_candidate:'等待向上反转确认',down_reversal_candidate:'等待向下反转确认'}[value]||value||'--')
 const trendPhaseLabel=value=>({strong:'强势',mature:'成熟',weakening:'衰竭预警',failed:'趋势失败',undetermined:'尚未确认'}[value]||'未评估')
 const barStamp=index=>bars.value[index]?stamp(bars.value[index]):''
 const recentEvents=computed(()=>Array.isArray(structureResult.value?.events)?structureResult.value.events.slice(-10).reverse():[])
-const currentMarketPrice=computed(()=>{const last=bars.value.at(-1);const value=last?closeOf(last):NaN;return Number.isFinite(value)&&value>0?value:null})
 function renderChartUnsafe(){
   if(!chartRef.value||!bars.value.length)return
   if(chart)chart.dispose(); chart=echarts.init(chartRef.value)
@@ -183,41 +172,6 @@ function renderChartUnsafe(){
   const legendData=['K线',...eventSeries.map(item=>item.name),...trend.map(item=>item.name),...(candidateSeries.length?['候选结构（未确认）']:[])]
   chart.setOption({animation:false,tooltip:{trigger:'axis',axisPointer:{type:'cross'}},legend:{top:0,type:'scroll',data:legendData},grid:{left:55,right:35,top:38,bottom:58},xAxis:{type:'category',data:rows.map(stamp),axisLabel:{hideOverlap:true}},yAxis:{scale:true},dataZoom:[{type:'inside'},{type:'slider',height:18,bottom:8}],series:[{name:'K线',type:'candlestick',data,itemStyle:{color:'#1f9d72',color0:'#d95d55',borderColor:'#1f9d72',borderColor0:'#d95d55'},markPoint:{symbol:'circle',symbolSize:9,data:pivotMarks,label:{show:true,position:'top',fontSize:10,formatter:p=>p.value}},markLine:{silent:true,symbol:'none',data:[...range,...eventLines]}},...trend,...candidateSeries,...eventSeries]},true)
 }
-function renderZoneChart(){
-  if(!zoneChartRef.value){zoneChart?.dispose();zoneChart=null;return}
-  if(zoneChart)zoneChart.dispose()
-  zoneChart=echarts.init(zoneChartRef.value)
-  const rows=zonePressureRows.value
-  if(!rows.length){zoneChart.clear();return}
-  const range=pressureRange.value
-  const colorsByKind={support:'#30976d',resistance:'#d45b52',inside:'#d4a24c',neutral:'#4f91c4'}
-  const zoneBars=bars.value.slice(-zoneLookbackBars.value)
-  const data=zoneBars.map(x=>[Number(x.open??x.open_price??closeOf(x)),Number(x.close??x.close_price??0),Number(x.low??x.low_price??closeOf(x)),Number(x.high??x.high_price??closeOf(x))])
-  const categories=zoneBars.map(stamp)
-  const fillByKind={support:'rgba(48,151,109,',resistance:'rgba(212,91,82,',inside:'rgba(212,162,76,',neutral:'rgba(79,145,196,'}
-  const areaData=rows.map(row=>{
-    const opacity=Math.min(.46,Math.max(.14,.14+Number(row.densityRatio||0)*.32+Math.min(Number(row.visitCount||0),10)*.012))
-    const color=fillByKind[row.kind]||fillByKind.neutral
-    const label=`${row.label} · ${row.visitCount||0}次 · 密度${Math.round(Number(row.densityRatio||0)*100)}%`
-    return [{name:label,xAxis:0,yAxis:row.lower,itemStyle:{color:`${color}${opacity})`,borderColor:colorsByKind[row.kind]||colorsByKind.neutral,borderWidth:row.nearest?2:1},label:{show:true,position:'insideTop',color:colorsByKind[row.kind]||colorsByKind.neutral,fontSize:10,formatter:label}},{xAxis:Math.max(categories.length-1,0),yAxis:row.upper}]
-  })
-  const boundaryLines=rows.flatMap(row=>[
-    {yAxis:row.lower,lineStyle:{color:colorsByKind[row.kind]||colorsByKind.neutral,type:'dashed',width:row.nearest?2:1},label:{show:false}},
-    {yAxis:row.upper,lineStyle:{color:colorsByKind[row.kind]||colorsByKind.neutral,type:'dashed',width:row.nearest?2:1},label:{show:false}},
-  ])
-  const currentLine=currentMarketPrice.value!=null?[{yAxis:currentMarketPrice.value,lineStyle:{color:'#2477c5',width:2},label:{show:true,formatter:`当前 ${currentMarketPrice.value.toFixed(2)}`,color:'#2477c5'}}]:[]
-  zoneChart.setOption({
-    animation:false,
-    grid:{left:55,right:35,top:48,bottom:58},
-    legend:{top:4,type:'scroll',data:['K线']},
-    xAxis:{type:'category',data:categories,axisLabel:{hideOverlap:true}},
-    yAxis:{type:'value',min:range.min,max:range.max,scale:true,name:'价格',nameLocation:'middle',nameGap:42,axisLabel:{hideOverlap:true}},
-    tooltip:{trigger:'axis',axisPointer:{type:'cross'},formatter:params=>{const item=Array.isArray(params)?params.find(entry=>entry.seriesName==='K线'):params;if(!item)return '';const v=item.value||[];const index=item.dataIndex??0;const candle=zoneBars[index]||{};const matched=rows.filter(row=>Number(candle.low??candle.low_price??0)<=row.upper&&Number(candle.high??candle.high_price??0)>=row.lower);const zoneText=matched.map(row=>`${row.label} ${row.lower.toFixed(2)}–${row.upper.toFixed(2)} · ${row.visitCount||0}次 · 密度${Math.round(Number(row.densityRatio||0)*100)}%`).join('<br/>');return `<strong>${categories[index]||''}</strong><br/>开 ${Number(v[0]||0).toFixed(2)} · 高 ${Number(v[3]||0).toFixed(2)}<br/>低 ${Number(v[2]||0).toFixed(2)} · 收 ${Number(v[1]||0).toFixed(2)}${zoneText?`<br/><br/>${zoneText}`:''}`}},
-    series:[
-      {name:'K线',type:'candlestick',data,itemStyle:{color:'#1f9d72',color0:'#d95d55',borderColor:'#1f9d72',borderColor0:'#d95d55'},markArea:{silent:true,data:areaData},markLine:{silent:true,symbol:'none',data:[...boundaryLines,...currentLine]},z:3},
-    ]
-  },true)
-}
 function resizeChart(){chart?.resize()}
 function safeRenderChart(){try{renderChartUnsafe()}catch(err){console.error('[StructureAnalysis] chart overlay error',err);if(!chartRef.value||!bars.value.length)return;if(chart)chart.dispose();chart=echarts.init(chartRef.value);const data=bars.value.map(x=>[Number(x.open??x.open_price??closeOf(x)),Number(x.close??x.close_price??0),Number(x.low??x.low_price??closeOf(x)),Number(x.high??x.high_price??closeOf(x))]);chart.setOption({animation:false,tooltip:{trigger:'axis'},grid:{left:55,right:35,top:32,bottom:58},xAxis:{type:'category',data:bars.value.map(stamp)},yAxis:{scale:true},dataZoom:[{type:'inside'},{type:'slider',height:18,bottom:8}],series:[{name:'K线',type:'candlestick',data,itemStyle:{color:'#1f9d72',color0:'#d95d55',borderColor:'#1f9d72',borderColor0:'#d95d55'}}]})}}
 function renderChart(){safeRenderChart()}
@@ -235,17 +189,12 @@ watch(period,()=>{if(symbol.value){load();loadTradePlans()}});watch(symbol,()=>{
 <style scoped>.structure-page{max-width:1500px;padding:28px}.hero{display:flex;justify-content:space-between;gap:24px;align-items:center;padding:28px 30px;margin-bottom:20px;border-radius:22px;color:#f5fffa;background:linear-gradient(125deg,#173d35,#277d61)}.hero span{font-size:.72rem;letter-spacing:.16em;color:#f4cf77;font-weight:800}.hero h1{margin:5px 0;font-size:2rem}.hero p{margin:0;color:#cce4da}.controls{display:flex;gap:10px;align-items:center;min-width:390px}.summary{height:100%;border:1px solid #dbe8e1}.summary h2{margin:6px 0 10px;color:#204f42}.summary p{color:#60736b;min-height:34px}.stats{display:flex;gap:18px;color:#60736b;font-size:.85rem}.timeline{display:flex;gap:18px;overflow:auto;padding:8px 0}.segment{display:flex;gap:8px;min-width:150px}.segment i{width:8px;border-radius:8px;display:block}.segment small,.segment p{display:block;color:#71837b;font-size:.78rem;margin:4px 0}.segment.active strong{color:#167052}.segment-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}.segment-grid article{padding:14px;border:1px solid #dbe8e1;border-radius:14px;background:#fbfdfb}.segment-grid article.active{border-color:#2d9871;box-shadow:0 5px 18px #2d987122}.card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.segment-grid p{height:38px;color:#60736b;font-size:.82rem}.segment-grid small{color:#71837b}.empty{text-align:center;color:#71837b}@media(max-width:850px){.hero{align-items:stretch;flex-direction:column}.controls{min-width:0;width:100%}.segment-grid{grid-template-columns:1fr 1fr}}@media(max-width:600px){.structure-page{padding:16px}.controls{flex-wrap:wrap}.controls>*{flex:1}.segment-grid{grid-template-columns:1fr}}</style>
 <style scoped>
 .hierarchy-grid,.pattern-list{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-.zone-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.zone-grid article{padding:12px;border:1px solid #dbe8e1;border-radius:10px;background:#fbfdfb}.zone-grid p{margin:6px 0;color:#60736b;font-size:.82rem}.zone-status{display:flex;gap:5px;align-items:center}.zone-revision,.zone-state-reason{display:block;color:#8a9a93;font-size:.7rem;word-break:break-word}.zone-state-reason{color:#60736b;margin-top:4px}.zone-event{display:flex;gap:6px;align-items:center;margin-top:7px}.zone-event small{color:#71837b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.opportunity-link{margin-top:4px}.opportunity-detail{border:1px solid #cfe3da}.opportunity-stages{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}.opportunity-stages>div{display:flex;flex-direction:column;gap:3px;padding:8px;border:1px solid #dbe8e1;border-radius:8px}.opportunity-stages span,.opportunity-stages small{color:#60736b;font-size:.78rem}.pivot-zone-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px dashed #d7e3dd}
-.pressure-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:18px}.pressure-stat,.pressure-conclusion{padding:12px 14px;border:1px solid #dce9e3;border-radius:12px;background:#f8fbf9}.pressure-stat small,.pressure-conclusion small{display:block;color:#71837b;font-size:.74rem}.pressure-stat strong{display:block;margin-top:4px;color:#29483f;font-size:1.05rem}.pressure-stat span{display:block;margin-top:4px;color:#71837b;font-size:.74rem}.pressure-stat.support{border-left:4px solid #30976d}.pressure-stat.resistance{border-left:4px solid #d45b52}.pressure-conclusion{background:linear-gradient(135deg,#f7fbf9,#eef7f2)}.pressure-conclusion strong{display:block;margin-top:5px;color:#315f50;font-size:.86rem;line-height:1.45}.zone-chart{width:100%;height:360px;border:1px solid #dce9e3;border-radius:14px;background:#fff}.pressure-legend{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 14px;color:#71837b;font-size:.75rem}.pressure-legend span{display:inline-flex;align-items:center;gap:5px}.legend-dot{width:9px;height:9px;border-radius:50%;display:inline-block}.support-dot{background:#30976d}.resistance-dot{background:#d45b52}.inside-dot{background:#d4a24c}.pressure-details{border-top:1px dashed #d7e3dd}.zone-detail-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.zone-detail-list article{padding:11px;border:1px solid #dbe8e1;border-radius:10px;background:#fbfdfb}.zone-detail-list p{margin:6px 0;color:#60736b;font-size:.82rem}.zone-detail-list small{display:block;color:#71837b;font-size:.72rem}.zone-events-inline{margin-top:6px;color:#42665a;font-size:.76rem}
 .hierarchy-item,.pattern-list article{padding:14px;border:1px solid #dbe8e1;border-radius:10px;background:#fbfdfb}
 .state-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;border-bottom:1px dashed #e3ece7;color:#71837b;font-size:.8rem}.state-row strong{color:#315f50;text-align:right}
 .hierarchy-item p,.pattern-list p{margin:6px 0;color:#60736b;font-size:.82rem}
 .hierarchy-item small{display:block;color:#71837b;margin-top:3px}
 .pattern-list{grid-template-columns:repeat(2,1fr)}
 @media(max-width:850px){.hierarchy-grid,.pattern-list{grid-template-columns:1fr}}
-@media(max-width:850px){.zone-grid{grid-template-columns:1fr}}
-@media(max-width:850px){.pressure-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.zone-detail-list{grid-template-columns:1fr}}
-@media(max-width:600px){.pressure-summary{grid-template-columns:1fr}.zone-chart{height:320px}.zone-detail-list{grid-template-columns:1fr}}
 </style>
 <style scoped>
 .plan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
