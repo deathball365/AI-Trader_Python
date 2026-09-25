@@ -23,6 +23,9 @@ from .structure_plan.lifecycle import (
     next_outside_zone_closes, max_entry_zone_widths,
 )
 from .structure_plan.config_resolver import resolve as resolve_plan_config
+from .structure_plan.setup_binding import (
+    binding_matches, layer_event, layer_pattern, layer_state, resolve_binding,
+)
 from ..market_event_risk_service import active_event
 
 
@@ -40,6 +43,10 @@ STRUCTURE_PLAN_DEFAULT_CONFIG = {
     "enabled": True,
     "allowed_directions": ["buy", "sell"],
     "entry_mode": "",
+    "bind_pattern": "",
+    "bind_event": "",
+    "direction_layer": "swing",
+    "entry_layer": "internal",
     "confirmation_bars": 1,
     "min_body_atr": 0.0,
     "min_displacement_atr": 0.0,
@@ -222,7 +229,7 @@ class StructurePlanBuilder:
         for profile in self.setup_profiles:
             if str(profile.get("setup_type") or "").strip().lower() == self._active_setup:
                 self._active_profile = dict(profile)
-                self.params.update({k: v for k, v in profile.items() if k in STRUCTURE_PLAN_DEFAULT_CONFIG})
+                self.params.update({k: v for k, v in profile.items() if k in STRUCTURE_PLAN_DEFAULT_CONFIG or k in {"bind_pattern","bind_event","direction_layer","entry_layer"}})
                 # Map the optimizer's common controls onto the existing
                 # setup-specific gates so recommendations affect generation.
                 if "min_displacement_atr" in profile:
@@ -239,6 +246,24 @@ class StructurePlanBuilder:
     def _reject(self, reason: str) -> None:
         if reason and reason not in self._rejections:
             self._rejections.append(reason)
+
+    def _setup_binding(self, setup_type: str = "") -> dict:
+        return resolve_binding(setup_type or self._active_setup, self.params)
+
+    def _binding_context(self, structure: Dict, setup_type: str = "") -> dict:
+        binding = self._setup_binding(setup_type)
+        direction_layer = binding["direction_layer"]
+        entry_layer = binding["entry_layer"]
+        return {
+            **binding,
+            "direction_pattern": layer_pattern(structure, direction_layer),
+            "entry_pattern": layer_pattern(structure, entry_layer),
+            "direction_event": layer_event(structure, direction_layer),
+            "entry_event": layer_event(structure, entry_layer),
+            "direction_state": layer_state(structure, direction_layer),
+            "entry_state": layer_state(structure, entry_layer),
+            "matched": binding_matches(structure, binding),
+        }
 
     def _range_entry_mode(self) -> str:
         configured = str(self._param("entry_mode", "") or "").strip().lower()
@@ -714,6 +739,7 @@ class StructurePlanBuilder:
         payload = {
             "plan_id": plan_id, "plan_group_id": group,
             "setup_type": setup_type, "setup_family": self._setup_family(setup_type),
+            **{k: v for k, v in self._setup_binding(setup_type).items() if k != "setup_type"},
             "direction": direction, "entry_mode": entry_mode, "status": status,
             "symbol": str(symbol), "period": str(period).upper(),
             "entry_price": round(entry, 8),
@@ -1302,7 +1328,12 @@ class StructurePlanBuilder:
         self, source_id, symbol, period, rows, structure, snapshot,
         bar_time, seconds,
     ) -> List[Dict]:
-        box = structure.get("range") or {}
+        binding = self._setup_binding("range_breakout")
+        layer = binding["direction_layer"]
+        state = layer_state(structure, layer)
+        box = dict(state.get("pattern_detail") or structure.get("range") or {})
+        if not box:
+            box = dict(structure.get("range") or {})
         if not box or not self._param("enable_range", True):
             return []
         top, bottom = _number(box.get("top")), _number(box.get("bottom"))
@@ -1635,12 +1666,14 @@ class StructurePlanBuilder:
         self, source_id, symbol, period, rows, structure, snapshot,
         bar_time, seconds,
     ) -> List[Dict]:
-        events = structure.get("internal_events") or []
-        if not events:
-            return []
         atr = max(1e-9, _number(structure.get("atr")))
         hierarchy = structure.get("structure_hierarchy") or {}
         swing = hierarchy.get("swing") or {}
+        event_binding = self._setup_binding("trend_continuation")
+        events = (structure.get({"internal":"internal_events","swing":"major_events","external":"external_events"}[event_binding["entry_layer"]])
+                  or structure.get("major_events") or structure.get("internal_events") or [])
+        if not events:
+            return []
         latest = events[-1]
         event_type = str(latest.get("type") or "")
         event_index = int(latest.get("confirmed_at", latest.get("index", -1)) or -1)
@@ -2503,6 +2536,10 @@ class StructurePlanSignalGenerator:
                     allowed_setups = {str(item).strip().lower() for item in (effective.get("allowed_setups") or []) if str(item).strip()}
                     effective_dirs = {str(item).strip().lower() for item in (effective.get("allowed_directions") or ["buy", "sell"]) if str(item).strip().lower() in {"buy", "sell"}}
                     blocked_setups = {str(item).strip().lower() for item in (effective.get("blocked_setups") or []) if str(item).strip()}
+                    binding = resolve_binding(setup_type, effective)
+                    snapshot = plan.get("structure_snapshot") or {}
+                    if snapshot and not binding_matches(snapshot, binding) and not binding_matches(plan, binding):
+                        continue
                     if (allowed_setups and setup_type not in allowed_setups) or setup_type in blocked_setups or not bool(effective.get("enabled", True)):
                         continue
                     if effective_dirs and direction not in effective_dirs:

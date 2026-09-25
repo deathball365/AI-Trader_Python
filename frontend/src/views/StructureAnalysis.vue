@@ -151,15 +151,10 @@ const mapSegments=list=>{
 }
 const layerSegments=layer=>layerSegmentMap.value[layer]||[]
 const layerPlans=layer=>{
-  const familyByLayer={internal:['liquidity','reversal','observation'],swing:['range','triangle','trend_follow','reversal'],external:['trend_follow','range']}
-  const families=new Set(familyByLayer[layer]||[])
   return tradePlans.value.filter(plan=>{
-    const family=String(plan.setup_family||'')
-    const setup=String(plan.setup_type||'')
-    if(family && families.has(family)) return true
-    if(layer==='internal') return setup.includes('sweep') || setup.includes('choch') || setup==='no_trade'
-    if(layer==='external') return setup.includes('trend') || setup.includes('structure_reversal')
-    return !setup.includes('sweep')
+    const directionLayer=String(plan.direction_layer||'swing')
+    const entryLayer=String(plan.entry_layer||directionLayer)
+    return directionLayer===layer || entryLayer===layer
   })
 }
 const formatPlanTime=value=>value?new Date(Number(value)*1000).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}):'--'

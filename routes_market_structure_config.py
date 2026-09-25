@@ -37,7 +37,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         "invalidate_on_zone_return",
         "false_breakout_require_reclaim_close",
     }
-    string_keys = {"entry_mode"}
+    string_keys = {"entry_mode", "bind_pattern", "bind_event", "direction_layer", "entry_layer"}
     inherit_empty_list_keys = {"allowed_setups", "blocked_setups", "allowed_directions", "blocked_hours"}
 
     ratio_keys = set()
