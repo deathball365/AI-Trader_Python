@@ -7,6 +7,7 @@ from market.services.market_structure_engine_v2 import (
     _advance_locked_range_breakout,
     _event_stream,
     _range,
+    _scope_pattern,
     _segments,
     analyze,
     analyze_incremental,
@@ -270,6 +271,28 @@ class MarketStructureEngineTests(unittest.TestCase):
         })
         self.assertEqual(result[-1]["type"], "down")
         self.assertIn("主结构偏向下跌", result[-1]["reason"])
+
+
+    def test_internal_pattern_uses_recent_window(self):
+        # A long directional lead would drown Internal geometry if the
+        # classifier scanned the full chart. The recent 80-bar box must win.
+        lead = [80 + i * 0.4 for i in range(520)]
+        box = [120 + ((i % 8) - 4) * 0.15 for i in range(80)]
+        rows = bars(lead + box)
+        pivots = []
+        start = 520
+        for offset, price in ((8, 121.2), (24, 121.1), (40, 121.05), (56, 121.0)):
+            pivots.append({"index": start + offset, "kind": "high", "price": price, "confirmed_at": start + offset + 3})
+        for offset, price in ((12, 118.8), (28, 118.85), (44, 118.9), (60, 118.95)):
+            pivots.append({"index": start + offset, "kind": "low", "price": price, "confirmed_at": start + offset + 3})
+        config = {
+            "range_min_bars": 24, "range_touch_tolerance": 0.003, "range_touch_atr": 0.5,
+            "range_min_touches": 2, "range_min_inside_ratio": 0.55, "range_max_atr": 10,
+            "break_confirm_bars": 2, "break_buffer_atr": 0.1,
+        }
+        internal = _scope_pattern(rows, sorted(pivots, key=lambda item: item["index"]), 1.0, config, "up", "internal")
+        self.assertEqual(internal["pattern"], "range")
+        self.assertIn(internal["phase"], {"forming", "mature"})
 
     def test_local_pattern_does_not_override_swing_bias(self):
         rows = bars([110 - i * 0.25 for i in range(100)])

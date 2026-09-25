@@ -558,8 +558,35 @@ def _local_patterns(rows: List[Dict], box: Optional[Dict], trendlines: List[Dict
     return patterns
 
 
+def _scope_window(rows: List[Dict], pivots: List[Dict], scope: str) -> Tuple[List[Dict], List[Dict]]:
+    """Keep geometry local to the hierarchy being classified.
+
+    Internal must not scan the full 600-bar chart; otherwise a short-lived
+    box is drowned by the longer Swing path and collapses to "trend".
+    """
+    if not rows:
+        return rows, pivots
+    bars = {"internal": 80, "swing": 180, "external": 360}.get(scope, len(rows))
+    start = max(0, len(rows) - max(24, bars))
+    window = rows[start:]
+    local = []
+    for pivot in pivots or []:
+        index = int(pivot.get("index") or 0)
+        if index < start:
+            continue
+        item = dict(pivot)
+        item["index"] = index - start
+        if item.get("confirmed_at") is not None:
+            try:
+                item["confirmed_at"] = int(item["confirmed_at"]) - start
+            except (TypeError, ValueError):
+                pass
+        local.append(item)
+    return window, local
+
+
 def _scope_pattern(rows: List[Dict], pivots: List[Dict], atr: float,
-                   config: Dict, bias: str) -> Dict:
+                   config: Dict, bias: str, scope: str = "swing") -> Dict:
     """Classify geometry independently for one hierarchy scope.
 
     Direction (``bias``) comes from that scope's pivot state machine.  The
@@ -567,7 +594,12 @@ def _scope_pattern(rows: List[Dict], pivots: List[Dict], atr: float,
     boundary and inside-ratio checks pass; otherwise a directional scope is a
     trend and an unresolved scope is neutral.
     """
-    box = _range(rows, pivots, atr, config)
+    window, local_pivots = _scope_window(rows, pivots, scope)
+    scoped = dict(config)
+    if scope == "internal":
+        scoped["range_min_bars"] = min(int(config.get("range_min_bars") or 24), 18)
+        scoped["range_min_inside_ratio"] = min(float(config.get("range_min_inside_ratio") or 0.65), 0.58)
+    box = _range(window, local_pivots, atr, scoped)
     if box:
         pattern = {
             "range": "range",
@@ -976,7 +1008,7 @@ def analyze(symbol: str, period: str, rows: List[Dict], config: Dict = None) -> 
         ("swing", "medium", major_state, major_events),
         ("external", "large", external_state, external_events),
     ):
-        geometry = _scope_pattern(rows, levels[pivot_key], atr, cfg, state)
+        geometry = _scope_pattern(rows, levels[pivot_key], atr, cfg, state, name)
         last_event = events[-1] if events else None
         hierarchy[name].update({
             "pattern": geometry["pattern"],

@@ -14,9 +14,10 @@
         <div class="state-row"><span>Pattern</span><strong>{{ patternLabel(item.pattern) }}</strong></div>
         <div class="state-row"><span>Phase</span><strong>{{ patternPhaseLabel(item.pattern, item.pattern_phase || item.phase) }}</strong></div>
         <div class="state-row"><span>Event</span><v-chip size="x-small" :color="eventColor(item.event)" variant="tonal">{{ eventLabel(item.event) }}</v-chip></div>
-        <p v-if="item.pattern_detail">{{ patternDetail(item.pattern_detail) }}</p>
+        <p v-if="patternDetail(item.pattern_detail)">{{ patternDetail(item.pattern_detail) }}</p>
         <small>{{ item.pivot_count || 0 }} 个 Pivot · {{ setupMappingLabel(item) }}</small>
-        <small v-if="item.protected_high">保护高点 {{ Number(item.protected_high.price).toFixed(2) }}</small><small v-if="item.protected_low">保护低点 {{ Number(item.protected_low.price).toFixed(2) }}</small>
+        <small v-if="levelPrice(item.protected_high)">保护高点 {{ formatPlanPrice(levelPrice(item.protected_high)) }}</small>
+        <small v-if="levelPrice(item.protected_low)">保护低点 {{ formatPlanPrice(levelPrice(item.protected_low)) }}</small>
       </article></div></v-card-text>
     </v-card>
 
@@ -181,7 +182,22 @@ const patternPhaseLabel=(pattern,value)=>{
 }
 const eventLabel=value=>{const event=typeof value==='string'?value:(value?.type||value?.event_type||'');return {bos:'BOS 延续突破',choch:'CHoCH 结构转向',retest:'回踩确认',reclaim:'回收确认',false_breakout:'假突破',liquidity_sweep:'流动性扫过',breakout_confirmed:'突破已确认',none:'无新事件'}[event]||event||'无新事件'}
 const eventColor=value=>{const event=typeof value==='string'?value:(value?.type||value?.event_type||'');return event==='choch'||event==='false_breakout'?'warning':event==='bos'||event==='breakout_confirmed'?'success':event==='liquidity_sweep'?'secondary':'grey'}
-const patternDetail=value=>{if(typeof value==='string')return value;if(!value||typeof value!=='object')return '';return Object.entries(value).filter(([,item])=>item!==null&&item!==undefined&&item!=='').slice(0,3).map(([key,item])=>`${key}: ${typeof item==='number'?Number(item).toFixed(2):item}`).join(' · ')}
+const patternDetail=value=>{
+  if(typeof value==='string') return value
+  if(!value||typeof value!=='object') return ''
+  const labels={pattern:'形态',status:'状态',high_touches:'上沿触碰',low_touches:'下沿触碰',inside_ratio:'内部收盘',width_atr:'宽度ATR'}
+  return ['pattern','status','high_touches','low_touches','inside_ratio','width_atr']
+    .filter(key=>value[key]!==null&&value[key]!==undefined&&value[key]!=='')
+    .slice(0,4)
+    .map(key=>`${labels[key]} ${typeof value[key]==='number'?Number(value[key]).toFixed(2):value[key]}`)
+    .join(' · ')
+}
+const levelPrice=value=>{
+  if(value==null) return 0
+  if(typeof value==='number') return Number.isFinite(value)?value:0
+  const price=Number(value.price)
+  return Number.isFinite(price)&&price>0?price:0
+}
 const setupMappingLabel=item=>{const pattern=item?.pattern;const event=typeof item?.event==='string'?item.event:item?.event?.type;if(event==='bos'||event==='breakout_confirmed')return '突破类 SETUP 可评估';if(event==='choch'||event==='false_breakout')return '反转/假突破类 SETUP 可评估';if(pattern==='trend')return '趋势回撤类 SETUP 可评估';return '等待事件满足执行条件'}
 // 结构时间轴条已停用，保留空样式函数避免旧模板调用导致渲染中断。
 const stripStyle=()=>({display:'none'})
