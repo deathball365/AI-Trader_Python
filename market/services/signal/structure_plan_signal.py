@@ -1969,6 +1969,7 @@ class StructurePlanSignalGenerator:
         self.account_id = int(account_id or 0)
         self._cache: Dict[tuple, List[Dict]] = {}
         self._last_bar: Dict[tuple, int] = {}
+        self._last_config_signature: Dict[tuple, str] = {}
         self._tick_state: Dict[str, Dict] = {}
 
     def refresh_plans(
@@ -1992,14 +1993,21 @@ class StructurePlanSignalGenerator:
             # an execution account or deployment. Every live/paper strategy
             # reads the same closed-bar plan and applies its own risk rules.
             key = (source_id, str(symbol).upper(), period)
-            if self._last_bar.get(key) == bar_time:
-                all_plans.extend(self._cache.get(key, []))
-                continue
             # Structure plans are generated from the canonical market-layer
             # config, not duplicated strategy parameters.  Strategy config is
             # only used later for execution filtering and risk management.
             resolved_config = resolve_structure_plan_config(symbol, period, "__builder__")
             setup_profiles = resolved_config.pop("_setup_profiles", []) if isinstance(resolved_config, dict) else []
+            config_signature = hashlib.sha256(
+                json.dumps(
+                    {"config": resolved_config, "setup_profiles": setup_profiles},
+                    sort_keys=True, ensure_ascii=False, default=str,
+                ).encode("utf-8")
+            ).hexdigest()
+            if (self._last_bar.get(key) == bar_time
+                    and self._last_config_signature.get(key) == config_signature):
+                all_plans.extend(self._cache.get(key, []))
+                continue
             result = structure or analyze(symbol, period, rows[-600:], resolved_config)
             plans = StructurePlanBuilder(
                 resolved_config, setup_profiles=setup_profiles
@@ -2027,6 +2035,7 @@ class StructurePlanSignalGenerator:
             ) or plans
             self._cache[key] = plans
             self._last_bar[key] = bar_time
+            self._last_config_signature[key] = config_signature
             all_plans.extend(plans)
         return all_plans
 
