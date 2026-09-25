@@ -28,11 +28,11 @@ DEFAULT_BINDINGS: Dict[str, Dict[str, str]] = {
     },
     "range_lower_reversal": {
         "bind_pattern": "range", "bind_event": "reclaim",
-        "direction_layer": "swing", "entry_layer": "swing",
+        "direction_layer": "swing", "entry_layer": "internal",
     },
     "range_upper_reversal": {
         "bind_pattern": "range", "bind_event": "reclaim",
-        "direction_layer": "swing", "entry_layer": "swing",
+        "direction_layer": "swing", "entry_layer": "internal",
     },
     "triangle_breakout": {
         "bind_pattern": "triangle", "bind_event": "breakout_confirmed",
@@ -105,7 +105,10 @@ def normalize_event(value) -> str:
 
 
 def layer_state(structure: Dict, layer: str) -> Dict:
-    hierarchy = (structure or {}).get("structure_hierarchy") or {}
+    payload = structure or {}
+    hierarchy = payload.get("structure_hierarchy") or payload.get("structure_levels") or {}
+    if not isinstance(hierarchy, dict):
+        hierarchy = {}
     return dict(hierarchy.get(normalize_layer(layer)) or {})
 
 
@@ -116,23 +119,84 @@ def layer_events(structure: Dict, layer: str) -> List[Dict]:
         "swing": (structure or {}).get("major_events") or [],
         "external": (structure or {}).get("external_events") or [],
     }
-    return list(mapping.get(layer) or [])
+    events = list(mapping.get(layer) or [])
+    if events:
+        return events
+    state = layer_state(structure, layer)
+    current = state.get("event") or state.get("last_event")
+    return [current] if isinstance(current, dict) else []
 
 
 def layer_pattern(structure: Dict, layer: str) -> str:
     state = layer_state(structure, layer)
-    return normalize_pattern(state.get("pattern"))
+    detail = state.get("pattern_detail") if isinstance(state.get("pattern_detail"), dict) else {}
+    return normalize_pattern(state.get("pattern") or detail.get("pattern"))
+
+
+def layer_geometry_event(structure: Dict, layer: str) -> str:
+    state = layer_state(structure, layer)
+    detail = state.get("pattern_detail") if isinstance(state.get("pattern_detail"), dict) else {}
+    status = str(detail.get("status") or state.get("pattern_phase") or "").strip().lower()
+    if status == "failed_breakout":
+        return "false_breakout"
+    if status in {"breakout_confirmed", "breakout"}:
+        return "breakout_confirmed"
+    return "none"
 
 
 def layer_event(structure: Dict, layer: str) -> str:
+    geometry = layer_geometry_event(structure, layer)
+    if geometry != "none":
+        return geometry
     state = layer_state(structure, layer)
-    current = normalize_event(state.get("event"))
+    current = normalize_event(state.get("event") or state.get("last_event"))
     if current and current != "none":
         return current
     events = layer_events(structure, layer)
     if not events:
         return "none"
     return normalize_event(events[-1])
+
+
+def layer_box(structure: Dict, layer: str) -> Dict:
+    state = layer_state(structure, layer)
+    detail = state.get("pattern_detail") if isinstance(state.get("pattern_detail"), dict) else {}
+    pattern = layer_pattern(structure, layer)
+    box = dict(detail)
+    if pattern in PATTERNS and pattern not in {"trend"}:
+        box.setdefault("pattern", state.get("pattern") or pattern)
+    top, bottom = _safe_float(box.get("top")), _safe_float(box.get("bottom"))
+    if top > bottom > 0:
+        return box
+    return {}
+
+
+def _safe_float(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def setup_box(structure: Dict, binding: Dict) -> tuple[Dict, str]:
+    """Read geometry from the entry layer, then the direction layer.
+
+    Swing trend + Internal range uses the Internal box. Swing range uses the
+    Swing box even if Internal is still a small trend inside it.
+    """
+    wanted = normalize_pattern(binding.get("bind_pattern"))
+    entry_layer = normalize_layer(binding.get("entry_layer"))
+    direction_layer = normalize_layer(binding.get("direction_layer"), entry_layer)
+    for layer in (entry_layer, direction_layer):
+        pattern = layer_pattern(structure, layer)
+        if wanted == "range" and pattern not in {"range", "triangle"}:
+            continue
+        if wanted != "range" and pattern != wanted:
+            continue
+        box = layer_box(structure, layer)
+        if box:
+            return box, layer
+    return {}, ""
 
 
 def resolve_binding(setup_type: str, config: Optional[Dict] = None) -> Dict[str, str]:
@@ -155,17 +219,37 @@ def resolve_binding(setup_type: str, config: Optional[Dict] = None) -> Dict[str,
     return base
 
 
+def _pattern_matches(structure: Dict, layer: str, wanted: str) -> bool:
+    pattern = layer_pattern(structure, layer)
+    if pattern == wanted:
+        return True
+    return wanted == "range" and pattern == "triangle"
+
+
 def binding_matches(structure: Dict, binding: Dict) -> bool:
+    """Match geometry on the entry layer; range SETUPs may fall back to direction."""
     wanted_pattern = normalize_pattern(binding.get("bind_pattern"))
     wanted_event = normalize_event(binding.get("bind_event"))
     direction_layer = normalize_layer(binding.get("direction_layer"))
     entry_layer = normalize_layer(binding.get("entry_layer"), direction_layer)
-    if layer_pattern(structure, direction_layer) != wanted_pattern:
+    if wanted_pattern == "trend":
+        if not _pattern_matches(structure, entry_layer, wanted_pattern):
+            return False
+    elif not (
+        _pattern_matches(structure, entry_layer, wanted_pattern)
+        or _pattern_matches(structure, direction_layer, wanted_pattern)
+    ):
         return False
-    observed = {layer_event(structure, direction_layer), layer_event(structure, entry_layer)}
-    if wanted_event in {"retest", "reclaim"}:
-        return wanted_event in observed or "bos" in observed or "breakout_confirmed" in observed
+    observed = {
+        layer_event(structure, entry_layer),
+        layer_geometry_event(structure, entry_layer),
+        layer_event(structure, direction_layer),
+        layer_geometry_event(structure, direction_layer),
+    }
+    if wanted_event in {"retest", "reclaim", "none"}:
+        return True
     return wanted_event in observed
+
 
 
 def iter_enabled_bindings(config: Dict, setup_types: Iterable[str]) -> List[Dict]:

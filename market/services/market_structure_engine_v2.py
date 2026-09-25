@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 
 _CACHE: Dict[str, Dict] = {}
-ENGINE_VERSION = "hierarchical-structure-v11"
+ENGINE_VERSION = "hierarchical-structure-v12"
 DEFAULT_CONFIG = {
     "pivot_legs": 3, "medium_pivot_legs": 8, "large_pivot_legs": 25,
     "min_reversal_atr": 0.5, "break_buffer_atr": 0.10,
@@ -144,6 +144,7 @@ def _event_stream(rows: List[Dict], pivots: List[Dict], atrs: List[float], confi
                 if touched or (current["bars_after_break"] >= int(config.get("retest_bars", 0)) and held):
                     events.append({**current, "index": index, "confirmed_at": index,
                                    "confirmation_index": index, "type": current["event_type"],
+                                   "establishes_direction": bool(current.get("establishes_direction")),
                                    "confirmation": "retest_confirmed" if touched else "continuation_confirmed",
                                    "scope": scope, "retest_status": "touched_and_held" if touched else "held_without_touch"})
                     consumed.add((current["pivot_kind"], current["swing_index"]))
@@ -164,6 +165,7 @@ def _event_stream(rows: List[Dict], pivots: List[Dict], atrs: List[float], confi
             body = abs(close - _v(row, "open"))
             displacement = body / max(atr, 1e-9)
             event_type = "choch" if state not in ("undetermined", direction) else "bos"
+            establishes_direction = state == "undetermined" and event_type == "bos"
             if current["count"] < confirm_bars:
                 continue
             needs_retest = (event_type in {"bos", "choch"}
@@ -172,6 +174,7 @@ def _event_stream(rows: List[Dict], pivots: List[Dict], atrs: List[float], confi
                             and int(config.get("retest_bars", 0)) > 0)
             if needs_retest:
                 current.update({"stage": "retest", "event_type": event_type,
+                                "establishes_direction": establishes_direction,
                                 "break_confirmed_at": index, "bars_after_break": 0,
                                 "displacement_atr": round(displacement, 3), "status": "break_confirmed"})
                 candidates.append(current.copy())
@@ -179,6 +182,7 @@ def _event_stream(rows: List[Dict], pivots: List[Dict], atrs: List[float], confi
                 continue
             events.append({**current, "index": index, "confirmed_at": index,
                            "confirmation_index": index, "type": event_type,
+                           "establishes_direction": establishes_direction,
                            "confirmation": "close_confirmed", "scope": scope,
                            "displacement_atr": round(displacement, 3),
                            "retest_status": "displacement_confirmed" if displacement >= float(config.get("displacement_atr", 0.8)) else "not_required",
@@ -596,21 +600,36 @@ def _scope_window(rows: List[Dict], pivots: List[Dict], start: int) -> Tuple[Lis
     return window, local
 
 
-def _scope_pattern(rows: List[Dict], pivots: List[Dict], atr: float,
-                   config: Dict, bias: str, scope: str = "swing",
-                   events: Optional[List[Dict]] = None) -> Dict:
-    """Classify geometry on the current structure segment of this hierarchy."""
-    segment = _active_scope_segment(rows, events or [], pivots or [], config)
-    start = int(segment["start_index"])
+def _window_geometry(rows: List[Dict], pivots: List[Dict], start: int, end: int,
+                     atr: float, config: Dict, scope: str = "swing",
+                     bias: str = "") -> Dict:
+    """Classify one closed-bar window with the configured range/triangle/trend rules."""
+    start = max(0, int(start or 0))
+    end = min(len(rows) - 1, int(end if end is not None else (len(rows) - 1)))
+    if not rows or end < start:
+        return {"pattern": "none", "phase": "forming", "detail": {}, "box": None}
+    bars = end - start + 1
     window, local_pivots = _scope_window(rows, pivots, start)
+    window = window[:bars]
+    local_pivots = [item for item in local_pivots if int(item.get("index") or 0) < bars]
     scoped = dict(config)
-    scoped["range_min_bars"] = min(int(config.get("range_min_bars") or 24), max(8, min(18, segment["bars"])))
+    scoped["range_min_bars"] = min(int(config.get("range_min_bars") or 24), max(8, min(18, bars)))
     if scope == "internal":
         scoped["range_min_inside_ratio"] = min(float(config.get("range_min_inside_ratio") or 0.65), 0.58)
-    box = _range(window, local_pivots, atr, scoped) if len(window) >= 8 else None
-    detail = {"segment_bars": segment["bars"], "segment_start_index": start,
-              "segment_end_index": segment["end_index"]}
+    box = _range(window, local_pivots, atr, scoped) if bars >= 8 else None
+    detail = {"segment_bars": bars, "segment_start_index": start, "segment_end_index": end}
     if box:
+        box = dict(box)
+        box["start_index"] = start + int(box.get("start_index") or 0)
+        box["end_index"] = start + int(box.get("end_index") or max(0, bars - 1))
+        event = box.get("lifecycle_event")
+        if isinstance(event, dict):
+            event = dict(event)
+            if event.get("confirmed_at") is not None:
+                event["confirmed_at"] = start + int(event.get("confirmed_at") or 0)
+            if event.get("index") is not None:
+                event["index"] = start + int(event.get("index") or 0)
+            box["lifecycle_event"] = event
         pattern = {
             "range": "range",
             "triangle": "triangle",
@@ -622,10 +641,131 @@ def _scope_pattern(rows: List[Dict], pivots: List[Dict], atr: float,
         phase = "breakout_confirmed" if status == "breakout_confirmed" else (
             "mature" if bool(box.get("active")) else "forming"
         )
-        return {"pattern": pattern, "phase": phase, "detail": {**box, **detail}, "segment": segment}
-    if bias in {"up", "down"}:
-        return {"pattern": "trend", "phase": "continuation", "detail": detail, "segment": segment}
-    return {"pattern": "none", "phase": "forming", "detail": detail, "segment": segment}
+        return {"pattern": pattern, "phase": phase, "detail": {**box, **detail}, "box": box}
+    if bias in {"up", "down"} and bars >= max(8, int(config.get("min_segment_bars", 12))):
+        return {"pattern": "trend", "phase": "continuation", "detail": detail, "box": None}
+    return {"pattern": "none", "phase": "forming", "detail": detail, "box": None}
+
+
+def _geometry_kind(pattern: str) -> str:
+    name = str(pattern or "")
+    if "triangle" in name:
+        return "triangle"
+    if name in {"range", "box", "rectangle", "sideways", "broadening"}:
+        return "sideways"
+    if name in {"trend", "up", "down"}:
+        return "trend"
+    return "transition"
+
+
+def _apply_geometry_cuts(rows: List[Dict], segments: List[Dict], pivots: List[Dict],
+                         atr: float, config: Dict, scope: str) -> List[Dict]:
+    """Split event segments where a confirmed range/triangle actually starts or breaks."""
+    min_bars = 6 if scope == "internal" else max(6, int(config.get("min_segment_bars", 12) // 2))
+    result = []
+    for segment in segments:
+        start = int(segment.get("start_index") or 0)
+        end = int(segment.get("end_index") or start)
+        bias = segment["type"] if segment.get("type") in {"up", "down"} else ""
+        geometry = _window_geometry(rows, pivots, start, end, atr, config, scope, bias)
+        box = geometry.get("box")
+        pattern = geometry.get("pattern") or "none"
+        if not box or pattern not in {
+            "range", "triangle", "ascending_triangle", "descending_triangle", "broadening",
+        }:
+            item = dict(segment)
+            item.update({
+                "pattern": pattern if pattern != "none" else ("trend" if bias else "none"),
+                "pattern_phase": geometry.get("phase") or "forming",
+                "pattern_detail": geometry.get("detail") or {},
+            })
+            result.append(item)
+            continue
+        box_start = max(start, min(end, int(box.get("start_index") or start)))
+        status = str(box.get("status") or "")
+        breakout = None
+        if status == "breakout_confirmed":
+            breakout = int((box.get("lifecycle_event") or {}).get("confirmed_at") or end)
+            breakout = max(start, min(end, breakout))
+        if box_start - start >= min_bars:
+            lead_geometry = _window_geometry(
+                rows, pivots, start, box_start - 1, atr, config, scope, bias,
+            )
+            # Only split when the lead-in is a real directional move, not the
+            # first few bars that already belong to the same box.
+            if lead_geometry.get("pattern") == "trend":
+                lead = dict(segment)
+                lead.update({
+                    "end_index": box_start - 1,
+                    "pattern": "trend" if bias else lead_geometry.get("pattern") or "none",
+                    "pattern_phase": lead_geometry.get("phase") or "continuation",
+                    "pattern_detail": lead_geometry.get("detail") or {},
+                })
+                result.append(lead)
+                start = box_start
+        kind = _geometry_kind(pattern)
+        if breakout is not None and breakout - start >= min_bars and end - breakout >= min_bars:
+            range_item = dict(segment)
+            range_item.update({
+                "start_index": start, "end_index": breakout - 1, "type": kind,
+                "status": "confirmed",
+                "event": {"type": "range_confirmed", "confirmed_at": start,
+                          "pattern": box.get("pattern"), "direction": "neutral"},
+                "pattern": pattern, "pattern_phase": "mature",
+                "pattern_detail": box,
+            })
+            trend_item = dict(segment)
+            direction = str(box.get("breakout_direction") or bias or "transition")
+            trend_item.update({
+                "start_index": breakout, "end_index": end,
+                "type": direction if direction in {"up", "down"} else "transition",
+                "status": "confirmed",
+                "event": dict(box.get("lifecycle_event") or {}),
+                "pattern": "trend", "pattern_phase": "breakout_confirmed",
+                "pattern_detail": box,
+            })
+            result.extend([range_item, trend_item])
+            continue
+        item = dict(segment)
+        event = segment.get("event") or {}
+        if status == "failed_breakout":
+            event = box.get("lifecycle_event") or event
+        elif not event or event.get("type") not in {"choch", "bos"}:
+            event = {"type": "range_confirmed", "confirmed_at": start,
+                     "pattern": box.get("pattern"), "direction": "neutral"}
+        item.update({
+            "start_index": start, "type": kind, "status": "confirmed", "event": event,
+            "pattern": pattern, "pattern_phase": geometry.get("phase") or "mature",
+            "pattern_detail": box,
+        })
+        result.append(item)
+    return result
+
+
+def _scope_pattern(rows: List[Dict], pivots: List[Dict], atr: float,
+                   config: Dict, bias: str, scope: str = "swing",
+                   events: Optional[List[Dict]] = None) -> Dict:
+    """Classify geometry on the current structure segment of this hierarchy."""
+    segments = _segments(
+        rows, events or [], None, pivots or [], pivots or [], atr, config, scope,
+    )
+    last = segments[-1] if segments else {
+        "start_index": 0, "end_index": max(0, len(rows) - 1), "type": "transition",
+    }
+    pattern = last.get("pattern")
+    if pattern:
+        return {
+            "pattern": pattern,
+            "phase": last.get("pattern_phase") or "forming",
+            "detail": last.get("pattern_detail") or {},
+            "segment": last,
+        }
+    geometry = _window_geometry(
+        rows, pivots, last.get("start_index") or 0, last.get("end_index") or 0,
+        atr, config, scope, bias,
+    )
+    geometry["segment"] = last
+    return geometry
 
 
 def _primary_structure(swing: Dict, external: Dict) -> str:
@@ -691,6 +831,8 @@ def _anchor_confirmed_segments(rows: List[Dict], segments: List[Dict],
         event = current.get("event") or {}
         if current.get("type") not in ("up", "down") or not event:
             continue
+        if str(event.get("type") or "") != "choch":
+            continue
         search_start = max(previous["start_index"], 0)
         search_end = min(int(event.get("confirmed_at", event.get("index", search_start))), len(rows) - 1)
         if search_end <= search_start:
@@ -714,54 +856,39 @@ def _anchor_confirmed_segments(rows: List[Dict], segments: List[Dict],
 
 def _segments(rows: List[Dict], events: List[Dict], box: Optional[Dict],
               small: List[Dict], major: List[Dict], atr: float,
-              config: Dict) -> List[Dict]:
-    # CHoCH reverses the current structure and starts a new segment.
-    # BOS continues the same structure, so it must not split the segment.
-    changes = [event for event in events if event["type"] == "choch"]
-    points = [0] + [event["confirmed_at"] for event in changes] + [max(0, len(rows) - 1)]
+              config: Dict, scope: str = "swing") -> List[Dict]:
+    # CHoCH always starts a new directional segment. Continuation BOS does not.
+    # The first BOS that creates a direction, and a confirmed range/triangle,
+    # are the other two allowed cuts.
+    last = max(0, len(rows) - 1)
+    cuts = [0]
+    cut_events = {}
+    for event in events or []:
+        kind = str(event.get("type") or "")
+        index = int(event.get("confirmed_at", event.get("index", -1)) or -1)
+        if index <= 0 or index >= last:
+            continue
+        if kind == "choch" or (kind == "bos" and event.get("establishes_direction")):
+            cuts.append(index)
+            cut_events[index] = event
+    cuts.append(last)
+    cuts = sorted(set(cuts))
     result = []
-    for start, end in zip(points, points[1:]):
-        event = next((item for item in changes if item["confirmed_at"] == start), None)
+    for start, end in zip(cuts, cuts[1:]):
+        event = cut_events.get(start)
+        if event and str(event.get("direction") or "") in {"up", "down"}:
+            seg_type = event["direction"]
+        else:
+            seg_type = "transition"
         result.append({"start_index": start, "end_index": end,
-                       "type": event["direction"] if event else "transition", "event": event,
+                       "type": seg_type, "event": event,
                        "status": "confirmed" if event else "transition"})
     result = _anchor_confirmed_segments(
         rows, result, major, int(config.get("trend_max_anchor_bars", 48))
     )
-    if box and box.get("active"):
-        start, kept = int(box["start_index"]), []
-        for segment in result:
-            if segment["end_index"] < start:
-                kept.append(segment)
-            elif segment["start_index"] < start:
-                segment["end_index"] = start - 1
-                kept.append(segment)
-        kind = "triangle" if "triangle" in box["pattern"] else "sideways"
-        kept.append({"start_index": start, "end_index": len(rows) - 1, "type": kind, "status": "confirmed",
-                     "event": {"type": "range_confirmed", "confirmed_at": len(rows) - 1,
-                               "pattern": box["pattern"], "direction": "neutral"}})
-        result = kept
-    elif box and box.get("status") == "breakout_confirmed":
-        start = int(box["start_index"])
-        breakout = int((box.get("lifecycle_event") or {}).get("confirmed_at", len(rows) - 1))
-        kept = []
-        for segment in result:
-            if segment["end_index"] < start:
-                kept.append(segment)
-            elif segment["start_index"] < start:
-                kept.append({**segment, "end_index": start - 1})
-        kind = "triangle" if "triangle" in box["pattern"] else "sideways"
-        if breakout > start:
-            kept.append({"start_index": start, "end_index": breakout - 1,
-                         "type": kind, "status": "confirmed",
-                         "event": {"type": "range_confirmed", "confirmed_at": start,
-                                   "pattern": box["pattern"], "direction": "neutral"}})
-        kept.append({"start_index": breakout, "end_index": len(rows) - 1,
-                     "type": box["breakout_direction"], "status": "confirmed",
-                     "event": {**(box.get("lifecycle_event") or {}),
-                               "confirmation_index": breakout,
-                               "confirmation": "close_confirmed", "scope": "major"}})
-        result = kept
+    result = _apply_geometry_cuts(
+        rows, result, major or small or [], atr, config, scope,
+    )
     merged = []
     for segment in result:
         segment["bars"] = segment["end_index"] - segment["start_index"] + 1
@@ -812,8 +939,9 @@ def _segments(rows: List[Dict], events: List[Dict], box: Optional[Dict],
         strength = min(95, 28 + evidence_count * 6 + min(20, abs(net) * 4)
                        + min(12, displacement * 6) + confirmation_bonus + level_bonus
                        - min(18, retracement * 20))
+        detail = segment.get("pattern_detail") or box or {}
         if segment["type"] in ("sideways", "triangle"):
-            strength = min(95, 45 + (box.get("score", 0) / 2 if box else 0))
+            strength = min(95, 45 + (float(detail.get("score") or 0) / 2))
         if (segment["type"] == "up" and net < -0.25) or (segment["type"] == "down" and net > 0.25):
             segment["type"], strength = "transition", min(strength, 40)
         breakout_segment = event.get("type") == "range_breakout_confirmed"
@@ -828,7 +956,7 @@ def _segments(rows: List[Dict], events: List[Dict], box: Optional[Dict],
         # A segment can contain both HH/HL and LH/LL without being a neutral
         # range. If one side clearly dominates and price travelled materially
         # in that direction, retain the dominant directional structure.
-        if segment["type"] == "sideways" and not (event.get("type") == "range_confirmed" and box):
+        if segment["type"] == "sideways" and not (event.get("type") == "range_confirmed" and detail):
             up_count = counts["HH"] + counts["HL"]
             down_count = counts["LH"] + counts["LL"]
             total = up_count + down_count
@@ -878,13 +1006,16 @@ def _segments(rows: List[Dict], events: List[Dict], box: Optional[Dict],
             segment["reason"] = (f"主结构偏向下跌；LH/LL {counts['LH'] + counts['LL']} 个，"
                                  f"HH/HL {counts['HH'] + counts['HL']} 个，方向一致率 {round(direction_ratio * 100)}%")
         elif segment["type"] == "triangle":
-            inside_ratio = box.get("inside_ratio") if box else None
+            inside_ratio = detail.get("inside_ratio") if detail else None
             segment["reason"] = (f"高点与低点边界收敛，内部收盘比例 {round(inside_ratio * 100)}%"
                                   if inside_ratio is not None else
                                   f"高点与低点边界收敛；方向效率 {round(efficiency * 100)}%")
         elif segment["type"] == "sideways":
-            if event.get("type") == "range_confirmed" and box:
-                segment["reason"] = f"箱体上下沿触碰 {box['high_touches']}/{box['low_touches']} 次，内部收盘比例 {round(box['inside_ratio'] * 100)}%"
+            if event.get("type") == "range_confirmed" and detail:
+                segment["reason"] = (
+                    f"箱体上下沿触碰 {detail.get('high_touches', 0)}/{detail.get('low_touches', 0)} 次，"
+                    f"内部收盘比例 {round(float(detail.get('inside_ratio') or 0) * 100)}%"
+                )
             else:
                 segment["reason"] = (f"双向结构交错：HH/HL {counts['HH'] + counts['HL']} 个，"
                                      f"LH/LL {counts['LH'] + counts['LL']} 个，方向效率 {round(efficiency * 100)}%")
@@ -994,9 +1125,9 @@ def analyze(symbol: str, period: str, rows: List[Dict], config: Dict = None) -> 
     external_events, external_candidates, external_state = _event_stream(rows, levels["large"], atrs, cfg, "external")
     box = _range(rows, levels["medium"] or levels["small"], atr, cfg)
     layer_segments = {
-        "internal": _segments(rows, internal_events, None, levels["small"], levels["small"], atr, cfg),
-        "swing": _segments(rows, major_events, None, levels["small"], levels["medium"], atr, cfg),
-        "external": _segments(rows, external_events, None, levels["medium"], levels["large"], atr, cfg),
+        "internal": _segments(rows, internal_events, None, levels["small"], levels["small"], atr, cfg, "internal"),
+        "swing": _segments(rows, major_events, None, levels["small"], levels["medium"], atr, cfg, "swing"),
+        "external": _segments(rows, external_events, None, levels["medium"], levels["large"], atr, cfg, "external"),
     }
     segments = layer_segments["swing"]
     active_candidate = next((item for item in reversed(major_candidates) if item.get("status") == "candidate"), None)

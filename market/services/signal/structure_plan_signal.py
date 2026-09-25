@@ -24,7 +24,8 @@ from .structure_plan.lifecycle import (
 )
 from .structure_plan.config_resolver import resolve as resolve_plan_config
 from .structure_plan.setup_binding import (
-    binding_matches, layer_event, layer_pattern, layer_state, resolve_binding,
+    binding_matches, layer_event, layer_events, layer_pattern,
+    resolve_binding, setup_box,
 )
 from ..market_event_risk_service import active_event
 
@@ -254,6 +255,7 @@ class StructurePlanBuilder:
         binding = self._setup_binding(setup_type)
         direction_layer = binding["direction_layer"]
         entry_layer = binding["entry_layer"]
+        box, box_layer = setup_box(structure, binding)
         return {
             **binding,
             "direction_pattern": layer_pattern(structure, direction_layer),
@@ -262,8 +264,37 @@ class StructurePlanBuilder:
             "entry_event": layer_event(structure, entry_layer),
             "direction_state": layer_state(structure, direction_layer),
             "entry_state": layer_state(structure, entry_layer),
+            "box": box,
+            "box_layer": box_layer,
             "matched": binding_matches(structure, binding),
         }
+
+    def _setup_owns_layer(self, setup_type: str, box_layer: str) -> bool:
+        binding = self._setup_binding(setup_type)
+        layer = str(box_layer or "").strip().lower()
+        return layer in {binding["entry_layer"], binding["direction_layer"]}
+
+    def _select_bound_event(self, structure: Dict):
+        ranked = []
+        for event_type, setup_type in (
+            ("choch", "choch_reversal"),
+            ("liquidity_sweep", "liquidity_sweep_reclaim"),
+            ("bos", "trend_continuation"),
+        ):
+            binding = self._setup_binding(setup_type)
+            if event_type != "choch" and not binding_matches(structure, binding):
+                continue
+            events = layer_events(structure, binding["entry_layer"])
+            for event in reversed(events):
+                if str(event.get("type") or "") != event_type:
+                    continue
+                index = int(event.get("confirmed_at", event.get("index", -1)) or -1)
+                ranked.append((index, event, setup_type))
+                break
+        if not ranked:
+            return None
+        _index, event, setup_type = max(ranked, key=lambda item: item[0])
+        return event, setup_type
 
     def _range_entry_mode(self) -> str:
         configured = str(self._param("entry_mode", "") or "").strip().lower()
@@ -361,7 +392,9 @@ class StructurePlanBuilder:
         if setup in {"choch_reversal", "range_false_breakout"} and phase == "failed":
             return ""
         layers = cls.structure_layers(structure)
-        bias = cls.background_bias(structure)
+        binding = resolve_binding(setup, config)
+        layer_bias = layers.get(binding.get("direction_layer") or "swing")
+        bias = layer_bias if layer_bias in {"up", "down"} else cls.background_bias(structure)
         drift = cls.slope_drift(structure) if setup == "liquidity_sweep_reclaim" else ""
         if bias == "sideways" and drift in {"up", "down"}:
             bias = drift
@@ -693,6 +726,30 @@ class StructurePlanBuilder:
             }
         return result
 
+    @staticmethod
+    def _binding_snapshot(hierarchy: Dict) -> Dict:
+        result = {}
+        for layer in ("internal", "swing", "external"):
+            item = hierarchy.get(layer) or {}
+            detail = item.get("pattern_detail") if isinstance(item.get("pattern_detail"), dict) else {}
+            result[layer] = {
+                "bias": item.get("bias"),
+                "pattern": item.get("pattern"),
+                "pattern_phase": item.get("pattern_phase") or item.get("phase"),
+                "phase": item.get("phase"),
+                "event": item.get("event") or item.get("last_event"),
+                "pattern_detail": {
+                    key: detail.get(key)
+                    for key in (
+                        "pattern", "status", "top", "bottom", "breakout_direction",
+                        "active", "start_index", "high_touches", "low_touches",
+                        "width_atr", "score",
+                    )
+                    if key in detail
+                },
+            }
+        return result
+
     def _exit_candidates(
         self, structure_snapshot: Dict, direction: str, entry: float,
     ) -> tuple[List[Dict], List[Dict]]:
@@ -930,6 +987,7 @@ class StructurePlanBuilder:
         blocked = self.counter_trend_reason(
             direction, kwargs.get("structure_snapshot") or {},
             str(kwargs.get("setup_type") or ""),
+            self.params,
         )
         if blocked:
             self._reject(blocked)
@@ -1052,6 +1110,10 @@ class StructurePlanBuilder:
                 "breakout_direction", "high_slope", "low_slope",
             )},
             "structure_levels": self._hierarchy_snapshot(hierarchy),
+            "structure_hierarchy": self._binding_snapshot(hierarchy),
+            "internal_events": list(structure.get("internal_events") or [])[-3:],
+            "major_events": list(structure.get("major_events") or [])[-3:],
+            "external_events": list(structure.get("external_events") or [])[-3:],
             "structure_segment_id": structure.get("structure_segment_id") or "",
             "structure_revision": structure.get("structure_revision") or "",
             "active_segment": structure.get("active_segment") or {},
@@ -1174,7 +1236,17 @@ class StructurePlanBuilder:
         if not self._param("enable_structure_location", True):
             return []
         self._activate_setup("structure_location_pullback")
+        binding = self._setup_binding("structure_location_pullback")
+        if not binding_matches(structure, binding):
+            self._reject(
+                f"趋势回撤要求入场层 {binding['entry_layer']} 仍是趋势，"
+                f"当前为 {layer_pattern(structure, binding['entry_layer'])}"
+            )
+            return []
         major = str(structure.get("major_state") or structure.get("current_state") or "")
+        layer_bias = self.structure_layers(structure).get(binding["direction_layer"])
+        if layer_bias in {"up", "down"}:
+            major = layer_bias
         if major not in {"up", "down"}:
             self._reject("当前不是已确认的上涨或下跌主结构")
             return []
@@ -1328,12 +1400,22 @@ class StructurePlanBuilder:
         self, source_id, symbol, period, rows, structure, snapshot,
         bar_time, seconds,
     ) -> List[Dict]:
-        binding = self._setup_binding("range_breakout")
-        layer = binding["direction_layer"]
-        state = layer_state(structure, layer)
-        box = dict(state.get("pattern_detail") or structure.get("range") or {})
+        box, box_layer = {}, ""
+        false_box, false_layer = setup_box(structure, self._setup_binding("range_false_breakout"))
+        if str(false_box.get("status") or "") == "failed_breakout":
+            box, box_layer = false_box, false_layer
+        else:
+            for setup_type in (
+                "range_breakout", "triangle_breakout",
+                "range_lower_reversal", "triangle_prebreakout_pullback",
+            ):
+                candidate, layer = setup_box(structure, self._setup_binding(setup_type))
+                if candidate:
+                    box, box_layer = candidate, layer
+                    break
         if not box:
             box = dict(structure.get("range") or {})
+            box_layer = "swing" if box else ""
         if not box or not self._param("enable_range", True):
             return []
         top, bottom = _number(box.get("top")), _number(box.get("bottom"))
@@ -1352,7 +1434,7 @@ class StructurePlanBuilder:
         confidence = max(50, min(95, int(_number(box.get("score"), 60))))
         plans = []
 
-        if status == "failed_breakout" and self._param("enable_false_breakout", True):
+        if status == "failed_breakout" and self._param("enable_false_breakout", True) and self._setup_owns_layer("range_false_breakout", box_layer):
             self._activate_setup("range_false_breakout")
             entry_buffer = atr * max(0.0, _number(self._param("entry_zone_atr", 0.35)))
             stop_buffer = atr * max(0.0, _number(self._param("stop_buffer_atr", 0.25)))
@@ -1385,7 +1467,10 @@ class StructurePlanBuilder:
             )
             return [plan] if plan else []
 
-        if status == "breakout_confirmed" and self._param("enable_range_breakout", True):
+        if status == "breakout_confirmed" and self._param("enable_range_breakout", True) and (
+            self._setup_owns_layer("range_breakout", box_layer)
+            or self._setup_owns_layer("triangle_breakout", box_layer)
+        ):
             direction = "buy" if box.get("breakout_direction") == "up" else "sell"
             is_triangle = "triangle" in pattern
             setup_type = "triangle_breakout" if is_triangle else "range_breakout"
@@ -1457,7 +1542,7 @@ class StructurePlanBuilder:
         # the strategy enter when price subsequently reaches the boundary.
         # This also prevents a local triangle watcher from hiding the major
         # box's lower-boundary buy opportunity.
-        if pattern != "range" and str(structure.get("major_state") or structure.get("current_state")) in {"sideways", "range"} and self._param("enable_range_boundary", True):
+        if pattern != "range" and str(structure.get("major_state") or structure.get("current_state")) in {"sideways", "range"} and self._param("enable_range_boundary", True) and self._setup_owns_layer("range_lower_reversal", box_layer):
             boundary_plans = []
             if bottom < top:
                 lower = self._tradable_plan(
@@ -1609,7 +1694,7 @@ class StructurePlanBuilder:
                 ))
             return result
 
-        if self._param("enable_range_boundary", True):
+        if self._param("enable_range_boundary", True) and self._setup_owns_layer("range_lower_reversal", box_layer):
             self._activate_setup("range_lower_reversal")
             entry_buffer = atr * max(0.0, _number(self._param("entry_zone_atr", 0.35)))
             stop_buffer = atr * max(0.0, _number(self._param("stop_buffer_atr", 0.25)))
@@ -1649,9 +1734,11 @@ class StructurePlanBuilder:
                         key=lambda item: abs(_number(item.get("entry_price")) - latest_close),
                     )]
                 plans.extend(boundary_plans)
-        if self._param("enable_range_breakout", True):
+        if self._param("enable_range_breakout", True) and self._setup_owns_layer("range_breakout_watch", box_layer):
             self._activate_setup("range_breakout_watch")
             for direction in ("buy", "sell"):
+                if self.counter_trend_reason(direction, structure, "range_breakout_watch", self.params):
+                    continue
                 plans.append(self._plan(
                     source_id=source_id, symbol=symbol, period=period, anchor=anchor,
                     setup_type="range_breakout_watch", direction=direction,
@@ -1669,12 +1756,10 @@ class StructurePlanBuilder:
         atr = max(1e-9, _number(structure.get("atr")))
         hierarchy = structure.get("structure_hierarchy") or {}
         swing = hierarchy.get("swing") or {}
-        event_binding = self._setup_binding("trend_continuation")
-        events = (structure.get({"internal":"internal_events","swing":"major_events","external":"external_events"}[event_binding["entry_layer"]])
-                  or structure.get("major_events") or structure.get("internal_events") or [])
-        if not events:
+        selected = self._select_bound_event(structure)
+        if not selected:
             return []
-        latest = events[-1]
+        latest, event_setup = selected
         event_type = str(latest.get("type") or "")
         event_index = int(latest.get("confirmed_at", latest.get("index", -1)) or -1)
         age = len(rows)-1-event_index
@@ -2538,7 +2623,7 @@ class StructurePlanSignalGenerator:
                     blocked_setups = {str(item).strip().lower() for item in (effective.get("blocked_setups") or []) if str(item).strip()}
                     binding = resolve_binding(setup_type, effective)
                     snapshot = plan.get("structure_snapshot") or {}
-                    if snapshot and not binding_matches(snapshot, binding) and not binding_matches(plan, binding):
+                    if snapshot.get("structure_hierarchy") and not binding_matches(snapshot, binding):
                         continue
                     if (allowed_setups and setup_type not in allowed_setups) or setup_type in blocked_setups or not bool(effective.get("enabled", True)):
                         continue

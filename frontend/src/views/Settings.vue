@@ -199,15 +199,15 @@
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('break_confirm_bars')" v-model.number="structureEngineConfig.break_confirm_bars" type="number" min="1" max="10" label="转向收盘确认根数" hint="连续收盘站上/跌破才确认 CHoCH" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('retest_bars')" v-model.number="structureEngineConfig.retest_bars" type="number" min="0" max="10" label="转向后保持根数" hint="反向突破后继续保持，才切换主结构" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('displacement_atr')" v-model.number="structureEngineConfig.displacement_atr" type="number" min="0.1" max="5" step="0.1" label="强位移阈值（ATR）" hint="达到后可跳过额外保持确认" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12"><div class="text-subtitle-2 mt-2">3.4 回踩确认</div><div class="text-caption text-medium-emphasis">解决“突破后能不能等一等再进”的问题。黄金冲高后回到突破位附近，才更适合做趋势延续；成熟阶段只允许回踩，就是防止追在最高点。</div></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('trend_mature_retest_only')" v-model="structureEngineConfig.trend_mature_retest_only" color="primary" inset hide-details label="成熟趋势仅允许回踩" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('breakout_retest_valid_bars')" v-model.number="structureEngineConfig.breakout_retest_valid_bars" type="number" min="1" max="50" label="突破回踩有效K线数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12"><div class="text-subtitle-2 mt-2">3.5 回收确认</div><div class="text-caption text-medium-emphasis">解决“扫出去后又收回来，算不算假突破”的问题。影线扫过箱顶但收盘回到箱内，才叫回收。实体太小的十字星，不应当成反转信号。</div></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('require_location_reclaim')" v-model="structureEngineConfig.require_location_reclaim" color="primary" inset hide-details label="结构位置要求回收确认" /></v-col>
+              <v-col cols="12"><div class="text-subtitle-2 mt-2">3.4 回踩确认</div><div class="text-caption text-medium-emphasis">解决“突破后是追出去，还是等价格回到突破位再进”的问题。刚突破、趋势还很强时，可以直接顺着走；趋势走了一段、回撤已经变深（成熟阶段），再追高很容易买在头顶。打开「成熟趋势仅允许回踩」后，成熟/衰竭阶段必须等价格回到结构位附近，才生成趋势单。</div></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('trend_mature_retest_only')" v-model="structureEngineConfig.trend_mature_retest_only" color="primary" inset hint="打开后：趋势已经走熟，只等回踩，不再追突破。例如黄金从 4250 冲到 4290 后开始回头，这时只在回踩到前高/HL 附近才买，不在 4290 继续追多。" persistent-hint label="成熟趋势仅允许回踩" /></v-col>
+              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('breakout_retest_valid_bars')" v-model.number="structureEngineConfig.breakout_retest_valid_bars" type="number" min="1" max="50" label="突破回踩有效K线数" hint="突破后最多等这么多根K线来回踩。例如设 6，黄金 M5 就是大约 30 分钟；超时还没回到突破位，这张回踩计划作废，避免过期单突然成交。" persistent-hint density="compact" variant="outlined" /></v-col>
+              <v-col cols="12"><div class="text-subtitle-2 mt-2">3.5 回收确认</div><div class="text-caption text-medium-emphasis">回踩是“回到结构位附近”；回收是“先扫破结构位，再收盘站回来”。黄金扫掉前低后又重新站上，才更像真的守住支撑。打开「结构位置要求回收确认」后，趋势回撤单不会只因为价格碰到 HL/LH 就进，必须看到收盘重新站回结构位。</div></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('require_location_reclaim')" v-model="structureEngineConfig.require_location_reclaim" color="primary" inset hint="打开后：结构位置单要先刺破再收回。例如上涨回踩时扫了一下 HL，收盘重新站上才买；关掉则价格靠近结构位就可以进，更容易被浅扫止损。" persistent-hint label="结构位置要求回收确认" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('location_reclaim_min_body_atr')" v-model.number="structureEngineConfig.location_reclaim_min_body_atr" type="number" min="0.1" max="3" step="0.1" label="回收最小实体（ATR）" hint="过滤十字星和弱反弹/反压" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('location_reclaim_min_close_extension_atr')" v-model.number="structureEngineConfig.location_reclaim_min_close_extension_atr" type="number" min="0" max="2" step="0.05" label="回收收盘越界（ATR）" hint="收盘必须明显重新站回结构位" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12"><div class="structure-zone-heading mt-2"><div class="text-subtitle-2">四、SETUP 执行 · 通用条件</div><div class="text-caption text-medium-emphasis">事件成立还不等于下单。这里管“值不值得做”：止损会不会太大、盈亏比够不够、入场是不是离结构位太远。账户风险仍在交易账户页。</div></div></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('trend_require_healthy_phase')" v-model="structureEngineConfig.trend_require_healthy_phase" color="primary" inset hide-details label="趋势延续要求健康阶段" /></v-col>
+              <v-col cols="12"><div class="structure-zone-heading mt-2"><div class="text-subtitle-2">四、SETUP 执行 · 通用条件</div><div class="text-caption text-medium-emphasis">事件成立还不等于下单。这里管“值不值得做”：趋势是不是已经坏了、止损会不会太大、盈亏比够不够。账户风险仍在交易账户页。</div></div></v-col>
+              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('trend_require_healthy_phase')" v-model="structureEngineConfig.trend_require_healthy_phase" color="primary" inset hint="打开后：趋势阶段已经失败（保护点被打掉、推进明显衰减）时，不再做趋势延续。例如黄金上涨后跌破最近 HL，这时只等反转或箱体，不再顺着原趋势追单。" persistent-hint label="趋势延续要求健康阶段" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_normal_stop_atr')" v-model.number="structureEngineConfig.trend_normal_stop_atr" type="number" min="0.5" max="10" step="0.1" label="趋势正常止损上限（ATR）" hint="低于此值可直接触发，默认 2.5" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_retest_stop_atr')" v-model.number="structureEngineConfig.trend_retest_stop_atr" type="number" min="1" max="15" step="0.1" label="趋势回踩止损上限（ATR）" hint="超过正常上限后必须回踩，默认 4.0" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_max_stop_atr')" v-model.number="structureEngineConfig.trend_max_stop_atr" type="number" min="1" max="20" step="0.1" label="趋势最大止损上限（ATR）" hint="超过后取消计划，默认 6.0" persistent-hint density="compact" variant="outlined" /></v-col>
@@ -230,7 +230,7 @@
             <v-alert type="info" variant="tonal" density="compact" class="mt-4 mb-3">
               配置按四层生效：<strong>公共结构 → 品种/周期结构 → 公共 SETUP → 品种/周期/SETUP</strong>。越靠后优先级越高；没填的字段沿用上一层。账户风险仍在交易账户页配置，不在这里。
             </v-alert>
-            <div class="llm-section-head compact mt-4"><div><h3>五、SETUP 专项配置</h3><p>每个 SETUP 绑定一种形态、一个事件，并指定方向层级和入场层级。例如 Swing 上升、Internal 震荡时，方向看 Swing，入场看 Internal 箱体回收。</p></div><div class="d-flex ga-2"><v-btn size="small" variant="tonal" color="secondary" :disabled="structureEngineSaving || !structureSetupScope" @click="openSaveAsStructureSetup">另存为当前范围 SETUP</v-btn></div></div>
+            <div class="llm-section-head compact mt-4"><div><h3>五、SETUP 专项配置</h3><p>每个 SETUP 绑定「形态 + 事件 + 方向层级 + 入场层级」。Swing 上升、Internal 箱体时：方向看 Swing，入场看 Internal 的回收/假突破，不会把 Internal 震荡当成新的方向。</p></div><div class="d-flex ga-2"><v-btn size="small" variant="tonal" color="secondary" :disabled="structureEngineSaving || !structureSetupScope" @click="openSaveAsStructureSetup">另存为当前范围 SETUP</v-btn></div></div>
             <div class="d-flex flex-wrap ga-2 align-center mb-2">
               <v-select v-model="structureSetupRange" :items="structureSetupRangeOptions" item-title="label" item-value="value" label="当前查看的 SETUP 配置范围" density="compact" variant="outlined" hide-details style="min-width:340px;max-width:520px" @update:model-value="selectStructureSetupRange" />
               <v-chip v-if="structureSetupScope?.startsWith('default::')" color="primary" variant="tonal">公共默认</v-chip>
@@ -261,28 +261,30 @@
                 <v-btn size="small" color="warning" variant="text" :loading="structureEngineSaving" @click="clearCurrentStructureSetupOverride">清除专项，恢复公共默认</v-btn>
               </div>
             </v-alert>
+            <p class="text-caption text-medium-emphasis mb-3">{{ currentSetupSummary }}</p>
             <div class="d-flex flex-wrap ga-2 align-center">
               <v-switch v-model="structureSetupProfileDraft.enabled" :class="setupFieldClass('enabled')" color="primary" inset hide-details label="允许交易" />
               <v-select v-model="structureSetupProfileDraft.allowed_directions" :class="setupFieldClass('allowed_directions')" :items="[{title:'买入',value:'buy'},{title:'卖出',value:'sell'}]" item-title="title" item-value="value" label="允许方向" multiple chips density="compact" variant="outlined" hide-details style="max-width:190px" />
-              <v-select v-model="structureSetupProfileDraft.entry_mode" :class="setupFieldClass('entry_mode')" :items="[{title:'触碰或接近',value:'touch_or_near'},{title:'触碰并收回',value:'touch_and_reclaim'},{title:'突破回踩',value:'breakout_retest'},{title:'收盘突破',value:'close_breakout'}]" item-title="title" item-value="value" label="入场方式" density="compact" variant="outlined" hide-details style="max-width:190px" />
-              <v-select v-model="structureSetupProfileDraft.bind_pattern" :class="setupFieldClass('bind_pattern')" :items="[{title:'箱体',value:'range'},{title:'三角形',value:'triangle'},{title:'趋势',value:'trend'}]" item-title="title" item-value="value" label="绑定形态" density="compact" variant="outlined" hide-details style="max-width:150px" />
-              <v-select v-model="structureSetupProfileDraft.bind_event" :class="setupFieldClass('bind_event')" :items="[{title:'BOS',value:'bos'},{title:'CHoCH',value:'choch'},{title:'回踩',value:'retest'},{title:'回收',value:'reclaim'},{title:'假突破',value:'false_breakout'},{title:'扫单',value:'liquidity_sweep'},{title:'突破确认',value:'breakout_confirmed'}]" item-title="title" item-value="value" label="绑定事件" density="compact" variant="outlined" hide-details style="max-width:150px" />
-              <v-select v-model="structureSetupProfileDraft.direction_layer" :class="setupFieldClass('direction_layer')" :items="[{title:'Internal',value:'internal'},{title:'Swing',value:'swing'},{title:'External',value:'external'}]" item-title="title" item-value="value" label="方向层级" hint="谁决定做多还是做空" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
-              <v-select v-model="structureSetupProfileDraft.entry_layer" :class="setupFieldClass('entry_layer')" :items="[{title:'Internal',value:'internal'},{title:'Swing',value:'swing'},{title:'External',value:'external'}]" item-title="title" item-value="value" label="入场层级" hint="谁给出入场时机" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
-              <v-text-field v-model.number="structureSetupProfileDraft.confirmation_bars" :class="setupFieldClass('confirmation_bars')" type="number" min="1" max="10" label="确认K线" density="compact" variant="outlined" hide-details style="max-width:110px" />
-              <v-text-field v-model.number="structureSetupProfileDraft.min_displacement_atr" :class="setupFieldClass('min_displacement_atr')" type="number" min="0" step="0.1" label="最小位移 ATR" density="compact" variant="outlined" hide-details style="max-width:140px" />
-              <v-text-field v-model.number="structureSetupProfileDraft.min_body_atr" :class="setupFieldClass('min_body_atr')" type="number" min="0" step="0.1" label="突破实体 ATR" density="compact" variant="outlined" hide-details style="max-width:130px" />
-              <v-switch v-model="structureSetupProfileDraft.require_reclaim" :class="setupFieldClass('require_reclaim')" color="primary" inset hide-details label="要求回收" />
-              <template v-if="structureSetupProfileDraft.setup_type === 'range_false_breakout'">
-                <v-switch v-model="structureSetupProfileDraft.false_breakout_require_reclaim_close" :class="setupFieldClass('false_breakout_require_reclaim_close')" color="primary" inset hide-details label="假突破要求收盘回收" />
-                <v-text-field v-model.number="structureSetupProfileDraft.false_breakout_confirmation_bars" :class="setupFieldClass('false_breakout_confirmation_bars')" type="number" min="1" max="10" label="假突破确认K线" hint="回到箱体内后，连续收盘确认根数" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
-                <v-text-field v-model.number="structureSetupProfileDraft.false_breakout_min_reclaim_atr" :class="setupFieldClass('false_breakout_min_reclaim_atr')" type="number" min="0" max="2" step="0.05" label="最小回收 ATR" hint="收盘至少进入箱体该距离" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
+              <v-select v-if="setupShowsField('entry_mode')" v-model="structureSetupProfileDraft.entry_mode" :class="setupFieldClass('entry_mode')" :items="[{title:'触碰或接近',value:'touch_or_near'},{title:'触碰并收回',value:'touch_and_reclaim'},{title:'突破回踩',value:'breakout_retest'},{title:'收盘突破',value:'close_breakout'}]" item-title="title" item-value="value" label="入场方式" density="compact" variant="outlined" hide-details style="max-width:190px" />
+              <v-select v-model="structureSetupProfileDraft.bind_pattern" :class="setupFieldClass('bind_pattern')" :items="[{title:'箱体',value:'range'},{title:'三角形',value:'triangle'},{title:'趋势',value:'trend'}]" item-title="title" item-value="value" label="绑定形态" hint="看入场层现在是什么几何" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
+              <v-select v-model="structureSetupProfileDraft.bind_event" :class="setupFieldClass('bind_event')" :items="[{title:'BOS',value:'bos'},{title:'CHoCH',value:'choch'},{title:'回踩',value:'retest'},{title:'回收',value:'reclaim'},{title:'假突破',value:'false_breakout'},{title:'扫单',value:'liquidity_sweep'},{title:'突破确认',value:'breakout_confirmed'}]" item-title="title" item-value="value" label="绑定事件" hint="入场层要出现的事件" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
+              <v-select v-model="structureSetupProfileDraft.direction_layer" :class="setupFieldClass('direction_layer')" :items="[{title:'Internal',value:'internal'},{title:'Swing',value:'swing'},{title:'External',value:'external'}]" item-title="title" item-value="value" label="方向层级" hint="谁决定做多还是做空，Internal 震荡时通常看 Swing" persistent-hint density="compact" variant="outlined" hide-details style="max-width:180px" />
+              <v-select v-model="structureSetupProfileDraft.entry_layer" :class="setupFieldClass('entry_layer')" :items="[{title:'Internal',value:'internal'},{title:'Swing',value:'swing'},{title:'External',value:'external'}]" item-title="title" item-value="value" label="入场层级" hint="谁给出入场时机，箱体回收通常看 Internal" persistent-hint density="compact" variant="outlined" hide-details style="max-width:180px" />
+              <v-text-field v-if="setupShowsField('confirmation_bars')" v-model.number="structureSetupProfileDraft.confirmation_bars" :class="setupFieldClass('confirmation_bars')" type="number" min="1" max="10" label="确认K线" density="compact" variant="outlined" hide-details style="max-width:110px" />
+              <v-text-field v-if="setupShowsField('min_displacement_atr')" v-model.number="structureSetupProfileDraft.min_displacement_atr" :class="setupFieldClass('min_displacement_atr')" type="number" min="0" step="0.1" label="最小位移 ATR" density="compact" variant="outlined" hide-details style="max-width:140px" />
+              <v-text-field v-if="setupShowsField('min_body_atr')" v-model.number="structureSetupProfileDraft.min_body_atr" :class="setupFieldClass('min_body_atr')" type="number" min="0" step="0.1" label="突破实体 ATR" density="compact" variant="outlined" hide-details style="max-width:130px" />
+              <v-switch v-if="setupShowsField('require_reclaim')" v-model="structureSetupProfileDraft.require_reclaim" :class="setupFieldClass('require_reclaim')" color="primary" inset hint="价格要先刺破结构位，再收回来才进。关掉则靠近结构位就能进。" persistent-hint label="入场需刺破后收回" />
+              <v-switch v-if="setupShowsField('require_retest')" v-model="structureSetupProfileDraft.require_retest" :class="setupFieldClass('require_retest')" color="primary" inset hint="突破后必须回到突破位附近再进，不直接追出去。" persistent-hint label="入场需回踩" />
+              <template v-if="setupShowsField('false_breakout_require_reclaim_close')">
+                <v-switch v-model="structureSetupProfileDraft.false_breakout_require_reclaim_close" :class="setupFieldClass('false_breakout_require_reclaim_close')" color="primary" inset hint="假突破入场本身就是收回。打开后，必须收盘站回箱内才算数，影线扫回来不算。" persistent-hint label="收回必须收盘确认" />
+                <v-text-field v-model.number="structureSetupProfileDraft.false_breakout_confirmation_bars" :class="setupFieldClass('false_breakout_confirmation_bars')" type="number" min="1" max="10" label="收盘确认K线" hint="站回箱内后，还要连续收盘这么多根。1 根是收盘回来即可，2 根更稳。" persistent-hint density="compact" variant="outlined" style="max-width:150px" />
+                <v-text-field v-model.number="structureSetupProfileDraft.false_breakout_min_reclaim_atr" :class="setupFieldClass('false_breakout_min_reclaim_atr')" type="number" min="0" max="2" step="0.05" label="最小回收 ATR" hint="收盘至少进到箱体里面这么远，避免只在边界上晃一下。" persistent-hint density="compact" variant="outlined" style="max-width:150px" />
               </template>
-              <v-text-field v-model.number="structureSetupProfileDraft.min_real_risk_reward" :class="setupFieldClass('min_real_risk_reward')" type="number" min="0" step="0.1" label="最低盈亏比" density="compact" variant="outlined" hide-details style="max-width:130px" />
-              <v-text-field v-model.number="structureSetupProfileDraft.entry_zone_atr" :class="setupFieldClass('entry_zone_atr')" type="number" min="0" step="0.05" label="入场 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
-              <v-text-field v-model.number="structureSetupProfileDraft.stop_buffer_atr" :class="setupFieldClass('stop_buffer_atr')" type="number" min="0" step="0.05" label="止损 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
-              <v-text-field v-model.number="structureSetupProfileDraft.target_buffer_atr" :class="setupFieldClass('target_buffer_atr')" type="number" min="0" step="0.05" label="止盈 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
-              <v-text-field v-model.number="structureSetupProfileDraft.max_plan_lifetime_bars" :class="setupFieldClass('max_plan_lifetime_bars')" type="number" min="10" max="1000" label="计划安全兜底（K线）" hint="结构事件未发生时的最长保留上限" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
+              <v-text-field v-if="setupShowsField('min_real_risk_reward')" v-model.number="structureSetupProfileDraft.min_real_risk_reward" :class="setupFieldClass('min_real_risk_reward')" type="number" min="0" step="0.1" label="最低盈亏比" density="compact" variant="outlined" hide-details style="max-width:130px" />
+              <v-text-field v-if="setupShowsField('entry_zone_atr')" v-model.number="structureSetupProfileDraft.entry_zone_atr" :class="setupFieldClass('entry_zone_atr')" type="number" min="0" step="0.05" label="入场 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
+              <v-text-field v-if="setupShowsField('stop_buffer_atr')" v-model.number="structureSetupProfileDraft.stop_buffer_atr" :class="setupFieldClass('stop_buffer_atr')" type="number" min="0" step="0.05" label="止损 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
+              <v-text-field v-if="setupShowsField('target_buffer_atr')" v-model.number="structureSetupProfileDraft.target_buffer_atr" :class="setupFieldClass('target_buffer_atr')" type="number" min="0" step="0.05" label="止盈 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
+              <v-text-field v-if="setupShowsField('max_plan_lifetime_bars')" v-model.number="structureSetupProfileDraft.max_plan_lifetime_bars" :class="setupFieldClass('max_plan_lifetime_bars')" type="number" min="10" max="1000" label="计划安全兜底（K线）" hint="结构事件未发生时的最长保留上限" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
               <v-btn color="primary" variant="tonal" :loading="structureEngineSaving" @click="saveStructureSetupConfig">{{ structureSetupScope?.startsWith('default::') ? '保存公共 SETUP 默认' : '保存当前 SETUP 专项' }}</v-btn>
             </div>
                       </v-card-text>
@@ -1702,13 +1704,43 @@ export default {
       return String(value)
     }
     const structureSetupProfileDraft = ref({ symbol: '', period: 'M5', setup_type: 'structure_location_pullback', enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '', bind_pattern: 'trend', bind_event: 'retest', direction_layer: 'swing', entry_layer: 'internal', confirmation_bars: null, min_displacement_atr: null, min_body_atr: null, require_reclaim: null, min_real_risk_reward: null, entry_zone_atr: null, stop_buffer_atr: null, target_buffer_atr: null, target_multiple: null, max_entries_per_opportunity: null, cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null, invalidate_on_zone_return: null, false_breakout_require_reclaim_close: null, false_breakout_confirmation_bars: null, false_breakout_min_reclaim_atr: null })
-    const setupTypeNames = { structure_location_pullback: '结构位置回撤', range_lower_reversal: '箱体下沿反转', range_upper_reversal: '箱体上沿反转', range_breakout: '箱体突破', range_false_breakout: '箱体假突破', triangle_breakout: '三角形突破', triangle_breakout_watch: '三角形突破观察', triangle_prebreakout_pullback: '三角形提前回撤', choch_reversal: 'CHOCH反转', liquidity_sweep_reclaim: '流动性扫单回收', trend_continuation: '趋势延续', structure_reversal: '结构反转' }
+    const setupTypeNames = { structure_location_pullback: '结构位置回撤 (structure_location_pullback)', range_lower_reversal: '箱体下沿反转 (range_lower_reversal)', range_upper_reversal: '箱体上沿反转 (range_upper_reversal)', range_breakout: '箱体突破 (range_breakout)', range_false_breakout: '箱体假突破 (range_false_breakout)', triangle_breakout: '三角形突破 (triangle_breakout)', triangle_breakout_watch: '三角形突破观察 (triangle_breakout_watch)', triangle_prebreakout_pullback: '三角形提前回撤 (triangle_prebreakout_pullback)', choch_reversal: 'CHOCH 反转 (choch_reversal)', liquidity_sweep_reclaim: '流动性扫单回收 (liquidity_sweep_reclaim)', trend_continuation: '趋势延续 (trend_continuation)', structure_reversal: '结构反转 (structure_reversal)' }
     const setupTypeLabel = type => setupTypeNames[type] || type
     const structureSetupTypes = Object.keys(setupTypeNames).map(value => ({ value, label: setupTypeNames[value] }))
     const setupFieldKeys = ['enabled', 'allowed_directions', 'entry_mode', 'bind_pattern', 'bind_event', 'direction_layer', 'entry_layer', 'confirmation_bars', 'min_displacement_atr', 'min_body_atr', 'require_reclaim', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'target_buffer_atr', 'target_multiple', 'max_entries_per_opportunity', 'cooldown_minutes', 'require_retest', 'retest_tolerance_atr', 'invalidate_on_zone_return', 'false_breakout_require_reclaim_close', 'false_breakout_confirmation_bars', 'false_breakout_min_reclaim_atr', 'max_plan_lifetime_bars']
     const setupFieldLabels = { enabled: '允许交易', allowed_directions: '允许方向', entry_mode: '入场方式', bind_pattern: '绑定形态', bind_event: '绑定事件', direction_layer: '方向层级', entry_layer: '入场层级', confirmation_bars: '确认 K 线数', min_displacement_atr: '最小位移 ATR', min_body_atr: '突破实体 ATR', require_reclaim: '要求回收', min_real_risk_reward: '最低盈亏比', entry_zone_atr: '入场 ATR', stop_buffer_atr: '止损 ATR', target_buffer_atr: '止盈 ATR', target_multiple: '目标倍数', max_entries_per_opportunity: '机会最大入场次数', cooldown_minutes: '冷却分钟', require_retest: '要求回踩', retest_tolerance_atr: '回踩容差 ATR', invalidate_on_zone_return: '回到区域即失效', false_breakout_require_reclaim_close: '假突破要求收盘回收', false_breakout_confirmation_bars: '假突破确认 K 线数', false_breakout_min_reclaim_atr: '假突破最小回收 ATR', max_plan_lifetime_bars: '最大计划 K 线数' }
     // Fill every SETUP field from the public defaults before applying the
     // selected scope. This keeps "另存为" limited to real overrides.
+    const setupBindingDefaults = {
+      range_breakout: { bind_pattern: 'range', bind_event: 'breakout_confirmed', direction_layer: 'swing', entry_layer: 'swing', entry_mode: 'breakout_retest', require_retest: true, require_reclaim: false, confirmation_bars: 2, min_displacement_atr: 0.6, min_body_atr: 0.5 },
+      range_breakout_watch: { bind_pattern: 'range', bind_event: 'breakout_confirmed', direction_layer: 'swing', entry_layer: 'swing', entry_mode: 'close_breakout', require_retest: false, require_reclaim: false, confirmation_bars: 2, min_body_atr: 0.5 },
+      range_false_breakout: { bind_pattern: 'range', bind_event: 'false_breakout', direction_layer: 'swing', entry_layer: 'internal', entry_mode: 'touch_and_reclaim', require_reclaim: true, require_retest: false, confirmation_bars: 2, false_breakout_require_reclaim_close: true, false_breakout_confirmation_bars: 2, false_breakout_min_reclaim_atr: 0.25 },
+      range_lower_reversal: { bind_pattern: 'range', bind_event: 'reclaim', direction_layer: 'swing', entry_layer: 'internal', entry_mode: 'touch_or_near', require_reclaim: true, require_retest: false },
+      range_upper_reversal: { bind_pattern: 'range', bind_event: 'reclaim', direction_layer: 'swing', entry_layer: 'internal', entry_mode: 'touch_or_near', require_reclaim: true, require_retest: false },
+      triangle_breakout: { bind_pattern: 'triangle', bind_event: 'breakout_confirmed', direction_layer: 'swing', entry_layer: 'swing', entry_mode: 'breakout_retest', require_retest: true, require_reclaim: false, confirmation_bars: 2, min_displacement_atr: 0.5, min_body_atr: 0.5 },
+      triangle_breakout_watch: { bind_pattern: 'triangle', bind_event: 'breakout_confirmed', direction_layer: 'swing', entry_layer: 'swing', entry_mode: 'close_breakout', require_retest: false, require_reclaim: false, confirmation_bars: 2, min_body_atr: 0.5 },
+      triangle_prebreakout_pullback: { bind_pattern: 'triangle', bind_event: 'retest', direction_layer: 'swing', entry_layer: 'internal', entry_mode: 'touch_or_near', require_retest: true, require_reclaim: false, retest_tolerance_atr: 0.35 },
+      structure_location_pullback: { bind_pattern: 'trend', bind_event: 'retest', direction_layer: 'swing', entry_layer: 'internal', entry_mode: 'touch_and_reclaim', require_reclaim: true, require_retest: true, min_body_atr: 0.3, min_real_risk_reward: 0.5 },
+      trend_continuation: { bind_pattern: 'trend', bind_event: 'bos', direction_layer: 'swing', entry_layer: 'internal', entry_mode: 'breakout_retest', require_retest: true, require_reclaim: false, confirmation_bars: 2, min_displacement_atr: 0.6, min_real_risk_reward: 0.5 },
+      structure_reversal: { bind_pattern: 'trend', bind_event: 'choch', direction_layer: 'swing', entry_layer: 'swing', entry_mode: 'breakout_retest', require_retest: true, require_reclaim: false, confirmation_bars: 2, min_displacement_atr: 0.2 },
+      choch_reversal: { bind_pattern: 'trend', bind_event: 'choch', direction_layer: 'swing', entry_layer: 'swing', entry_mode: 'breakout_retest', require_retest: true, require_reclaim: false, confirmation_bars: 2, min_displacement_atr: 0.2 },
+      liquidity_sweep_reclaim: { bind_pattern: 'trend', bind_event: 'liquidity_sweep', direction_layer: 'swing', entry_layer: 'internal', entry_mode: 'touch_and_reclaim', require_reclaim: true, require_retest: false, min_displacement_atr: 0.3 },
+    }
+    const setupFieldVisibility = {
+      range_breakout: ['entry_mode', 'confirmation_bars', 'min_displacement_atr', 'min_body_atr', 'require_retest', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'target_buffer_atr', 'max_plan_lifetime_bars'],
+      range_breakout_watch: ['entry_mode', 'confirmation_bars', 'min_body_atr', 'max_plan_lifetime_bars'],
+      range_false_breakout: ['entry_mode', 'false_breakout_require_reclaim_close', 'false_breakout_confirmation_bars', 'false_breakout_min_reclaim_atr', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'target_buffer_atr', 'max_plan_lifetime_bars'],
+      range_lower_reversal: ['entry_mode', 'require_reclaim', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'target_buffer_atr', 'max_plan_lifetime_bars'],
+      range_upper_reversal: ['entry_mode', 'require_reclaim', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'target_buffer_atr', 'max_plan_lifetime_bars'],
+      triangle_breakout: ['entry_mode', 'confirmation_bars', 'min_displacement_atr', 'min_body_atr', 'require_retest', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'target_buffer_atr', 'max_plan_lifetime_bars'],
+      triangle_breakout_watch: ['entry_mode', 'confirmation_bars', 'min_body_atr', 'max_plan_lifetime_bars'],
+      triangle_prebreakout_pullback: ['entry_mode', 'require_retest', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'max_plan_lifetime_bars'],
+      structure_location_pullback: ['entry_mode', 'require_reclaim', 'require_retest', 'min_body_atr', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'max_plan_lifetime_bars'],
+      trend_continuation: ['entry_mode', 'confirmation_bars', 'min_displacement_atr', 'require_retest', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'max_plan_lifetime_bars'],
+      structure_reversal: ['entry_mode', 'confirmation_bars', 'min_displacement_atr', 'require_retest', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'max_plan_lifetime_bars'],
+      choch_reversal: ['entry_mode', 'confirmation_bars', 'min_displacement_atr', 'require_retest', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'max_plan_lifetime_bars'],
+      liquidity_sweep_reclaim: ['entry_mode', 'require_reclaim', 'min_displacement_atr', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'max_plan_lifetime_bars'],
+    }
     const setupRuntimeDefaults = {
       enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '',
       bind_pattern: 'trend', bind_event: 'retest', direction_layer: 'swing', entry_layer: 'internal',
@@ -1721,9 +1753,43 @@ export default {
       false_breakout_require_reclaim_close: true, false_breakout_confirmation_bars: 1,
       false_breakout_min_reclaim_atr: 0.1, max_plan_lifetime_bars: 100,
     }
-    const makeSetupDefault = setupType => ({
+    const compactSetupValues = raw => {
+      const out = {}
+      for (const [key, value] of Object.entries(raw || {})) {
+        if (value === '' || value === null || value === undefined) continue
+        out[key] = value
+      }
+      return out
+    }
+    const builtinSetupValues = setupType => ({
       ...setupRuntimeDefaults,
-      ...(structureSetupDefaults.value[setupType] || {}),
+      ...(setupBindingDefaults[setupType] || {}),
+    })
+    const makeSetupDefault = setupType => {
+      const builtin = builtinSetupValues(setupType)
+      const saved = compactSetupValues(structureSetupDefaults.value[setupType])
+      const staleGeneric = saved.bind_pattern === 'trend' && saved.bind_event === 'retest' && builtin.bind_pattern !== 'trend'
+      if (staleGeneric) {
+        delete saved.bind_pattern
+        delete saved.bind_event
+        delete saved.entry_mode
+        delete saved.direction_layer
+        delete saved.entry_layer
+        delete saved.min_body_atr
+        delete saved.confirmation_bars
+      }
+      return { ...builtin, ...saved }
+    }
+    const setupShowsField = key => {
+      const type = String(structureSetupProfileDraft.value?.setup_type || '')
+      return (setupFieldVisibility[type] || ['entry_mode', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'max_plan_lifetime_bars']).includes(key)
+    }
+    const currentSetupSummary = computed(() => {
+      const draft = structureSetupProfileDraft.value || {}
+      const pattern = { range: '箱体', triangle: '三角形', trend: '趋势' }[draft.bind_pattern] || draft.bind_pattern || '--'
+      const event = { bos: 'BOS', choch: 'CHoCH', retest: '回踩', reclaim: '回收', false_breakout: '假突破', liquidity_sweep: '扫单', breakout_confirmed: '突破确认' }[draft.bind_event] || draft.bind_event || '--'
+      const entry = { touch_or_near: '触碰或接近', touch_and_reclaim: '触碰并收回', breakout_retest: '突破回踩', close_breakout: '收盘突破' }[draft.entry_mode] || draft.entry_mode || '沿用系统'
+      return `${setupTypeLabel(draft.setup_type)}：看 ${pattern} 的 ${event}，方向层 ${draft.direction_layer || 'swing'}，入场层 ${draft.entry_layer || 'internal'}，入场方式 ${entry}`
     })
     const normalizeSetupScopeSymbol = value => String(value || '').trim().toUpperCase()
     const normalizeSetupScopePeriod = value => String(value || '').trim().toUpperCase()
@@ -2402,32 +2468,33 @@ export default {
         structureEngineSaving.value = false
       }
     }
-    const setupDraftDefaults = setupType => ({
-      symbol: '', period: 'M5', setup_type: setupType,
-      enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '',
-      confirmation_bars: null, min_displacement_atr: null, min_body_atr: null, require_reclaim: null,
-      min_real_risk_reward: null, entry_zone_atr: null, stop_buffer_atr: null,
-      target_buffer_atr: null,
-      target_multiple: null, max_entries_per_opportunity: null,
-      cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null,
-      invalidate_on_zone_return: null,
-      false_breakout_require_reclaim_close: null,
-      false_breakout_confirmation_bars: null,
-      false_breakout_min_reclaim_atr: null,
-      max_plan_lifetime_bars: null,
-    })
     const selectStructureSetupScope = scope => {
       if (!scope) return
       const parts = String(scope).split('::')
       const isDefault = String(scope).startsWith('default::')
       const setupType = isDefault ? parts[1] : parts[2]
       if (!setupType) return
-      const base = makeSetupDefault(setupType)
-      const profile = setupProfileForScope(scope)
-      const values = { ...base, ...(profile || {}) }
+      const builtin = builtinSetupValues(setupType)
+      const profile = isDefault ? compactSetupValues(structureSetupDefaults.value[setupType]) : compactSetupValues(setupProfileForScope(scope))
+      const staleGeneric = profile.bind_pattern === 'trend' && profile.bind_event === 'retest' && builtin.bind_pattern !== 'trend'
+      if (staleGeneric) {
+        delete profile.bind_pattern
+        delete profile.bind_event
+        delete profile.entry_mode
+        delete profile.direction_layer
+        delete profile.entry_layer
+        delete profile.min_body_atr
+        delete profile.confirmation_bars
+      }
+      const values = { ...builtin, ...profile }
+      for (const key of ['bind_pattern', 'bind_event', 'direction_layer', 'entry_layer', 'entry_mode']) {
+        if (!values[key]) values[key] = builtin[key]
+      }
       structureSetupProfileDraft.value = {
-        ...setupDraftDefaults(setupType), ...values,
-        symbol: profile?.symbol || '', period: profile?.period || 'M5', setup_type: setupType,
+        ...values,
+        symbol: profile.symbol || '',
+        period: profile.period || 'M5',
+        setup_type: setupType,
         allowed_directions: normalizeSetupValues(values.allowed_directions).length ? normalizeSetupValues(values.allowed_directions) : ['buy', 'sell'],
         enabled: values.enabled !== false,
       }
@@ -2436,12 +2503,16 @@ export default {
     const collectSetupDraft = () => {
       const draft = structureSetupProfileDraft.value
       const item = {}
+      const always = ['enabled', 'allowed_directions', 'bind_pattern', 'bind_event', 'direction_layer', 'entry_layer']
       for (const key of setupFieldKeys) {
+        if (!always.includes(key) && !setupShowsField(key)) continue
         const value = draft[key]
         if (value === null || value === '' || value === undefined) continue
         if (key === 'allowed_directions') item[key] = normalizeSetupValues(value)
-        else if (['enabled', 'require_reclaim', 'require_retest', 'invalidate_on_zone_return'].includes(key)) item[key] = Boolean(value)
-        else if (typeof value === 'number' || Number.isFinite(Number(value))) item[key] = Number(value)
+        else if (['enabled', 'require_reclaim', 'require_retest', 'invalidate_on_zone_return', 'false_breakout_require_reclaim_close'].includes(key)) item[key] = Boolean(value)
+        else if (['entry_mode', 'bind_pattern', 'bind_event', 'direction_layer', 'entry_layer'].includes(key)) item[key] = String(value)
+        else if (typeof value === 'number') item[key] = Number(value)
+        else if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) item[key] = Number(value)
         else item[key] = value
       }
       return item
@@ -4474,6 +4545,8 @@ export default {
       structureSetupOverrideFields,
       isStructureSetupFieldOverridden,
       setupFieldClass,
+      setupShowsField,
+      currentSetupSummary,
       saveAsStructureSetupOpen,
       saveAsStructureSetupDraft,
       selectStructureSetupScope,

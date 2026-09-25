@@ -315,6 +315,43 @@ class MarketStructureEngineTests(unittest.TestCase):
         self.assertEqual(internal["segment"]["bars"], 80)
         self.assertIn(internal["phase"], {"forming", "mature"})
 
+    def test_establishing_bos_starts_a_new_segment_but_continuation_does_not(self):
+        rows = bars([100 + i * 0.2 for i in range(80)])
+        events = [
+            {"type": "bos", "direction": "up", "confirmed_at": 20, "establishes_direction": True},
+            {"type": "bos", "direction": "up", "confirmed_at": 40, "establishes_direction": False},
+            {"type": "choch", "direction": "down", "confirmed_at": 60},
+        ]
+        result = _segments(rows, events, None, [], [], 1.0, {
+            "range_min_bars": 24, "min_segment_bars": 12, "trend_max_anchor_bars": 48,
+        })
+        starts = [item["start_index"] for item in result]
+        self.assertIn(20, starts)
+        self.assertNotIn(40, starts)
+        self.assertIn(60, starts)
+
+    def test_confirmed_range_splits_off_a_sideways_segment(self):
+        lead = [80 + i * 0.4 for i in range(80)]
+        box = [112 + ((i % 8) - 4) * 0.15 for i in range(80)]
+        rows = bars(lead + box)
+        pivots = []
+        for offset, price in ((8, 113.2), (24, 113.1), (40, 113.05), (56, 113.0)):
+            pivots.append({"index": 80 + offset, "kind": "high", "price": price, "confirmed_at": 80 + offset + 3, "label": "HH"})
+        for offset, price in ((12, 110.8), (28, 110.85), (44, 110.9), (60, 110.95)):
+            pivots.append({"index": 80 + offset, "kind": "low", "price": price, "confirmed_at": 80 + offset + 3, "label": "HL"})
+        events = [{"type": "bos", "direction": "up", "confirmed_at": 10, "establishes_direction": True}]
+        result = _segments(rows, events, None, pivots, pivots, 1.0, {
+            "range_min_bars": 24, "range_touch_tolerance": 0.003, "range_touch_atr": 0.5,
+            "range_min_touches": 2, "range_min_inside_ratio": 0.55, "range_max_atr": 10,
+            "break_confirm_bars": 2, "break_buffer_atr": 0.1, "min_segment_bars": 12,
+            "trend_max_anchor_bars": 48,
+        }, "swing")
+        types = [item["type"] for item in result]
+        self.assertIn("sideways", types)
+        range_seg = next(item for item in result if item["type"] == "sideways")
+        self.assertGreaterEqual(range_seg["start_index"], 70)
+        self.assertEqual(range_seg.get("pattern"), "range")
+
     def test_local_pattern_does_not_override_swing_bias(self):
         rows = bars([110 - i * 0.25 for i in range(100)])
         result = analyze("PARALLEL", "M5", rows)
