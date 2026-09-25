@@ -715,7 +715,9 @@ def _anchor_confirmed_segments(rows: List[Dict], segments: List[Dict],
 def _segments(rows: List[Dict], events: List[Dict], box: Optional[Dict],
               small: List[Dict], major: List[Dict], atr: float,
               config: Dict) -> List[Dict]:
-    changes = [event for event in events if event["type"] in ("bos", "choch")]
+    # CHoCH reverses the current structure and starts a new segment.
+    # BOS continues the same structure, so it must not split the segment.
+    changes = [event for event in events if event["type"] == "choch"]
     points = [0] + [event["confirmed_at"] for event in changes] + [max(0, len(rows) - 1)]
     result = []
     for start, end in zip(points, points[1:]):

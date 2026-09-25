@@ -110,6 +110,25 @@ class MarketStructureEngineTests(unittest.TestCase):
         self.assertIn(result["current_state"], {"bullish", "bearish", "range", "undetermined"})
         self.assertTrue(all(e.get("confirmation") != "wick_only" for e in result["events"] if e["type"] in {"bos", "choch"}))
 
+
+    def test_bos_does_not_split_structure_segment(self):
+        rows = bars([100 + i * 0.2 for i in range(40)])
+        events = [
+            {"type": "choch", "direction": "up", "confirmed_at": 8, "index": 8, "confirmation": "close_confirmed"},
+            {"type": "bos", "direction": "up", "confirmed_at": 20, "index": 20, "confirmation": "close_confirmed"},
+            {"type": "bos", "direction": "up", "confirmed_at": 30, "index": 30, "confirmation": "close_confirmed"},
+        ]
+        result = _segments(rows, events, None, [], [], 1.0, {
+            "range_min_bars": 24, "trend_max_anchor_bars": 48,
+            "trend_min_direction_ratio": 0.62, "trend_min_efficiency": 0.30,
+        })
+        self.assertEqual(len(result), 2)
+        live = result[-1]
+        self.assertEqual(live["end_index"], 39)
+        self.assertLessEqual(live["start_index"], 8)
+        self.assertEqual((live.get("event") or {}).get("type"), "choch")
+        self.assertTrue(all((item.get("event") or {}).get("type") != "bos" for item in result))
+
     def test_liquidity_sweep_does_not_create_structure_segment(self):
         rows = bars([100, 101, 100, 101, 100, 101, 100, 101, 100, 101] * 4)
         result = analyze("TEST", "M5", rows)
@@ -236,7 +255,7 @@ class MarketStructureEngineTests(unittest.TestCase):
             {"index": 52, "kind": "high", "price": 103, "label": "LH"},
             {"index": 60, "kind": "low", "price": 97, "label": "LL"},
         ]
-        events = [{"type": "bos", "direction": "down", "confirmed_at": 10,
+        events = [{"type": "choch", "direction": "down", "confirmed_at": 10,
                    "confirmation": "close_confirmed", "scope": "major"}]
         result = _segments(rows, events, None, [], major, 1.0, {
             "trend_min_direction_ratio": 0.62,
@@ -258,7 +277,7 @@ class MarketStructureEngineTests(unittest.TestCase):
             {"index": 52, "kind": "high", "price": 98, "label": "LH"},
             {"index": 60, "kind": "low", "price": 90, "label": "LL"},
         ]
-        events = [{"type": "bos", "direction": "down", "confirmed_at": 10,
+        events = [{"type": "choch", "direction": "down", "confirmed_at": 10,
                    "confirmation": "close_confirmed", "scope": "major"}]
         result = _segments(rows, events, None, [], major, 1.0, {
             "trend_min_direction_ratio": 0.62,
@@ -290,7 +309,7 @@ class MarketStructureEngineTests(unittest.TestCase):
             "range_min_touches": 2, "range_min_inside_ratio": 0.55, "range_max_atr": 10,
             "break_confirm_bars": 2, "break_buffer_atr": 0.1,
         }
-        events = [{"type": "bos", "direction": "up", "confirmed_at": 520, "index": 520}]
+        events = [{"type": "choch", "direction": "up", "confirmed_at": 520, "index": 520}]
         internal = _scope_pattern(rows, sorted(pivots, key=lambda item: item["index"]), 1.0, config, "up", "internal", events)
         self.assertEqual(internal["pattern"], "range")
         self.assertEqual(internal["segment"]["bars"], 80)
