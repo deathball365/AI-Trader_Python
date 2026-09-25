@@ -112,7 +112,7 @@ import { useRoute } from 'vue-router'
 import { marketAPI } from '../api/market'
 import * as echarts from 'echarts'
 
-const route = useRoute(); const symbol = ref(String(route.query.symbol || 'BTCUSD')); const period = ref(String(route.query.period || 'M5')); const periods=['M1','M5','M15','H1','H4']; const symbols=ref([symbol.value]); const loading=ref(false); const error=ref(''); const segments=ref([]); const layerSegmentMap=ref({internal:[],swing:[],external:[]}); const bars=ref([]); const structureResult=ref(null); const tradePlans=ref([]); const opportunityDetails=ref({}); const opportunityLoading=ref({}); const chartRefs={internal:null,swing:null,external:null}; const charts={internal:null,swing:null,external:null}; const activeLayer=ref('swing'); const layerKeys=['internal','swing','external']; let refreshTimer=null
+const route = useRoute(); const symbol = ref(String(route.query.symbol || 'BTCUSD')); const period = ref(String(route.query.period || 'M5')); const periods=['M1','M5','M15','H1','H4']; const symbols=ref([symbol.value]); const loading=ref(false); const error=ref(''); const segments=ref([]); const layerSegmentMap=ref({internal:[],swing:[],external:[]}); const bars=ref([]); const structureResult=ref(null); const tradePlans=ref([]); const opportunityDetails=ref({}); const opportunityLoading=ref({}); const chartRefs={internal:null,swing:null,external:null}; const charts={internal:null,swing:null,external:null}; const chartViewState={internal:{legendSelected:{}},swing:{legendSelected:{}},external:{legendSelected:{}}}; const activeLayer=ref('swing'); const layerKeys=['internal','swing','external']; let refreshTimer=null; let resetZoomOnNextRender=false
 const labels={up:'上涨趋势',down:'下跌趋势',sideways:'箱体震荡',triangle:'收敛三角形',transition:'结构过渡'}; const colors={up:'success',down:'error',sideways:'info',triangle:'secondary',transition:'warning'}; const legendColors={up:'#3aa675',down:'#d95d55',sideways:'#4f91c4',triangle:'#8968b7',transition:'#d4a24c'}
 const closeOf=x=>Number(x.close ?? x.close_price ?? 0); const timeOf=x=>{const utc=x?.timestamp_utc;const raw=(utc!==undefined&&utc!==null&&Number(utc)>0)?utc:(x?.timestamp??x?.time??0);const numeric=typeof raw==='number'?raw:(typeof raw==='string'&&/^\d+(\.\d+)?$/.test(raw)?Number(raw):NaN);if(Number.isFinite(numeric))return numeric>1e12?numeric:numeric*1000;const parsed=Date.parse(raw);return Number.isFinite(parsed)?parsed:0}; const stamp=x=>new Date(timeOf(x)).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
 const periodMs=p=>({M1:60000,M5:300000,M15:900000,H1:3600000,H4:14400000}[String(p).toUpperCase()]||300000)
@@ -257,14 +257,41 @@ const groupedEventsFor=layer=>{
 const groupedStructureEvents=computed(()=>groupedEventsFor(activeLayer.value))
 const layerEvents=layer=>groupedEventsFor(layer)
 function setChartRef(layer, el){ chartRefs[layer]=el }
+function captureChartView(layer){
+  const chart=charts[layer]
+  if(!chart) return
+  let option={}
+  try{ option=chart.getOption()||{} }catch{ return }
+  const legend=Array.isArray(option.legend)?option.legend[0]:option.legend
+  const zooms=option.dataZoom||[]
+  const state=chartViewState[layer]
+  if(legend&&legend.selected) state.legendSelected={...legend.selected}
+  if(zooms.length){
+    const z=zooms[0]||{}
+    state.dataZoom={start:z.start,end:z.end,startValue:z.startValue,endValue:z.endValue}
+  }
+}
+function bindChartViewEvents(layer, chart){
+  if(chart.__viewBound) return
+  chart.__viewBound=true
+  chart.on('legendselectchanged', params=>{
+    chartViewState[layer].legendSelected={...(params.selected||{})}
+  })
+  chart.on('datazoom', ()=>captureChartView(layer))
+}
 function renderChartUnsafe(){
   renderLayerChart(activeLayer.value)
 }
 function renderLayerChart(layer){
   const el=chartRefs[layer]
   if(!el||!bars.value.length)return
-  if(charts[layer]) charts[layer].dispose()
-  charts[layer]=echarts.init(el)
+  captureChartView(layer)
+  if(charts[layer] && charts[layer].getDom()!==el){
+    try{ charts[layer].dispose() }catch{}
+    charts[layer]=null
+  }
+  if(!charts[layer]) charts[layer]=echarts.init(el)
+  bindChartViewEvents(layer, charts[layer])
   const chart=charts[layer]
   const rows=bars.value; const result=structureResult.value||{}
   const data=rows.map(x=>[Number(x.open??x.open_price??closeOf(x)),Number(x.close??x.close_price??0),Number(x.low??x.low_price??closeOf(x)),Number(x.high??x.high_price??closeOf(x))])
@@ -280,14 +307,26 @@ function renderLayerChart(layer){
   const range=result.range?.active?[{name:'箱体上沿',yAxis:Number(result.range.top)},{name:'箱体下沿',yAxis:Number(result.range.bottom)}]:[]
   const eventLines=(Array.isArray(result.events)?result.events:[]).filter(e=>Number.isInteger(e.index)).map(e=>({name:e.type==='choch'?'CHoCH':e.type==='bos'?'BOS':'流动性扫过',xAxis:e.index,lineStyle:{color:e.direction==='up'?'#16845f':'#c84f43',type:'dotted',width:1},label:{show:false}}))
   const legendData=['K线',...eventSeries.map(item=>item.name),...trend.map(item=>item.name),...(candidateSeries.length?['候选结构（未确认）']:[])]
-  chart.setOption({animation:false,tooltip:{trigger:'axis',axisPointer:{type:'cross'}},legend:{top:0,type:'scroll',data:legendData},grid:{left:55,right:35,top:38,bottom:58},xAxis:{type:'category',data:rows.map(stamp),axisLabel:{hideOverlap:true}},yAxis:{scale:true},dataZoom:[{type:'inside'},{type:'slider',height:18,bottom:8}],series:[{name:'K线',type:'candlestick',data,itemStyle:{color:'#1f9d72',color0:'#d95d55',borderColor:'#1f9d72',borderColor0:'#d95d55'},markPoint:{symbol:'circle',symbolSize:9,data:pivotMarks,label:{show:true,position:'top',fontSize:10,formatter:p=>p.value}},markLine:{silent:true,symbol:'none',data:[...range,...eventLines]}},...trend,...candidateSeries,...eventSeries]},true)
+  const xData=rows.map(stamp)
+  const view=chartViewState[layer]||{}
+  let dataZoom=[{type:'inside'},{type:'slider',height:18,bottom:8}]
+  const savedZoom=(!resetZoomOnNextRender && view.dataZoom) ? view.dataZoom : null
+  if(savedZoom){
+    const useValues=xData.includes(savedZoom.startValue)&&xData.includes(savedZoom.endValue)
+    dataZoom=dataZoom.map(z=>useValues
+      ? {...z,startValue:savedZoom.startValue,endValue:savedZoom.endValue}
+      : (savedZoom.start!=null&&savedZoom.end!=null?{...z,start:savedZoom.start,end:savedZoom.end}:z))
+  }
+  resetZoomOnNextRender=false
+  chart.setOption({animation:false,tooltip:{trigger:'axis',axisPointer:{type:'cross'}},legend:{top:0,type:'scroll',data:legendData,selected:view.legendSelected||{}},grid:{left:55,right:35,top:38,bottom:58},xAxis:{type:'category',data:xData,axisLabel:{hideOverlap:true}},yAxis:{scale:true},dataZoom,series:[{name:'K线',type:'candlestick',data,itemStyle:{color:'#1f9d72',color0:'#d95d55',borderColor:'#1f9d72',borderColor0:'#d95d55'},markPoint:{symbol:'circle',symbolSize:9,data:pivotMarks,label:{show:true,position:'top',fontSize:10,formatter:p=>p.value}},markLine:{silent:true,symbol:'none',data:[...range,...eventLines]}},...trend,...candidateSeries,...eventSeries]},true)
 }
+
 function resizeChart(){Object.values(charts).forEach(item=>item?.resize())}
 function safeRenderChart(){try{renderChartUnsafe()}catch(err){console.error('[StructureAnalysis] chart overlay error',err)}}
 function renderChart(){safeRenderChart()}
 async function load(){loading.value=true;error.value='';try{const res=await marketAPI.getKlines(symbol.value,period.value,600);const raw=Array.isArray(res?.data)?res.data:(Array.isArray(res?.klines)?res.klines:(Array.isArray(res?.results)?res.results:(Array.isArray(res?.data?.klines)?res.data.klines:(Array.isArray(res?.data?.data)?res.data.data:[]))));const now=Date.now()+periodMs(period.value);const filtered=raw.filter(x=>{const t=timeOf(x);return t>0&&t<=now});const rows=(filtered.length?filtered:raw).slice().sort((a,b)=>timeOf(a)-timeOf(b));bars.value=rows;if(!rows.length){error.value=`暂无可用K线（${symbol.value} · ${period.value}）`;return}let backend=null;try{const sr=await marketAPI.getMarketStructure(symbol.value,period.value,600);backend=sr?.data;structureResult.value=backend||null}catch(structureError){structureResult.value=null;error.value='结构分析暂时不可用，已显示原始K线'}layerSegmentMap.value={internal:mapSegments(backend?.layer_segments?.internal||backend?.structure_hierarchy?.internal?.segments||[]),swing:mapSegments(backend?.layer_segments?.swing||backend?.segments||[]),external:mapSegments(backend?.layer_segments?.external||backend?.structure_hierarchy?.external?.segments||[])}; segments.value=layerSegmentMap.value.swing; if(!segments.value.length) segments.value=build(rows); await nextTick(); renderChart()}catch(e){error.value=e?.response?.data?.detail||'K线数据加载失败'}finally{loading.value=false}}
 async function loadSymbols(){try{const res=await marketAPI.getSymbols();const values=Array.from(new Set((res?.symbols||res?.data||[]).map(item=>typeof item==='string'?item:(item.symbol||item.value||'')).filter(Boolean)));symbols.value=values;if(!values.includes(symbol.value))symbol.value=values[0]||''}catch(e){/* 保留当前品种，行情接口失败不阻断页面 */}}
-watch(period,()=>{if(symbol.value){load();loadTradePlans()}});watch(symbol,()=>{if(symbol.value){load();loadTradePlans()}});watch(activeLayer,()=>nextTick().then(renderChart));onMounted(async()=>{window.addEventListener('resize',resizeChart);await loadSymbols();if(symbol.value){await load();await loadTradePlans()}refreshTimer=setInterval(()=>{if(symbol.value){load();loadTradePlans()}},30000)});onUnmounted(()=>{if(refreshTimer)clearInterval(refreshTimer);window.removeEventListener('resize',resizeChart);Object.values(charts).forEach(item=>item?.dispose())})
+watch(period,()=>{resetZoomOnNextRender=true;if(symbol.value){load();loadTradePlans()}});watch(symbol,()=>{resetZoomOnNextRender=true;if(symbol.value){load();loadTradePlans()}});watch(activeLayer,()=>nextTick().then(renderChart));onMounted(async()=>{window.addEventListener('resize',resizeChart);await loadSymbols();if(symbol.value){await load();await loadTradePlans()}refreshTimer=setInterval(()=>{if(symbol.value){load();loadTradePlans()}},30000)});onUnmounted(()=>{if(refreshTimer)clearInterval(refreshTimer);window.removeEventListener('resize',resizeChart);Object.values(charts).forEach(item=>item?.dispose())})
 </script>
 <style scoped>
 .structure-strip-title,.structure-strip{display:none !important}
