@@ -1,7 +1,7 @@
 """Configurable SETUP binding: pattern + layer event, with direction/entry roles."""
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 
 LAYERS = ("internal", "swing", "external")
@@ -13,58 +13,71 @@ EVENTS = (
 
 # Existing SETUP names keep working.  Each one now names the geometry it
 # watches, which layer decides direction, and which layer times entry.
-DEFAULT_BINDINGS: Dict[str, Dict[str, str]] = {
+DEFAULT_BINDINGS: Dict[str, Dict[str, Any]] = {
     "range_breakout": {
         "bind_pattern": "range", "bind_event": "breakout_confirmed",
         "direction_layer": "swing", "entry_layer": "swing",
+        "require_external_alignment": False,
     },
     "range_breakout_watch": {
         "bind_pattern": "range", "bind_event": "breakout_confirmed",
         "direction_layer": "swing", "entry_layer": "swing",
+        "require_external_alignment": False,
     },
     "range_false_breakout": {
         "bind_pattern": "range", "bind_event": "false_breakout",
         "direction_layer": "swing", "entry_layer": "internal",
+        "require_external_alignment": False,
     },
     "range_lower_reversal": {
         "bind_pattern": "range", "bind_event": "reclaim",
         "direction_layer": "swing", "entry_layer": "internal",
+        "require_external_alignment": False,
     },
     "range_upper_reversal": {
         "bind_pattern": "range", "bind_event": "reclaim",
         "direction_layer": "swing", "entry_layer": "internal",
+        "require_external_alignment": False,
     },
     "triangle_breakout": {
         "bind_pattern": "triangle", "bind_event": "breakout_confirmed",
         "direction_layer": "swing", "entry_layer": "swing",
+        "require_external_alignment": True,
     },
     "triangle_breakout_watch": {
         "bind_pattern": "triangle", "bind_event": "breakout_confirmed",
         "direction_layer": "swing", "entry_layer": "swing",
+        "require_external_alignment": True,
     },
     "triangle_prebreakout_pullback": {
         "bind_pattern": "triangle", "bind_event": "retest",
         "direction_layer": "swing", "entry_layer": "internal",
+        "require_external_alignment": False,
     },
     "structure_location_pullback": {
         "bind_pattern": "trend", "bind_event": "retest",
         "direction_layer": "swing", "entry_layer": "internal",
+        "require_external_alignment": True,
     },
     "trend_continuation": {
         "bind_pattern": "trend", "bind_event": "bos",
         "direction_layer": "swing", "entry_layer": "internal",
+        "require_external_alignment": False,
     },
     "structure_reversal": {
         "bind_pattern": "trend", "bind_event": "choch",
         "direction_layer": "swing", "entry_layer": "swing",
+        "require_external_alignment": True,
     },
     "choch_reversal": {
         "bind_pattern": "trend", "bind_event": "choch",
         "direction_layer": "swing", "entry_layer": "swing",
+        "require_external_alignment": True,
     },
     "liquidity_sweep_reclaim": {
         "bind_pattern": "trend", "bind_event": "liquidity_sweep",
         "direction_layer": "swing", "entry_layer": "internal",
+        "require_external_alignment": False,
     },
 }
 
@@ -179,36 +192,49 @@ def _safe_float(value) -> float:
 
 
 def setup_box(structure: Dict, binding: Dict) -> tuple[Dict, str]:
-    """Read geometry from the entry layer, then the direction layer.
+    """Read geometry only from the entry layer.
 
-    Swing trend + Internal range uses the Internal box. Swing range uses the
-    Swing box even if Internal is still a small trend inside it.
+    Direction layer votes buy/sell. It must not supply a Swing box to an
+    Internal range SETUP.
     """
     wanted = normalize_pattern(binding.get("bind_pattern"))
     entry_layer = normalize_layer(binding.get("entry_layer"))
-    direction_layer = normalize_layer(binding.get("direction_layer"), entry_layer)
-    for layer in (entry_layer, direction_layer):
-        pattern = layer_pattern(structure, layer)
-        if wanted == "range" and pattern not in {"range", "triangle"}:
-            continue
-        if wanted != "range" and pattern != wanted:
-            continue
-        box = layer_box(structure, layer)
-        if box:
-            return box, layer
+    pattern = layer_pattern(structure, entry_layer)
+    if wanted == "range" and pattern not in {"range", "triangle"}:
+        return {}, ""
+    if wanted != "range" and pattern != wanted:
+        return {}, ""
+    box = layer_box(structure, entry_layer)
+    if box:
+        return box, entry_layer
     return {}, ""
 
 
-def resolve_binding(setup_type: str, config: Optional[Dict] = None) -> Dict[str, str]:
+def _is_setup_overlay(config: Optional[Dict]) -> bool:
+    cfg = config or {}
+    if str(cfg.get("setup_type") or "").strip():
+        return True
+    return not any(key in cfg for key in (
+        "pivot_legs", "allowed_setups", "enable_structure_location",
+    ))
+
+
+def resolve_binding(setup_type: str, config: Optional[Dict] = None) -> Dict[str, Any]:
     setup = str(setup_type or "").strip().lower()
     base = dict(DEFAULT_BINDINGS.get(setup) or {
         "bind_pattern": "trend", "bind_event": "bos",
         "direction_layer": "swing", "entry_layer": "swing",
+        "require_external_alignment": True,
     })
     cfg = config or {}
+    overlay = cfg if _is_setup_overlay(cfg) else {}
     for key in ("bind_pattern", "bind_event", "direction_layer", "entry_layer"):
-        if cfg.get(key):
-            base[key] = cfg[key]
+        if overlay.get(key):
+            base[key] = overlay[key]
+    if "require_external_alignment" in overlay and overlay.get("require_external_alignment") is not None:
+        base["require_external_alignment"] = bool(overlay.get("require_external_alignment"))
+    else:
+        base["require_external_alignment"] = bool(base.get("require_external_alignment", True))
     base["bind_pattern"] = normalize_pattern(base.get("bind_pattern"))
     if base["bind_pattern"] == "none":
         base["bind_pattern"] = "trend"
@@ -227,24 +253,16 @@ def _pattern_matches(structure: Dict, layer: str, wanted: str) -> bool:
 
 
 def binding_matches(structure: Dict, binding: Dict) -> bool:
-    """Match geometry on the entry layer; range SETUPs may fall back to direction."""
+    """Match geometry and event on the entry layer only."""
     wanted_pattern = normalize_pattern(binding.get("bind_pattern"))
     wanted_event = normalize_event(binding.get("bind_event"))
     direction_layer = normalize_layer(binding.get("direction_layer"))
     entry_layer = normalize_layer(binding.get("entry_layer"), direction_layer)
-    if wanted_pattern == "trend":
-        if not _pattern_matches(structure, entry_layer, wanted_pattern):
-            return False
-    elif not (
-        _pattern_matches(structure, entry_layer, wanted_pattern)
-        or _pattern_matches(structure, direction_layer, wanted_pattern)
-    ):
+    if not _pattern_matches(structure, entry_layer, wanted_pattern):
         return False
     observed = {
         layer_event(structure, entry_layer),
         layer_geometry_event(structure, entry_layer),
-        layer_event(structure, direction_layer),
-        layer_geometry_event(structure, direction_layer),
     }
     if wanted_event in {"retest", "reclaim", "none"}:
         return True

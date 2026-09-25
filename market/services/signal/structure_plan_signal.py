@@ -48,6 +48,7 @@ STRUCTURE_PLAN_DEFAULT_CONFIG = {
     "bind_event": "",
     "direction_layer": "swing",
     "entry_layer": "internal",
+    "require_external_alignment": True,
     "confirmation_bars": 1,
     "min_body_atr": 0.0,
     "min_displacement_atr": 0.0,
@@ -272,7 +273,7 @@ class StructurePlanBuilder:
         for profile in self.setup_profiles:
             if str(profile.get("setup_type") or "").strip().lower() == self._active_setup:
                 self._active_profile = dict(profile)
-                self.params.update({k: v for k, v in profile.items() if k in STRUCTURE_PLAN_DEFAULT_CONFIG or k in {"bind_pattern","bind_event","direction_layer","entry_layer"}})
+                self.params.update({k: v for k, v in profile.items() if k in STRUCTURE_PLAN_DEFAULT_CONFIG or k in {"bind_pattern","bind_event","direction_layer","entry_layer","require_external_alignment"}})
                 # Map the optimizer's common controls onto the existing
                 # setup-specific gates so recommendations affect generation.
                 if "min_displacement_atr" in profile:
@@ -285,13 +286,40 @@ class StructurePlanBuilder:
                 if "require_reclaim" in profile:
                     self.params["require_location_reclaim"] = profile["require_reclaim"]
                 break
+        binding = resolve_binding(self._active_setup, self._active_profile)
+        self.params["require_external_alignment"] = bool(
+            binding.get("require_external_alignment", True)
+        )
 
     def _reject(self, reason: str) -> None:
         if reason and reason not in self._rejections:
             self._rejections.append(reason)
 
+    def _setup_overlay(self, setup_type: str = "") -> dict:
+        setup = str(setup_type or self._active_setup or "").strip().lower()
+        active = str(self._active_setup or "").strip().lower()
+        if setup and setup == active and self._active_profile:
+            return dict(self._active_profile)
+        for profile in self.setup_profiles:
+            if str(profile.get("setup_type") or "").strip().lower() == setup:
+                return dict(profile)
+        return {}
+
     def _setup_binding(self, setup_type: str = "") -> dict:
-        return resolve_binding(setup_type or self._active_setup, self.params)
+        setup = str(setup_type or self._active_setup or "").strip().lower()
+        return resolve_binding(setup, self._setup_overlay(setup))
+
+    def _external_allows(self, structure: Dict, expected_bias: str, setup_type: str = "") -> bool:
+        """Honor per-SETUP External alignment. Undetermined External does not block."""
+        if expected_bias not in {"up", "down"}:
+            return True
+        binding = self._setup_binding(setup_type)
+        if not bool(binding.get("require_external_alignment", False)):
+            return True
+        bias = self.structure_layers(structure).get("external")
+        if bias not in {"up", "down"}:
+            return True
+        return bias == expected_bias
 
     def _binding_context(self, structure: Dict, setup_type: str = "") -> dict:
         binding = self._setup_binding(setup_type)
@@ -506,9 +534,11 @@ class StructurePlanBuilder:
         min_extension = max(0.0, _number(
             self._param("triangle_breakout_min_close_extension_atr", 0.1)
         ))
-        require_alignment = bool(self._param(
-            "triangle_breakout_require_swing_external_alignment", True
-        ))
+        triangle_setup = (
+            self._active_setup
+            if self._active_setup in {"triangle_breakout", "triangle_breakout_watch"}
+            else "triangle_breakout"
+        )
         evidence = {
             "breakout_bar_index": index,
             "breakout_bar_time": _bar_time(bar),
@@ -532,12 +562,14 @@ class StructurePlanBuilder:
                 f"三角形突破收盘仅越过边界 {extension_atr:.2f} ATR，"
                 f"低于最低要求 {min_extension:.2f} ATR"
             )
-        if require_alignment and (
-            swing_bias != expected_bias or external_bias != expected_bias
-        ):
+        if swing_bias != expected_bias:
             return False, evidence, (
-                f"三角形突破方向与 Swing/External 不一致："
-                f"突破={expected_bias}，Swing={swing_bias}，External={external_bias}"
+                f"三角形突破方向与方向层不一致：突破={expected_bias}，Swing={swing_bias}"
+            )
+        if not self._external_allows(structure, expected_bias, triangle_setup):
+            return False, evidence, (
+                f"三角形突破方向与 External 不一致："
+                f"突破={expected_bias}，External={external_bias}"
             )
         return True, evidence, ""
 
@@ -1026,13 +1058,21 @@ class StructurePlanBuilder:
         sl = _number(kwargs.get("stop_loss"))
         tp = _number(kwargs.get("take_profit"))
         direction = kwargs.get("direction")
+        setup_type = str(kwargs.get("setup_type") or "")
+        snapshot = kwargs.get("structure_snapshot") or {}
         blocked = self.counter_trend_reason(
-            direction, kwargs.get("structure_snapshot") or {},
-            str(kwargs.get("setup_type") or ""),
-            self.params,
+            direction, snapshot, setup_type, self._setup_overlay(setup_type),
         )
         if blocked:
             self._reject(blocked)
+            return None
+        expected_bias = "up" if direction == "buy" else "down" if direction == "sell" else ""
+        if expected_bias and not self._external_allows(snapshot, expected_bias, setup_type):
+            layers = self.structure_layers(snapshot)
+            self._reject(
+                f"{setup_type or 'SETUP'} 要求 External 同向："
+                f"计划={expected_bias}，External={layers.get('external')}"
+            )
             return None
         valid = (
             direction == "buy" and sl < entry < tp
@@ -1296,12 +1336,15 @@ class StructurePlanBuilder:
             (hierarchy.get("internal") or {}).get("bias")
             or structure.get("internal_state")
         )
-        if self._param("location_require_swing_external_alignment", True) and (
-            swing_bias != expected_bias or external_bias != expected_bias
-        ):
+        if swing_bias != expected_bias:
             self._reject(
-                f"趋势回撤要求 Swing/External 同向：计划={expected_bias}，"
-                f"Swing={swing_bias}，External={external_bias}"
+                f"趋势回撤要求方向层同向：计划={expected_bias}，Swing={swing_bias}"
+            )
+            return []
+        if not self._external_allows(structure, expected_bias):
+            self._reject(
+                f"趋势回撤要求 External 同向：计划={expected_bias}，"
+                f"External={external_bias}"
             )
             return []
         if self._param("location_require_internal_confirmation", True) and (
@@ -1762,7 +1805,13 @@ class StructurePlanBuilder:
         if self._param("enable_range_breakout", True) and self._setup_owns_layer("range_breakout_watch", box_layer):
             self._activate_setup("range_breakout_watch")
             for direction in ("buy", "sell"):
-                if self.counter_trend_reason(direction, structure, "range_breakout_watch", self.params):
+                expected_bias = "up" if direction == "buy" else "down"
+                if self.counter_trend_reason(
+                    direction, structure, "range_breakout_watch",
+                    self._setup_overlay("range_breakout_watch"),
+                ):
+                    continue
+                if not self._external_allows(structure, expected_bias, "range_breakout_watch"):
                     continue
                 plans.append(self._plan(
                     source_id=source_id, symbol=symbol, period=period, anchor=anchor,
@@ -1826,13 +1875,12 @@ class StructurePlanBuilder:
             # the trend to fail (or the external structure to agree) avoids
             # selling every M1 retracement in an otherwise rising market.
             major_state = str(structure.get("major_state") or "").lower()
-            external_state = str(structure.get("external_state") or "").lower()
             trend_phase = str(structure.get("trend_phase") or "").lower()
             if (
                 major_state in {"up", "down"}
                 and direction_state != major_state
                 and trend_phase in {"strong", "mature", "weakening"}
-                and external_state == major_state
+                and not self._external_allows(structure, direction_state, "choch_reversal")
             ):
                 self._reject(
                     f"主结构仍为 {major_state}，当前 CHOCH={direction_state} 仅视为趋势内回撤，"

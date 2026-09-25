@@ -42,6 +42,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         "enable_trend", "location_require_swing_external_alignment",
         "location_require_internal_confirmation",
         "triangle_breakout_require_swing_external_alignment",
+        "require_external_alignment",
         "event_risk_enabled",
     }
     string_keys = {"entry_mode", "bind_pattern", "bind_event", "direction_layer", "entry_layer"}

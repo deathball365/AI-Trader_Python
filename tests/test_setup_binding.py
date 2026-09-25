@@ -180,3 +180,70 @@ def test_active_event_and_location_plans_can_coexist():
     assert {plan["setup_type"] for plan in selected} == {
         "choch_reversal", "structure_location_pullback",
     }
+
+
+def test_range_reversal_does_not_use_swing_box_when_internal_is_trend():
+    binding = resolve_binding("range_lower_reversal")
+    structure = _structure(swing_pattern="range", internal_pattern="trend", swing_status="confirmed")
+    assert binding["direction_layer"] == "swing"
+    assert binding["entry_layer"] == "internal"
+    assert binding_matches(structure, binding) is False
+    box, layer = setup_box(structure, binding)
+    assert box == {}
+    assert layer == ""
+
+
+
+def test_require_external_alignment_defaults():
+    assert resolve_binding("range_lower_reversal")["require_external_alignment"] is False
+    assert resolve_binding("range_false_breakout")["require_external_alignment"] is False
+    assert resolve_binding("trend_continuation")["require_external_alignment"] is False
+    assert resolve_binding("structure_location_pullback")["require_external_alignment"] is True
+    assert resolve_binding("triangle_breakout")["require_external_alignment"] is True
+    assert resolve_binding("triangle_breakout_watch")["require_external_alignment"] is True
+    assert resolve_binding("choch_reversal")["require_external_alignment"] is True
+
+
+def test_global_structure_config_does_not_force_external_alignment():
+    binding = resolve_binding("range_lower_reversal", STRUCTURE_PLAN_DEFAULT_CONFIG)
+    assert binding["require_external_alignment"] is False
+    assert binding["entry_layer"] == "internal"
+    breakout = resolve_binding("range_breakout", STRUCTURE_PLAN_DEFAULT_CONFIG)
+    assert breakout["entry_layer"] == "swing"
+
+
+def test_setup_overlay_can_toggle_external_alignment():
+    assert resolve_binding("structure_location_pullback", {
+        "require_external_alignment": False,
+    })["require_external_alignment"] is False
+    assert resolve_binding("range_lower_reversal", {
+        "setup_type": "range_lower_reversal",
+        "require_external_alignment": True,
+    })["require_external_alignment"] is True
+
+
+def test_builder_honors_external_alignment_switch():
+    structure = _structure()
+    structure["structure_hierarchy"]["external"]["bias"] = "down"
+    structure["external_state"] = "down"
+
+    blocked = StructurePlanBuilder(STRUCTURE_PLAN_DEFAULT_CONFIG)
+    blocked._activate_setup("structure_location_pullback")
+    assert blocked._setup_binding()["require_external_alignment"] is True
+    assert blocked._external_allows(structure, "up") is False
+
+    allowed = StructurePlanBuilder(
+        STRUCTURE_PLAN_DEFAULT_CONFIG,
+        setup_profiles=[{
+            "setup_type": "structure_location_pullback",
+            "require_external_alignment": False,
+        }],
+    )
+    allowed._activate_setup("structure_location_pullback")
+    assert allowed._setup_binding()["require_external_alignment"] is False
+    assert allowed._external_allows(structure, "up") is True
+
+    reversal = StructurePlanBuilder(STRUCTURE_PLAN_DEFAULT_CONFIG)
+    reversal._activate_setup("range_lower_reversal")
+    assert reversal._setup_binding()["require_external_alignment"] is False
+    assert reversal._external_allows(structure, "up") is True
