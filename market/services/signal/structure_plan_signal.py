@@ -1994,14 +1994,11 @@ class StructurePlanBuilder:
         if not entry_mode or entry <= 0:
             self._reject("趋势延续尚未完成回踩确认或连续收盘站稳")
             return []
-        mature_retest_only = bool(self._param(
-            "trend_mature_retest_only_m1" if str(period).upper() == "M1"
-            else "trend_mature_retest_only",
-            False if str(period).upper() == "M1" else True,
-        ))
-        if trend_phase in {"mature", "weakening"} and ascending_context and entry_mode != "trend_pullback_reclaim":
+        mature_retest_only = bool(self._param("trend_mature_retest_only", True))
+        chase_entry = entry_mode not in {"breakout_retest", "trend_pullback_reclaim"}
+        if mature_retest_only and trend_phase in {"mature", "weakening"} and chase_entry:
             self._reject(
-                f"趋势阶段为 {trend_phase}，等待回到 HL/LH 支撑区并向上回收，禁止突破后直接追入"
+                f"趋势阶段为 {trend_phase}，已开启成熟趋势仅允许回踩，禁止突破后直接追入"
             )
             return []
         direction = "buy" if major == "up" else "sell"

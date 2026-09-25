@@ -33,9 +33,16 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
     }
     list_keys = {"allowed_setups", "blocked_setups", "allowed_directions", "blocked_hours"}
     bool_keys = {
-        "enabled", "require_reclaim", "require_retest",
-        "invalidate_on_zone_return",
-        "false_breakout_require_reclaim_close",
+        "enabled", "require_reclaim", "require_retest", "require_location_reclaim",
+        "invalidate_on_zone_return", "false_breakout_require_reclaim_close",
+        "trend_require_healthy_phase", "trend_mature_retest_only",
+        "trend_mature_retest_only_m1", "trend_retest_required",
+        "enable_structure_location", "enable_range_boundary", "enable_range_breakout",
+        "enable_triangle_prebreakout", "enable_choch", "enable_liquidity_sweep",
+        "enable_trend", "location_require_swing_external_alignment",
+        "location_require_internal_confirmation",
+        "triangle_breakout_require_swing_external_alignment",
+        "event_risk_enabled",
     }
     string_keys = {"entry_mode", "bind_pattern", "bind_event", "direction_layer", "entry_layer"}
     inherit_empty_list_keys = {"allowed_setups", "blocked_setups", "allowed_directions", "blocked_hours"}
@@ -136,6 +143,18 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         config = {**allowed, **normalized_default}
         if not isinstance(config.get(setup_default_key), dict):
             config[setup_default_key] = {}
+        for key in bool_keys:
+            if key in config:
+                config[key] = as_bool(config[key], bool(allowed.get(key, False)))
+        config[setup_default_key] = {
+            str(setup): {
+                **value,
+                **{key: as_bool(value[key], bool(allowed.get(key, False)))
+                   for key in bool_keys if key in value},
+            }
+            for setup, value in config[setup_default_key].items()
+            if isinstance(value, dict)
+        }
 
         profiles = []
         for row in profile_rows:
