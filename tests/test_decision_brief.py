@@ -53,3 +53,45 @@ def test_liquidity_sweep_buy_brief_matches_gold_style_attribution():
 def test_missing_attribution_is_manual():
     brief = build_decision_brief({}, {}, {})
     assert brief["available"] is False
+
+
+def test_range_lower_reversal_describes_internal_box_not_uptrend():
+    brief = build_decision_brief(
+        attribution={
+            "direction": "buy",
+            "setup_type": "range_lower_reversal",
+            "strategy_name": "EURUSD# · M5 结构信号策略",
+            "signal_source_period": "M5",
+            "entry_mode": "touch_or_near",
+            "initial_stop_loss": 1.13899,
+            "initial_take_profit": 1.14100,
+        },
+        plan={
+            "setup_type": "range_lower_reversal",
+            "direction": "buy",
+            "period": "M5",
+            "direction_layer": "swing",
+            "entry_layer": "internal",
+            "entry_mode": "touch_or_near",
+            "reason": "M5 箱体下沿回收买入计划，上下沿确认 3/3 次",
+            "structure_snapshot": {
+                "major_state": "up",
+                "internal_state": "up",
+                "external_state": "up",
+                "structure_hierarchy": {
+                    "swing": {"bias": "up", "pattern": "trend"},
+                    "internal": {
+                        "bias": "up",
+                        "pattern": "range",
+                        "pattern_detail": {"top": 1.14034, "bottom": 1.13956, "high_touches": 3, "low_touches": 3},
+                    },
+                    "external": {"bias": "up", "pattern": "trend"},
+                },
+            },
+        },
+        position={"symbol": "EURUSD#", "direction": "buy", "entry_price": 1.13965, "volume": 0.05},
+    )
+    bodies = " ".join(item["body"] for item in brief["sections"])
+    assert "Internal 箱体" in bodies
+    assert "Internal 上涨趋势" not in bodies
+    assert "箱沿附近" in bodies

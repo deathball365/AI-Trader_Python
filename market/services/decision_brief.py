@@ -80,6 +80,33 @@ def _layer_event(hierarchy: Dict, layer: str) -> Dict:
     return event if isinstance(event, dict) else {}
 
 
+def _layer_describe(hierarchy: Dict, layer: str, fallback_bias: str = "") -> str:
+    payload = (hierarchy or {}).get(layer) or {}
+    pattern = _text(payload.get("pattern")).lower()
+    bias = _text(payload.get("bias") or fallback_bias).lower()
+    detail = payload.get("pattern_detail") or {}
+    name = LAYER_LABELS.get(layer, layer)
+    if "triangle" in pattern:
+        return f"{name} 三角形"
+    if pattern in {"range", "box", "rectangle", "sideways", "broadening"}:
+        top = _number(detail.get("top") or detail.get("locked_top"))
+        bottom = _number(detail.get("bottom") or detail.get("locked_bottom"))
+        high_slope = _number(detail.get("high_slope"))
+        low_slope = _number(detail.get("low_slope"))
+        shape = "箱体"
+        if high_slope < 0 and low_slope < 0:
+            shape = "下降箱体"
+        elif high_slope > 0 and low_slope > 0:
+            shape = "上升箱体"
+        edges = f"（下沿 {_price(bottom)} / 上沿 {_price(top)}）" if top and bottom else ""
+        return f"{name} {shape}{edges}"
+    if pattern in {"trend", "up", "down"} or bias in {"up", "down"}:
+        return f"{name} {_bias_label(bias or pattern)}趋势"
+    if bias:
+        return f"{name} {_bias_label(bias)}"
+    return ""
+
+
 def build_decision_brief(
     attribution: Optional[Dict] = None,
     plan: Optional[Dict] = None,
@@ -158,9 +185,9 @@ def build_decision_brief(
         ).strip(),
     })
     structure_bits = [
-        f"Swing {_bias_label(swing)}" if swing else "",
-        f"Internal {_bias_label(internal)}" if internal else "",
-        f"External {_bias_label(external)}" if external else "",
+        _layer_describe(hierarchy, "swing", swing),
+        _layer_describe(hierarchy, "internal", internal),
+        _layer_describe(hierarchy, "external", external),
     ]
     structure_text = "，".join(bit for bit in structure_bits if bit)
     if setup == "liquidity_sweep_reclaim":
@@ -172,6 +199,15 @@ def build_decision_brief(
             f"{' 当时 ' + structure_text + '。' if structure_text else ' '}"
             f"大级别{allow}；{LAYER_LABELS.get(entry_layer, '入场层')} 扫了{sweep_side} "
             f"{_price(event_level)} 后又收回，所以做这笔 {action}。"
+        )
+    elif setup in {"range_lower_reversal", "range_upper_reversal", "range_false_breakout"}:
+        edge = "下沿" if direction == "buy" else "上沿"
+        structure_body = (
+            f"这个 SETUP 方向看 {LAYER_LABELS.get(direction_layer, direction_layer)}，"
+            f"入场看 {LAYER_LABELS.get(entry_layer, entry_layer)} 的箱体{edge}。"
+            f"{' 当时 ' + structure_text + '。' if structure_text else ' '}"
+            f"{LAYER_LABELS.get(direction_layer, '方向层')}{'上涨所以只买下沿' if direction=='buy' else '下跌所以只卖上沿'}。"
+            f"{(' ' + plan_reason + '。') if plan_reason else ''}"
         )
     else:
         structure_body = (
@@ -192,7 +228,8 @@ def build_decision_brief(
         "body": (
             f"{time_note}{fill_note}"
             f"手数 {volume:g}。"
-            f"{' 入场方式是回到被扫结构位附近再进。' if _text(plan.get('entry_mode') or attribution.get('entry_mode')) in {'touch_and_reclaim', 'touch_or_near'} else ''}"
+            f"{' 入场方式是回到被扫结构位附近再进。' if _text(plan.get('entry_mode') or attribution.get('entry_mode')) == 'touch_and_reclaim' else ''}"
+            f"{' 入场方式是价格回到箱沿附近即可。' if _text(plan.get('entry_mode') or attribution.get('entry_mode')) == 'touch_or_near' else ''}"
         ).strip(),
     })
 
