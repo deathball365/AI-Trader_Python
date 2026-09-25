@@ -198,31 +198,6 @@
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_retest_stop_atr')" v-model.number="structureEngineConfig.trend_retest_stop_atr" type="number" min="1" max="15" step="0.1" label="趋势回踩止损上限（ATR）" hint="超过正常上限后必须回踩，默认 4.0" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('trend_max_stop_atr')" v-model.number="structureEngineConfig.trend_max_stop_atr" type="number" min="1" max="20" step="0.1" label="趋势最大止损上限（ATR）" hint="超过后取消计划，默认 6.0" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('choch_max_stop_atr')" v-model.number="structureEngineConfig.choch_max_stop_atr" type="number" min="0.5" max="10" step="0.1" label="CHOCH 最大止损（ATR）" hint="超过后等待新的结构回踩，默认 3.0" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12"><div class="structure-zone-heading mt-2"><div class="text-subtitle-2">四、市场结构识别 · 成交密集区与 Pivot 区域</div><div class="text-caption text-medium-emphasis">密集区来自收盘价聚集，Pivot 区域来自结构转折；两者独立识别，重叠时只增强可信度。</div></div></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('zone_pressure_enabled')" v-model="structureEngineConfig.zone_pressure_enabled" color="primary" inset hide-details label="启用成交密集区识别" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_lookback_bars')" v-model.number="structureEngineConfig.zone_lookback_bars" type="number" min="20" max="600" label="密集区回看K线数" hint="公共默认值；未配置品种/周期专项时，系统按周期采用内置窗口" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_bin_atr')" v-model.number="structureEngineConfig.zone_bin_atr" type="number" min="0" step="0.05" label="价格桶宽度（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-select :class="structureFieldClass('zone_width_mode')" v-model="structureEngineConfig.zone_width_mode" :items="[{title:'自适应',value:'auto'},{title:'固定',value:'fixed'}]" label="区域宽度模式" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_bin_atr_min')" v-model.number="structureEngineConfig.zone_bin_atr_min" type="number" min="0.05" step="0.05" label="自适应最小宽度（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_bin_atr_max')" v-model.number="structureEngineConfig.zone_bin_atr_max" type="number" min="0.1" step="0.05" label="自适应最大宽度（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_target_count')" v-model.number="structureEngineConfig.zone_target_count" type="number" min="1" max="10" label="最多保留密集区" hint="仅作为上限，不会为了凑数量生成区域" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_min_close_ratio')" v-model.number="structureEngineConfig.zone_min_close_ratio" type="number" min="0" max="1" step="0.05" label="最低收盘占比" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_min_consecutive_bars')" v-model.number="structureEngineConfig.zone_min_consecutive_bars" type="number" min="2" label="连续聚集最少 K 线" hint="连续收盘在同一价格桶内即可形成密集区" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_consecutive_gap_bars')" v-model.number="structureEngineConfig.zone_consecutive_gap_bars" type="number" min="0" max="3" label="连续聚集允许间隔" hint="默认 0，表示必须逐根连续" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_min_visits')" v-model.number="structureEngineConfig.zone_min_visits" type="number" min="1" label="最少访问次数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_leave_atr')" v-model.number="structureEngineConfig.zone_leave_atr" type="number" min="0" step="0.05" label="离开距离（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_max_width_atr')" v-model.number="structureEngineConfig.zone_max_width_atr" type="number" min="0" step="0.1" label="最大宽度（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_identity_match_atr')" v-model.number="structureEngineConfig.zone_identity_match_atr" type="number" min="0" step="0.05" label="身份匹配距离（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('zone_identity_max_gap_bars')" v-model.number="structureEngineConfig.zone_identity_max_gap_bars" type="number" min="1" label="身份最大间隔K线" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_touch_atr')" v-model.number="structureEngineConfig.pressure_touch_atr" type="number" min="0" step="0.05" label="密集区触碰容差（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_min_rejections')" v-model.number="structureEngineConfig.pressure_min_rejections" type="number" min="1" label="最少拒绝次数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_reclaim_ratio')" v-model.number="structureEngineConfig.pressure_reclaim_ratio" type="number" min="0" max="1" step="0.05" label="回收确认比例" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_min_displacement_atr')" v-model.number="structureEngineConfig.pressure_min_displacement_atr" type="number" min="0" step="0.1" label="最小位移（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_min_efficiency')" v-model.number="structureEngineConfig.pressure_min_efficiency" type="number" min="0" max="1" step="0.05" label="最小方向效率" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('pivot_zone_enabled')" v-model="structureEngineConfig.pivot_zone_enabled" color="primary" inset hide-details label="启用 Pivot 支撑阻力融合" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pivot_zone_merge_atr')" v-model.number="structureEngineConfig.pivot_zone_merge_atr" type="number" min="0" step="0.05" label="Pivot 合并距离（ATR）" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pivot_zone_min_points')" v-model.number="structureEngineConfig.pivot_zone_min_points" type="number" min="1" label="Pivot 区域最少点数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pivot_zone_target_count')" v-model.number="structureEngineConfig.pivot_zone_target_count" type="number" min="1" max="20" label="最多保留 Pivot 区域" hint="仅保留最强且较新的区域" persistent-hint density="compact" variant="outlined" /></v-col>
               <v-col cols="12"><div class="structure-zone-heading mt-2"><div class="text-subtitle-2">六、交易计划生成 · 通用条件</div><div class="text-caption text-medium-emphasis">所有 SETUP 共用的入场、止损、止盈和确认条件。</div></div></v-col>
             </v-row>
             <div class="llm-section-head compact mt-4"><div><h3>结构交易计划参数</h3><p>行情层统一生成计划；按品种/周期专属配置覆盖默认值，策略仅负责引用和执行筛选。</p></div></div>
@@ -1752,19 +1727,8 @@ export default {
       trend_min_efficiency: '趋势最小方向效率',
       trend_min_net_change_atr: '趋势最小净位移 ATR',
       trend_continuation_hold_bars: '趋势延续保持 K 线数',
-      zone_pressure_enabled: '启用成交密集区识别',
-      zone_lookback_bars: '密集区回看 K 线数',
-      zone_bin_atr: '密集区价格桶 ATR',
-      zone_min_visits: '密集区最少访问次数',
       zone_min_consecutive_bars: '连续聚集最少 K 线',
       zone_consecutive_gap_bars: '连续聚集允许间隔',
-      pressure_min_rejections: '密集区最少拒绝次数',
-      pressure_min_displacement_atr: '密集区最小位移 ATR',
-      pressure_min_efficiency: '密集区最小效率',
-      pressure_reclaim_ratio: '密集区回收比例',
-      pivot_zone_enabled: '启用 Pivot 支撑阻力融合',
-      pivot_zone_min_points: 'Pivot 区域最少点数',
-      pivot_zone_target_count: '最多保留 Pivot 区域',
       target_multiple: '目标倍数',
       enable_range_boundary: '启用箱体边界计划',
       enable_range_breakout: '启用箱体突破计划',

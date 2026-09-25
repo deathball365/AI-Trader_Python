@@ -70,16 +70,3 @@ def test_disabled_setup_and_direction_are_filtered():
         {"setup_type": "trend_continuation", "direction": "buy"},
     ])
     assert plans == [{"setup_type": "range_breakout", "direction": "buy"}]
-
-
-def test_zone_pressure_defaults_are_market_layer_configured():
-    expected = {
-        "zone_pressure_enabled", "zone_lookback_bars", "zone_bin_atr",
-        "zone_min_close_ratio", "zone_min_visits", "zone_leave_atr",
-        "zone_max_width_atr", "zone_identity_match_atr",
-        "zone_identity_max_gap_bars", "pressure_touch_atr",
-        "pressure_min_rejections", "pressure_reclaim_ratio",
-        "pressure_min_displacement_atr", "pressure_min_efficiency",
-        "pivot_zone_enabled", "pivot_zone_merge_atr", "pivot_zone_min_points",
-    }
-    assert expected.issubset(STRUCTURE_PLAN_DEFAULT_CONFIG)

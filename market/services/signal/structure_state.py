@@ -14,7 +14,6 @@ from typing import Any, Mapping
 def _latest_event(structure: Mapping[str, Any]) -> Mapping[str, Any]:
     events = list(structure.get("internal_events") or [])
     events += list(structure.get("external_events") or [])
-    events += list((structure.get("zone_pressure") or {}).get("events") or [])
     if not events:
         return {}
     return max(
@@ -45,7 +44,7 @@ def _phase(structure: Mapping[str, Any], event: Mapping[str, Any], local: str) -
     event_type = str(event.get("type") or "").lower()
     if event_type in {"bos", "choch", "breakout", "breakout_confirmed"}:
         return "breakout_confirmed"
-    if event_type in {"false_breakout", "pressure_reversal_confirmed"}:
+    if event_type in {"false_breakout"}:
         return "reversal_candidate"
     trend_phase = str(structure.get("trend_phase") or "").lower()
     if trend_phase in {"pullback", "retest", "continuation"}:
@@ -90,8 +89,6 @@ def derive_structure_state(
     local = _local_pattern(box)
     latest = dict(event or _latest_event(source))
     event_type = str(latest.get("type") or "none").lower()
-    if event_type == "pressure_reversal_confirmed":
-        event_type = "false_breakout"
     if event_type == "zone_breakout_confirmed":
         event_type = "breakout"
     if major == "up":

@@ -74,20 +74,6 @@
     </v-card>
     <v-card v-if="bars.length" class="chart-card mb-4"><v-card-title>K线与结构段</v-card-title><v-card-text><div ref="chartRef" class="chart" style="height:480px;width:100%"></div><div class="structure-strip-title">结构时间轴（按 K 线数量）</div><div class="structure-strip"><div v-for="(item,index) in segments" :key="`strip-${item.id}`" class="structure-strip-segment" :style="stripStyle(item,index)" :title="`${labels[item.type]||item.type} · ${item.start} → ${item.end} · 强度 ${item.strength ?? item.confidence ?? 0}%`"><span>{{ labels[item.type]||item.type }}</span></div></div><div class="legend"><span v-for="type in ['up','sideways','triangle','down','transition']" :key="type"><i :style="{background:legendColors[type]}"></i>{{ labels[type] }}</span></div></v-card-text></v-card>
     <v-row v-if="structureResult">
-      <v-col cols="12"><v-card class="summary pressure-card"><v-card-title>价格密集区与攻防</v-card-title><v-card-subtitle>在 K 线图上叠加支撑、阻力区域；色带越深表示访问次数和收盘聚集密度越高。分析窗口：最近 {{ zoneLookbackBars }} 根 K 线。</v-card-subtitle><v-card-text>
-        <div class="pressure-summary">
-          <div class="pressure-stat"><small>当前价格</small><strong>{{ currentMarketPrice == null ? '--' : currentMarketPrice.toFixed(2) }}</strong></div>
-          <div class="pressure-stat support"><small>支撑区</small><strong>{{ pressureSummary.supportCount }} 个</strong><span v-if="pressureSummary.nearestSupport">最近 {{ pressureSummary.nearestSupport.upper.toFixed(2) }} · {{ pressureSummary.supportDistance }}</span></div>
-          <div class="pressure-stat resistance"><small>阻力区</small><strong>{{ pressureSummary.resistanceCount }} 个</strong><span v-if="pressureSummary.nearestResistance">最近 {{ pressureSummary.nearestResistance.lower.toFixed(2) }} · {{ pressureSummary.resistanceDistance }}</span></div>
-          <div class="pressure-conclusion"><small>当前解读</small><strong>{{ pressureSummary.conclusion }}</strong></div>
-        </div>
-        <div ref="zoneChartRef" class="zone-chart" aria-label="价格密集区支撑阻力图"></div>
-        <v-alert v-if="!zonePressureRows.length" type="info" variant="tonal" density="compact" class="mt-3">当前分析窗口内暂无满足条件的价格密集区，保留 K 线用于观察；系统不会强行生成密集区。</v-alert>
-        <div class="pressure-legend"><span><i class="legend-dot support-dot"></i>支撑</span><span><i class="legend-dot resistance-dot"></i>阻力</span><span><i class="legend-dot inside-dot"></i>当前所在区域</span><span>色带越深 = 聚集越密</span><span>加粗边框 = 最近区域</span></div>
-        <v-expansion-panels v-if="zonePressureRows.length" variant="accordion" class="pressure-details">
-          <v-expansion-panel><v-expansion-panel-title>查看全部区域详情（{{ zonePressureRows.length }} 个）</v-expansion-panel-title><v-expansion-panel-text><div class="zone-detail-list"><article v-for="row in zonePressureRows" :key="`detail-${row.id}`"><div class="card-head"><strong>{{ row.label }} · {{ row.lower.toFixed(2) }}–{{ row.upper.toFixed(2) }}</strong><div class="zone-status"><v-chip size="x-small" :color="row.color" variant="tonal">{{ row.status }}</v-chip><v-chip size="x-small" color="info" variant="tonal">{{ row.meta }}</v-chip></div></div><p>{{ row.reason }}</p><small v-if="row.source === 'dense'">区域版本 {{ row.zoneRevision }} · Pivot 重叠 {{ row.pivotOverlaps }} 个</small><small v-else>来源：{{ row.layers || 'Pivot 结构确认' }}</small><div v-if="row.events" class="zone-events-inline">{{ row.events }}</div></article></div></v-expansion-panel-text></v-expansion-panel>
-        </v-expansion-panels>
-      </v-card-text></v-card></v-col>
       <v-col cols="12" md="4"><v-card class="summary"><v-card-text><small>主结构状态</small><h2>{{ stateLabel(structureResult.major_state || structureResult.current_state) }}</h2><div class="stats flex-wrap"><span>内部：{{ stateLabel(structureResult.internal_state) }}</span><span>大级别：{{ stateLabel(structureResult.external_state) }}</span><span>局部形态：{{ localStateLabel(structureResult) }}</span><span>阶段：{{ detailLabel(structureResult.state_detail) }}</span><span>趋势健康度：{{ trendPhaseLabel(structureResult.trend_phase) }}</span><span>ATR {{ Number(structureResult.atr || 0).toFixed(2) }}</span></div><v-alert v-if="structureResult.trend_phase==='weakening'" type="warning" density="compact" variant="tonal" class="mt-3">趋势推进力度衰减或回撤加深，已暂停追涨/追跌趋势延续计划。</v-alert><v-alert v-if="structureResult.trend_phase==='failed'" type="error" density="compact" variant="tonal" class="mt-3">保护结构已被收盘突破，原趋势延续计划失效，等待反转确认。</v-alert><v-alert v-if="structureResult.active_candidate" type="warning" density="compact" variant="tonal" class="mt-3">正在等待{{ structureResult.active_candidate.direction === 'up' ? '向上' : '向下' }}反转确认；K线图以橙色虚线显示候选段</v-alert><v-alert v-if="structureResult.range?.status === 'failed_breakout'" type="info" density="compact" variant="tonal" class="mt-2">价格突破后重新收回区间，当前判定为假突破并恢复原区间</v-alert></v-card-text></v-card></v-col>
       <v-col cols="12" md="8"><v-card class="summary"><v-card-title>结构事件</v-card-title><v-card-text><div class="event-list"><span v-for="(event,index) in recentEvents" :key="`event-${index}`" :class="event.direction==='up'?'event-up':'event-down'">{{ event.type?.toUpperCase() }} · {{ event.direction==='up'?'向上':'向下' }} · {{ event.level ? Number(event.level).toFixed(2) : '流动性扫过' }} · {{ barStamp(event.index) }}</span><span v-if="!recentEvents.length" class="empty">暂无已确认结构事件</span></div></v-card-text></v-card></v-col>
       <v-col cols="12"><v-card class="summary"><v-card-title>多级别结构证据</v-card-title><v-card-text><div class="stats"><span>小级别 Pivot {{ structureResult.structure_levels?.small?.pivot_count || 0 }}</span><span>中级别 Pivot {{ structureResult.structure_levels?.medium?.pivot_count || 0 }}</span><span>大级别 Pivot {{ structureResult.structure_levels?.large?.pivot_count || 0 }}</span><span>HH {{ structureResult.evidence?.higher_highs || 0 }}</span><span>HL {{ structureResult.evidence?.higher_lows || 0 }}</span><span>LH {{ structureResult.evidence?.lower_highs || 0 }}</span><span>LL {{ structureResult.evidence?.lower_lows || 0 }}</span><span>收盘突破 {{ structureResult.evidence?.close_breaks || 0 }}</span><span>影线扫过 {{ structureResult.evidence?.wick_sweeps || 0 }}</span></div></v-card-text></v-card></v-col>
@@ -115,7 +101,7 @@ import { useRoute } from 'vue-router'
 import { marketAPI } from '../api/market'
 import * as echarts from 'echarts'
 
-const route = useRoute(); const symbol = ref(String(route.query.symbol || 'BTCUSD')); const period = ref(String(route.query.period || 'M5')); const periods=['M1','M5','M15','H1','H4']; const symbols=ref([symbol.value]); const loading=ref(false); const error=ref(''); const segments=ref([]); const bars=ref([]); const structureResult=ref(null); const tradePlans=ref([]); const opportunityDetails=ref({}); const opportunityLoading=ref({}); const chartRef=ref(null); const zoneChartRef=ref(null); let chart=null; let zoneChart=null; let refreshTimer=null
+const route = useRoute(); const symbol = ref(String(route.query.symbol || 'BTCUSD')); const period = ref(String(route.query.period || 'M5')); const periods=['M1','M5','M15','H1','H4']; const symbols=ref([symbol.value]); const loading=ref(false); const error=ref(''); const segments=ref([]); const bars=ref([]); const structureResult=ref(null); const tradePlans=ref([]); const opportunityDetails=ref({}); const opportunityLoading=ref({}); const chartRef=ref(null); let chart=null; let refreshTimer=null
 const labels={up:'上涨趋势',down:'下跌趋势',sideways:'箱体震荡',triangle:'收敛三角形',transition:'结构过渡'}; const colors={up:'success',down:'error',sideways:'info',triangle:'secondary',transition:'warning'}; const legendColors={up:'#3aa675',down:'#d95d55',sideways:'#4f91c4',triangle:'#8968b7',transition:'#d4a24c'}
 const closeOf=x=>Number(x.close ?? x.close_price ?? 0); const timeOf=x=>{const utc=x?.timestamp_utc;const raw=(utc!==undefined&&utc!==null&&Number(utc)>0)?utc:(x?.timestamp??x?.time??0);const numeric=typeof raw==='number'?raw:(typeof raw==='string'&&/^\d+(\.\d+)?$/.test(raw)?Number(raw):NaN);if(Number.isFinite(numeric))return numeric>1e12?numeric:numeric*1000;const parsed=Date.parse(raw);return Number.isFinite(parsed)?parsed:0}; const stamp=x=>new Date(timeOf(x)).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
 const periodMs=p=>({M1:60000,M5:300000,M15:900000,H1:3600000,H4:14400000}[String(p).toUpperCase()]||300000)
@@ -163,52 +149,6 @@ const trendPhaseLabel=value=>({strong:'强势',mature:'成熟',weakening:'衰竭
 const barStamp=index=>bars.value[index]?stamp(bars.value[index]):''
 const recentEvents=computed(()=>Array.isArray(structureResult.value?.events)?structureResult.value.events.slice(-10).reverse():[])
 const currentMarketPrice=computed(()=>{const last=bars.value.at(-1);const value=last?closeOf(last):NaN;return Number.isFinite(value)&&value>0?value:null})
-const zonePressure=computed(()=>structureResult.value?.zone_pressure||{})
-const zoneLookbackBars=computed(()=>Math.max(20,Number(zonePressure.value?.config?.zone_lookback_bars||80)))
-const zonePressureRows=computed(()=>{
-  const price=currentMarketPrice.value
-  const rows=[]
-  for(const zone of (Array.isArray(zonePressure.value.zones)?zonePressure.value.zones:[])){
-    const lower=Number(zone.lower);const upper=Number(zone.upper)
-    if(!(upper>lower&&lower>0))continue
-    // Classify the zone containing the current price first.  A price exactly
-    // on a zone boundary is still "inside/current", not support/resistance;
-    // otherwise the active area was rendered green/red instead of yellow.
-    const kind=price==null?'neutral':(lower<=price&&price<=upper?'inside':upper<price?'support':'resistance')
-    const visits=Number(zone.visit_count ?? zone.close_count ?? 0)
-    rows.push({id:`dense-${zone.zone_id}`,source:'dense',lower,upper,kind,label:'密集区',status:zoneStatusLabel(zone.status),color:zoneStatusColor(zone.status),visitCount:visits,densityRatio:Number(zone.close_ratio||0),meta:`${visits} 次访问 · 密度 ${Math.round((zone.close_ratio||0)*100)}%`,reason:zone.status_reason||'等待区域事件',zoneRevision:zone.zone_revision||'--',pivotOverlaps:zone.pivot_overlaps?.length||0,events:(zonePressure.value.events||[]).filter(item=>item.zone_id===zone.zone_id).slice(-2).map(item=>item.reason||item.type).join('；')})
-  }
-  // This view is specifically for price-density/pressure areas.  Pivot
-  // support and resistance remain available in the structure analysis data
-  // and are used as supporting evidence for density zones, but are not
-  // rendered as standalone "density" rows here.
-  const supports=rows.filter(row=>row.kind==='support').sort((a,b)=>b.upper-a.upper)
-  const resistances=rows.filter(row=>row.kind==='resistance').sort((a,b)=>a.lower-b.lower)
-  if(supports[0])supports[0].nearest=true
-  if(resistances[0])resistances[0].nearest=true
-  return rows.sort((a,b)=>b.upper-a.upper)
-})
-const pressureRange=computed(()=>{
-  const rows=zonePressureRows.value;const values=rows.flatMap(row=>[row.lower,row.upper]);const price=currentMarketPrice.value
-  if(price!=null)values.push(price)
-  if(!values.length)return {min:0,max:1}
-  const min=Math.min(...values);const max=Math.max(...values);const pad=Math.max((max-min)*.08,Number(structureResult.value?.atr||0)*.25||.01)
-  return {min:min-pad,max:max+pad}
-})
-const pressureSummary=computed(()=>{
-  const rows=zonePressureRows.value;const price=currentMarketPrice.value
-  const supports=rows.filter(row=>row.kind==='support').sort((a,b)=>b.upper-a.upper);const resistances=rows.filter(row=>row.kind==='resistance').sort((a,b)=>a.lower-b.lower);const inside=rows.filter(row=>row.kind==='inside')
-  const nearestSupport=supports[0]||null;const nearestResistance=resistances[0]||null
-  const supportDistance=nearestSupport&&price!=null?`距现价 ${(price-nearestSupport.upper).toFixed(2)}`:'';const resistanceDistance=nearestResistance&&price!=null?`距现价 ${(nearestResistance.lower-price).toFixed(2)}`:''
-  let conclusion='区域较少，等待新的结构确认'
-  if(inside.length)conclusion='当前位于密集区内部，优先等待收盘确认，不追单'
-  else if(nearestSupport&&nearestResistance){const down=price-nearestSupport.upper;const up=nearestResistance.lower-price;conclusion=down<up?'下方支撑较近，回撤做多的保护距离更小':'上方阻力较近，追多性价比偏低，优先等突破确认'}
-  else if(nearestSupport)conclusion='下方有支撑，关注回踩企稳或向上突破'
-  else if(nearestResistance)conclusion='上方有阻力，关注受阻反转或有效突破'
-  return {supportCount:supports.length,resistanceCount:resistances.length,nearestSupport,nearestResistance,supportDistance,resistanceDistance,conclusion}
-})
-const zoneBandStyle=row=>{const range=pressureRange.value;const total=range.max-range.min||1;const top=((range.max-row.upper)/total)*100;const height=Math.max(((row.upper-row.lower)/total)*100,2.5);return {top:`${Math.max(0,Math.min(100,top))}%`,height:`${Math.min(60,height)}%`}}
-const currentPriceStyle=computed(()=>{const range=pressureRange.value;const price=currentMarketPrice.value;if(price==null)return {};return {top:`${Math.max(0,Math.min(100,((range.max-price)/(range.max-range.min||1))*100))}%`}})
 function renderChartUnsafe(){
   if(!chartRef.value||!bars.value.length)return
   if(chart)chart.dispose(); chart=echarts.init(chartRef.value)
@@ -263,12 +203,12 @@ function renderZoneChart(){
     ]
   },true)
 }
-function resizeChart(){chart?.resize();zoneChart?.resize()}
+function resizeChart(){chart?.resize()}
 function safeRenderChart(){try{renderChartUnsafe()}catch(err){console.error('[StructureAnalysis] chart overlay error',err);if(!chartRef.value||!bars.value.length)return;if(chart)chart.dispose();chart=echarts.init(chartRef.value);const data=bars.value.map(x=>[Number(x.open??x.open_price??closeOf(x)),Number(x.close??x.close_price??0),Number(x.low??x.low_price??closeOf(x)),Number(x.high??x.high_price??closeOf(x))]);chart.setOption({animation:false,tooltip:{trigger:'axis'},grid:{left:55,right:35,top:32,bottom:58},xAxis:{type:'category',data:bars.value.map(stamp)},yAxis:{scale:true},dataZoom:[{type:'inside'},{type:'slider',height:18,bottom:8}],series:[{name:'K线',type:'candlestick',data,itemStyle:{color:'#1f9d72',color0:'#d95d55',borderColor:'#1f9d72',borderColor0:'#d95d55'}}]})}}
 function renderChart(){safeRenderChart()}
-async function load(){loading.value=true;error.value='';try{const res=await marketAPI.getKlines(symbol.value,period.value,600);const raw=Array.isArray(res?.data)?res.data:(Array.isArray(res?.klines)?res.klines:(Array.isArray(res?.results)?res.results:(Array.isArray(res?.data?.klines)?res.data.klines:(Array.isArray(res?.data?.data)?res.data.data:[]))));const now=Date.now()+periodMs(period.value);const filtered=raw.filter(x=>{const t=timeOf(x);return t>0&&t<=now});const rows=(filtered.length?filtered:raw).slice().sort((a,b)=>timeOf(a)-timeOf(b));bars.value=rows;if(!rows.length){error.value=`暂无可用K线（${symbol.value} · ${period.value}）`;await nextTick();renderZoneChart();return}let backend=null;try{const sr=await marketAPI.getMarketStructure(symbol.value,period.value,600);backend=sr?.data;structureResult.value=backend||null}catch(structureError){structureResult.value=null;error.value='结构分析暂时不可用，已显示原始K线'}if(Array.isArray(backend?.segments)&&backend.segments.length){segments.value=backend.segments.slice(-5).map((s,i)=>{const p=rows.slice(s.start_index,s.end_index+1);const confirmationIndex=s.evidence?.confirmation_index;return {...s,id:`backend-${s.start_index}`,type:s.type,bars:p.length,start:stamp(p[0]),end:stamp(p.at(-1)),confirmation:Number.isInteger(confirmationIndex)&&rows[confirmationIndex]?stamp(rows[confirmationIndex]):'',support:Math.min(...p.map(x=>Number(x.low??x.low_price??closeOf(x)))),resistance:Math.max(...p.map(x=>Number(x.high??x.high_price??closeOf(x)))),confidence:s.strength??70,strength:s.strength??70,status:s.locked?'已确认并锁定':(s.status==='candidate'?'等待确认':'当前已确认'),reason:s.reason||'结构证据已计算'}})}else segments.value=build(rows);await nextTick();renderChart();renderZoneChart()}catch(e){error.value=e?.response?.data?.detail||'K线数据加载失败'}finally{loading.value=false}}
+async function load(){loading.value=true;error.value='';try{const res=await marketAPI.getKlines(symbol.value,period.value,600);const raw=Array.isArray(res?.data)?res.data:(Array.isArray(res?.klines)?res.klines:(Array.isArray(res?.results)?res.results:(Array.isArray(res?.data?.klines)?res.data.klines:(Array.isArray(res?.data?.data)?res.data.data:[]))));const now=Date.now()+periodMs(period.value);const filtered=raw.filter(x=>{const t=timeOf(x);return t>0&&t<=now});const rows=(filtered.length?filtered:raw).slice().sort((a,b)=>timeOf(a)-timeOf(b));bars.value=rows;if(!rows.length){error.value=`暂无可用K线（${symbol.value} · ${period.value}）`;return}let backend=null;try{const sr=await marketAPI.getMarketStructure(symbol.value,period.value,600);backend=sr?.data;structureResult.value=backend||null}catch(structureError){structureResult.value=null;error.value='结构分析暂时不可用，已显示原始K线'}if(Array.isArray(backend?.segments)&&backend.segments.length){segments.value=backend.segments.slice(-5).map((s,i)=>{const p=rows.slice(s.start_index,s.end_index+1);const confirmationIndex=s.evidence?.confirmation_index;return {...s,id:`backend-${s.start_index}`,type:s.type,bars:p.length,start:stamp(p[0]),end:stamp(p.at(-1)),confirmation:Number.isInteger(confirmationIndex)&&rows[confirmationIndex]?stamp(rows[confirmationIndex]):'',support:Math.min(...p.map(x=>Number(x.low??x.low_price??closeOf(x)))),resistance:Math.max(...p.map(x=>Number(x.high??x.high_price??closeOf(x)))),confidence:s.strength??70,strength:s.strength??70,status:s.locked?'已确认并锁定':(s.status==='candidate'?'等待确认':'当前已确认'),reason:s.reason||'结构证据已计算'}})}else segments.value=build(rows);await nextTick();renderChart()}catch(e){error.value=e?.response?.data?.detail||'K线数据加载失败'}finally{loading.value=false}}
 async function loadSymbols(){try{const res=await marketAPI.getSymbols();const values=Array.from(new Set((res?.symbols||res?.data||[]).map(item=>typeof item==='string'?item:(item.symbol||item.value||'')).filter(Boolean)));symbols.value=values;if(!values.includes(symbol.value))symbol.value=values[0]||''}catch(e){/* 保留当前品种，行情接口失败不阻断页面 */}}
-watch(period,()=>{if(symbol.value){load();loadTradePlans()}});watch(symbol,()=>{if(symbol.value){load();loadTradePlans()}});onMounted(async()=>{window.addEventListener('resize',resizeChart);await loadSymbols();if(symbol.value){await load();await loadTradePlans()}refreshTimer=setInterval(()=>{if(symbol.value){load();loadTradePlans()}},30000)});onUnmounted(()=>{if(refreshTimer)clearInterval(refreshTimer);window.removeEventListener('resize',resizeChart);chart?.dispose();zoneChart?.dispose()})
+watch(period,()=>{if(symbol.value){load();loadTradePlans()}});watch(symbol,()=>{if(symbol.value){load();loadTradePlans()}});onMounted(async()=>{window.addEventListener('resize',resizeChart);await loadSymbols();if(symbol.value){await load();await loadTradePlans()}refreshTimer=setInterval(()=>{if(symbol.value){load();loadTradePlans()}},30000)});onUnmounted(()=>{if(refreshTimer)clearInterval(refreshTimer);window.removeEventListener('resize',resizeChart);chart?.dispose()})
 </script>
 <style scoped>
 .structure-strip-title,.structure-strip{display:none !important}

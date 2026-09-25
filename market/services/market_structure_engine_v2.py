@@ -7,8 +7,6 @@ import hashlib
 import json
 from typing import Dict, List, Optional, Tuple
 
-from .zone_pressure import DEFAULT_CONFIG as ZONE_PRESSURE_DEFAULT_CONFIG
-from .zone_pressure import advance as advance_zone_pressure
 
 _CACHE: Dict[str, Dict] = {}
 ENGINE_VERSION = "hierarchical-structure-v11"
@@ -36,7 +34,6 @@ DEFAULT_CONFIG = {
     "candidate_timeout_bars": 12,
     "range_breakout_candidate_timeout_bars": 3,
     "trend_max_anchor_bars": 48,
-    **ZONE_PRESSURE_DEFAULT_CONFIG,
 }
 
 
@@ -934,20 +931,6 @@ def analyze(symbol: str, period: str, rows: List[Dict], config: Dict = None) -> 
     trend_phase, trend_phase_evidence = _trend_health(
         rows, levels["medium"], major_state, atr, cfg,
     )
-    pressure_config = {
-        key: cfg[key] for key in ZONE_PRESSURE_DEFAULT_CONFIG if key in cfg
-    }
-    # Public plan configuration calls this switch ``enable_zone_pressure``;
-    # the pure market service uses ``zone_pressure_enabled``.  Normalize once
-    # here so symbol/period overrides actually affect analysis.
-    if "enable_zone_pressure" in cfg or "zone_pressure_enabled" in cfg:
-        pressure_config["zone_pressure_enabled"] = (
-            bool(cfg.get("enable_zone_pressure", True))
-            and bool(cfg.get("zone_pressure_enabled", True))
-        )
-    zone_pressure = advance_zone_pressure(
-        symbol, period, rows, pressure_config, pivot_levels=levels
-    )
     active_segment = segments[-1] if segments else {}
     # The live segment grows with each closed bar.  Identity follows the
     # structural start and type; the moving end belongs in revision so the
@@ -962,7 +945,6 @@ def analyze(symbol: str, period: str, rows: List[Dict], config: Dict = None) -> 
         "end_time": active_segment.get("end_time"),
         "major_state": major_state,
         "current_state": current_state,
-        "zone_events": [item.get("event_id") for item in zone_pressure.get("events", [])],
     }, sort_keys=True, default=str).encode()).hexdigest()[:16]
     state_detail = (f"{major_state}_reversal_candidate" if active_candidate and active_candidate["direction"] != major_state
                     else f"{major_state}_pullback" if internal_state not in ("undetermined", major_state) and major_state != "undetermined"
@@ -983,7 +965,6 @@ def analyze(symbol: str, period: str, rows: List[Dict], config: Dict = None) -> 
             "external_events": external_events,
             "candidates": major_candidates + external_candidates[-5:] + internal_candidates[-10:], "segments": segments[-5:],
             "structure_hierarchy": hierarchy, "local_patterns": local_patterns,
-            "zone_pressure": zone_pressure,
             "active_segment": active_segment,
             "structure_segment_id": segment_id,
             "structure_revision": structure_revision,
