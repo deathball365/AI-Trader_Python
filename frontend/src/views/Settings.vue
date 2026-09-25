@@ -223,11 +223,6 @@
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pivot_zone_merge_atr')" v-model.number="structureEngineConfig.pivot_zone_merge_atr" type="number" min="0" step="0.05" label="Pivot 合并距离（ATR）" density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pivot_zone_min_points')" v-model.number="structureEngineConfig.pivot_zone_min_points" type="number" min="1" label="Pivot 区域最少点数" density="compact" variant="outlined" /></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pivot_zone_target_count')" v-model.number="structureEngineConfig.pivot_zone_target_count" type="number" min="1" max="20" label="最多保留 Pivot 区域" hint="仅保留最强且较新的区域" persistent-hint density="compact" variant="outlined" /></v-col>
-              <v-col cols="12"><div class="structure-zone-heading mt-2"><div class="text-subtitle-2">五、交易计划生成 · 密集区 SETUP</div><div class="text-caption text-medium-emphasis">这里才控制密集区反转/突破是否生成交易计划，以及计划质量门槛。</div></div></v-col>
-              <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('enable_zone_pressure')" v-model="structureEngineConfig.enable_zone_pressure" color="primary" inset hide-details label="生成密集区交易计划" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_plan_valid_bars')" v-model.number="structureEngineConfig.pressure_plan_valid_bars" type="number" min="1" label="计划有效K线数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_breakout_target_multiple')" v-model.number="structureEngineConfig.pressure_breakout_target_multiple" type="number" min="1" step="0.1" label="突破目标倍数" density="compact" variant="outlined" /></v-col>
-              <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pressure_min_event_confidence')" v-model.number="structureEngineConfig.pressure_min_event_confidence" type="number" min="0" max="100" label="最低事件置信度" density="compact" variant="outlined" /></v-col>
               <v-col cols="12"><div class="structure-zone-heading mt-2"><div class="text-subtitle-2">六、交易计划生成 · 通用条件</div><div class="text-caption text-medium-emphasis">所有 SETUP 共用的入场、止损、止盈和确认条件。</div></div></v-col>
             </v-row>
             <div class="llm-section-head compact mt-4"><div><h3>结构交易计划参数</h3><p>行情层统一生成计划；按品种/周期专属配置覆盖默认值，策略仅负责引用和执行筛选。</p></div></div>
@@ -308,17 +303,6 @@
               <v-text-field v-model.number="structureSetupProfileDraft.stop_buffer_atr" :class="setupFieldClass('stop_buffer_atr')" type="number" min="0" step="0.05" label="止损 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
               <v-text-field v-model.number="structureSetupProfileDraft.target_buffer_atr" :class="setupFieldClass('target_buffer_atr')" type="number" min="0" step="0.05" label="止盈 ATR" density="compact" variant="outlined" hide-details style="max-width:120px" />
               <v-text-field v-model.number="structureSetupProfileDraft.max_plan_lifetime_bars" :class="setupFieldClass('max_plan_lifetime_bars')" type="number" min="10" max="1000" label="计划安全兜底（K线）" hint="结构事件未发生时的最长保留上限" persistent-hint density="compact" variant="outlined" hide-details style="max-width:150px" />
-              <template v-if="structureSetupProfileDraft.setup_type === 'pressure_reversal' || structureSetupProfileDraft.setup_type === 'pressure_zone_breakout'">
-                <v-text-field v-model.number="structureSetupProfileDraft.pressure_min_rejections" :class="setupFieldClass('pressure_min_rejections')" type="number" min="1" label="密集区最少拒绝次数" density="compact" variant="outlined" hide-details style="max-width:150px" />
-                <v-text-field v-model.number="structureSetupProfileDraft.pressure_min_displacement_atr" :class="setupFieldClass('pressure_min_displacement_atr')" type="number" min="0" step="0.1" label="密集区最小位移 ATR" density="compact" variant="outlined" hide-details style="max-width:160px" />
-                <v-text-field v-model.number="structureSetupProfileDraft.pressure_min_efficiency" :class="setupFieldClass('pressure_min_efficiency')" type="number" min="0" max="1" step="0.05" label="密集区最小效率" density="compact" variant="outlined" hide-details style="max-width:140px" />
-                <v-text-field v-model.number="structureSetupProfileDraft.target_multiple" :class="setupFieldClass('target_multiple')" type="number" min="1" step="0.1" label="目标倍数" density="compact" variant="outlined" hide-details style="max-width:110px" />
-                <v-text-field v-model.number="structureSetupProfileDraft.max_entries_per_opportunity" :class="setupFieldClass('max_entries_per_opportunity')" type="number" min="1" label="机会最大入场次数" density="compact" variant="outlined" hide-details style="max-width:150px" />
-                <v-text-field v-model.number="structureSetupProfileDraft.cooldown_minutes" :class="setupFieldClass('cooldown_minutes')" type="number" min="0" label="冷却分钟" density="compact" variant="outlined" hide-details style="max-width:110px" />
-                <v-switch v-model="structureSetupProfileDraft.require_retest" :class="setupFieldClass('require_retest')" color="primary" inset hide-details label="要求回踩" />
-                <v-switch v-model="structureSetupProfileDraft.invalidate_on_zone_return" :class="setupFieldClass('invalidate_on_zone_return')" color="primary" inset hide-details label="回到区域即失效" />
-                <v-text-field v-model.number="structureSetupProfileDraft.retest_tolerance_atr" :class="setupFieldClass('retest_tolerance_atr')" type="number" min="0" step="0.05" label="回踩容差 ATR" density="compact" variant="outlined" hide-details style="max-width:130px" />
-              </template>
               <v-btn color="primary" variant="tonal" :loading="structureEngineSaving" @click="saveStructureSetupConfig">{{ structureSetupScope?.startsWith('default::') ? '保存公共 SETUP 默认' : '保存当前 SETUP 专项' }}</v-btn>
             </div>
             <v-dialog v-model="structureOptimizerPreviewOpen" max-width="1100">
@@ -1781,10 +1765,6 @@ export default {
       pivot_zone_enabled: '启用 Pivot 支撑阻力融合',
       pivot_zone_min_points: 'Pivot 区域最少点数',
       pivot_zone_target_count: '最多保留 Pivot 区域',
-      enable_zone_pressure: '生成密集区交易计划',
-      pressure_plan_valid_bars: '密集区计划有效 K 线数',
-      pressure_breakout_target_multiple: '密集区突破目标倍数',
-      pressure_min_event_confidence: '密集区最低事件置信度',
       target_multiple: '目标倍数',
       enable_range_boundary: '启用箱体边界计划',
       enable_range_breakout: '启用箱体突破计划',
@@ -1804,7 +1784,7 @@ export default {
     // keep the conflict table readable instead of exposing raw JSON values.
     const formatOptimizationValue = value => formatStructureValue(value)
     const structureSetupProfileDraft = ref({ symbol: '', period: 'M5', setup_type: 'structure_location_pullback', enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '', confirmation_bars: null, min_displacement_atr: null, min_body_atr: null, require_reclaim: null, min_real_risk_reward: null, entry_zone_atr: null, stop_buffer_atr: null, target_buffer_atr: null, pressure_min_rejections: null, pressure_min_displacement_atr: null, pressure_min_efficiency: null, target_multiple: null, max_entries_per_opportunity: null, cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null, invalidate_on_zone_return: null, false_breakout_require_reclaim_close: null, false_breakout_confirmation_bars: null, false_breakout_min_reclaim_atr: null })
-    const setupTypeNames = { pressure_reversal: '密集区反转', pressure_zone_breakout: '密集区突破', structure_location_pullback: '结构位置回撤', range_lower_reversal: '箱体下沿反转', range_upper_reversal: '箱体上沿反转', range_breakout: '箱体突破', range_false_breakout: '箱体假突破', triangle_breakout: '三角形突破', triangle_breakout_watch: '三角形突破观察', triangle_prebreakout_pullback: '三角形提前回撤', choch_reversal: 'CHOCH反转', liquidity_sweep_reclaim: '流动性扫单回收', trend_continuation: '趋势延续', structure_reversal: '结构反转' }
+    const setupTypeNames = { structure_location_pullback: '结构位置回撤', range_lower_reversal: '箱体下沿反转', range_upper_reversal: '箱体上沿反转', range_breakout: '箱体突破', range_false_breakout: '箱体假突破', triangle_breakout: '三角形突破', triangle_breakout_watch: '三角形突破观察', triangle_prebreakout_pullback: '三角形提前回撤', choch_reversal: 'CHOCH反转', liquidity_sweep_reclaim: '流动性扫单回收', trend_continuation: '趋势延续', structure_reversal: '结构反转' }
     const setupTypeLabel = type => setupTypeNames[type] || type
     const structureSetupTypes = Object.keys(setupTypeNames).map(value => ({ value, label: setupTypeNames[value] }))
     const setupFieldKeys = ['enabled', 'allowed_directions', 'entry_mode', 'confirmation_bars', 'min_displacement_atr', 'min_body_atr', 'require_reclaim', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'target_buffer_atr', 'pressure_min_rejections', 'pressure_min_displacement_atr', 'pressure_min_efficiency', 'target_multiple', 'max_entries_per_opportunity', 'cooldown_minutes', 'require_retest', 'retest_tolerance_atr', 'invalidate_on_zone_return', 'false_breakout_require_reclaim_close', 'false_breakout_confirmation_bars', 'false_breakout_min_reclaim_atr', 'max_plan_lifetime_bars']

@@ -1097,12 +1097,8 @@ class StructurePlanBuilder:
             "active_segment": structure.get("active_segment") or {},
         }
         snapshot["structure_state"] = derive_structure_state(snapshot)
-        pressure_plans = self._pressure_plans(
-            source_id, symbol, period, rows, structure, snapshot, bar_time, seconds,
-        )
-        pressure_plans = self._filter_allowed(pressure_plans)
-        if pressure_plans:
-            return pressure_plans
+        # Density/pressure is structural context only. It is not a peer
+        # execution setup and therefore cannot win plan selection.
         plans = self._range_plans(
             source_id, symbol, period, rows, structure, snapshot, bar_time, seconds,
         )
