@@ -1771,11 +1771,8 @@ export default {
     const structureSetupTypes = Object.keys(setupTypeNames).map(value => ({ value, label: setupTypeNames[value] }))
     const setupFieldKeys = ['enabled', 'allowed_directions', 'entry_mode', 'confirmation_bars', 'min_displacement_atr', 'min_body_atr', 'require_reclaim', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'target_buffer_atr', 'target_multiple', 'max_entries_per_opportunity', 'cooldown_minutes', 'require_retest', 'retest_tolerance_atr', 'invalidate_on_zone_return', 'false_breakout_require_reclaim_close', 'false_breakout_confirmation_bars', 'false_breakout_min_reclaim_atr', 'max_plan_lifetime_bars']
     const setupFieldLabels = { enabled: '允许交易', allowed_directions: '允许方向', entry_mode: '入场方式', confirmation_bars: '确认 K 线数', min_displacement_atr: '最小位移 ATR', min_body_atr: '突破实体 ATR', require_reclaim: '要求回收', min_real_risk_reward: '最低盈亏比', entry_zone_atr: '入场 ATR', stop_buffer_atr: '止损 ATR', target_buffer_atr: '止盈 ATR', target_multiple: '目标倍数', max_entries_per_opportunity: '机会最大入场次数', cooldown_minutes: '冷却分钟', require_retest: '要求回踩', retest_tolerance_atr: '回踩容差 ATR', invalidate_on_zone_return: '回到区域即失效', false_breakout_require_reclaim_close: '假突破要求收盘回收', false_breakout_confirmation_bars: '假突破确认 K 线数', false_breakout_min_reclaim_atr: '假突破最小回收 ATR', max_plan_lifetime_bars: '最大计划 K 线数' }
-    // The API may return an older/incomplete setup_defaults row.  Keep the
-    // editor aligned with the runtime resolver by filling every setup field
-    // from the same conservative public defaults before applying saved
-    // overrides.  This also makes "另存为" compare against the real effective
-    // public value instead of persisting a large set of meaningless overrides.
+    // Fill every SETUP field from the public defaults before applying the
+    // selected scope. This keeps "另存为" limited to real overrides.
     const setupRuntimeDefaults = {
       enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '',
       confirmation_bars: 1, min_displacement_atr: 0, min_body_atr: 0, require_reclaim: false,
