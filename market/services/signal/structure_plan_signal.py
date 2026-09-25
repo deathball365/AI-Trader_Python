@@ -267,12 +267,6 @@ class StructurePlanBuilder:
                     self.params["trend_continuation_hold_bars"] = profile["confirmation_bars"]
                 if "require_reclaim" in profile:
                     self.params["require_location_reclaim"] = profile["require_reclaim"]
-                # 密集区 Setup 的专属参数使用同名配置；兼容旧版优化器的
-                # target_multiple / min_body_atr 命名，避免保存后实际不生效。
-                if "target_multiple" in profile:
-                    self.params["pressure_breakout_target_multiple"] = profile["target_multiple"]
-                if "pressure_breakout_target_multiple" in profile:
-                    self.params["pressure_breakout_target_multiple"] = profile["pressure_breakout_target_multiple"]
                 break
 
     def _reject(self, reason: str) -> None:
@@ -728,18 +722,14 @@ class StructurePlanBuilder:
         snapshot = structure_snapshot or {}
         evidence = validation_evidence or {}
         zone_revision = str(evidence.get("zone_revision") or "")
-        # Pressure reversal and the later zone-breakout are two stages of one
-        # opportunity.  They share ``opportunity_id`` but must have separate
-        # execution scopes; otherwise a same-bar event would let the initial
-        # claim suppress the breakout-stage claim.
-        group_scope = setup_type if str(setup_type).startswith("pressure_") else "group"
+        group_scope = "group"
         identity_anchor = snapshot.get("structure_segment_id") or anchor
         cycle = 1
         family_id = ""
         group = _hash(source_id, symbol, period, identity_anchor, group_scope, cycle)
         plan_id = _hash(
             source_id, symbol, period, identity_anchor, setup_type, direction,
-            zone_revision if str(setup_type).startswith("pressure_") else "",
+            "",
             cycle,
         )
         risk = abs(entry - stop_loss) if entry and stop_loss else 0.0
@@ -799,16 +789,10 @@ class StructurePlanBuilder:
         # a later segment and must then be treated as a fresh opportunity.
         opportunity_segment = str(segment_id or "")
         opportunity_zone = str(evidence.get("zone_id") or "")
-        if opportunity_segment and opportunity_zone and setup_type.startswith("pressure_"):
-            family_id = _hash(
-                "opportunity", opportunity_segment, opportunity_zone,
-                direction, setup_family,
-            )
-        else:
-            family_id = _hash(
-                source_id, symbol, period, opportunity_segment or identity_anchor,
-                setup_type, direction, entry_mode,
-            )
+        family_id = _hash(
+            source_id, symbol, period, opportunity_segment or identity_anchor,
+            setup_type, direction, entry_mode,
+        )
         payload["opportunity_family_id"] = family_id
         payload["opportunity_cycle"] = cycle
         payload["opportunity_id"] = str(
@@ -817,12 +801,9 @@ class StructurePlanBuilder:
         payload["plan_group_id"] = _hash("group", family_id, cycle)
         payload["plan_id"] = _hash(
             "plan", family_id, cycle,
-            zone_revision if str(setup_type).startswith("pressure_") else "",
+            "",
         )
-        payload["opportunity_stage"] = (
-            "breakout" if setup_type == "pressure_zone_breakout" else
-            "initial" if setup_type == "pressure_reversal" else "single"
-        )
+        payload["opportunity_stage"] = "single"
         plan_phase = {
             "close_breakout": "watching_breakout",
             "breakout_retest": "waiting_retest",
@@ -856,8 +837,7 @@ class StructurePlanBuilder:
         payload["invalidation_rules"] = self._invalidation_rules(setup_type)
         payload["tick_invalidation_rules"] = [
             rule for rule in payload["invalidation_rules"]
-            if rule in {"protected_level_break", "range_returned_inside",
-                        "pressure_zone_return_inside", "pressure_protected_level_break"}
+            if rule in {"protected_level_break", "range_returned_inside"}
         ]
         payload["close_invalidation_rules"] = [
             rule for rule in payload["invalidation_rules"]
@@ -905,8 +885,6 @@ class StructurePlanBuilder:
 
     @staticmethod
     def _setup_family(setup_type: str) -> str:
-        if str(setup_type).startswith("pressure_"):
-            return "zone_pressure"
         if setup_type.startswith("range_"):
             return "range"
         if "triangle" in setup_type:
@@ -928,25 +906,13 @@ class StructurePlanBuilder:
             rules.append("triangle_pattern_break")
         if setup_type.startswith("range_"):
             rules.append("range_structure_break")
-        if setup_type == "pressure_reversal":
-            rules.append("pressure_protected_level_break")
-        elif setup_type == "pressure_zone_breakout":
-            rules.extend(["pressure_zone_return_inside", "pressure_protected_level_break"])
         if setup_type in {"structure_location_pullback", "trend_continuation", "structure_reversal"}:
             rules.append("protected_level_break")
         return rules
 
     @staticmethod
     def _price_sources(setup_type, direction, entry, stop, target, box) -> Dict:
-        if setup_type == "pressure_reversal":
-            entry_source = "density_zone_reclaim"
-            stop_source = "density_zone_opposite_boundary_atr_buffer"
-            target_source = "density_zone_opposite_edge"
-        elif setup_type == "pressure_zone_breakout":
-            entry_source = "density_zone_boundary_breakout"
-            stop_source = "density_zone_inside_boundary_atr_buffer"
-            target_source = "density_zone_width_projection"
-        elif setup_type in {"range_lower_reversal", "range_upper_reversal", "range_false_breakout"}:
+        if setup_type in {"range_lower_reversal", "range_upper_reversal", "range_false_breakout"}:
             entry_source = "range_lower_boundary" if direction == "buy" else "range_upper_boundary"
             stop_source = "range_boundary_atr_buffer"
             target_source = "opposite_range_boundary"
@@ -2277,8 +2243,6 @@ class StructurePlanSignalGenerator:
         closed_bar: Optional[Dict] = None,
     ) -> bool:
         setup_type = str(plan.get("setup_type") or "")
-        if setup_type == "pressure_zone_breakout":
-            return self._triggered_pressure_breakout(plan, price)
         zone = plan.get("entry_zone") or {}
         lower, upper = _number(zone.get("lower")), _number(zone.get("upper"))
         if lower <= 0 or upper <= 0 or not lower <= price <= upper:

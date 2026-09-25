@@ -64,10 +64,6 @@ def _execution_setup(setup_type: str, entry_mode: str = "") -> str:
         return "no_trade"
     if setup == "range_false_breakout":
         return "false_breakout_reclaim"
-    if setup == "pressure_reversal":
-        return "density_reversal"
-    if setup == "pressure_zone_breakout":
-        return "density_breakout"
     if "triangle" in setup and "breakout" in setup:
         return "triangle_breakout_retest" if "retest" in mode else "triangle_breakout"
     if setup == "range_breakout":
@@ -121,4 +117,3 @@ def derive_structure_state(
         "trend_phase": str(source.get("trend_phase") or "undetermined"),
         "trend_regime": str(source.get("trend_regime") or ""),
     }
-
