@@ -230,6 +230,13 @@
             <div v-if="paperDetail.execution_funnel?.blocked_reasons?.length" class="funnel-blocks">主要拦截：<span v-for="item in paperDetail.execution_funnel.blocked_reasons" :key="item.reason_code">{{ item.label }} {{ item.count }} 次</span></div>
           </section>
 
+          <section class="runtime-fold">
+            <div class="runtime-section-title strategy-performance-toggle" @click="showPaperDeployments = !showPaperDeployments">
+              <h3>运行实例与策略操作</h3>
+              <span>{{ showPaperDeployments ? '部署、启停和结束策略' : (paperDetail.deployments.length ? paperDetail.deployments.length + ' 个实例 · 点击展开' : '点击展开') }}</span>
+              <v-icon size="18">{{ showPaperDeployments ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+            </div>
+            <div v-show="showPaperDeployments">
           <section class="deployment-workbench">
             <div>
               <div class="section-tag">STRATEGY DEPLOYMENT</div>
@@ -296,6 +303,8 @@
               <v-btn icon="mdi-stop-circle-outline" size="small" variant="text" color="error" title="结束部署" :loading="deploymentLoadingId === deployment.deployment_id" @click="endDeployment(deployment, paperDetail.account.account_id)" />
             </article>
           </div>
+            </div>
+          </section>
 
           <section class="runtime-chart-card">
             <div class="runtime-section-title">
@@ -740,6 +749,12 @@
         </v-card-title>
         <v-card-text>
           <v-alert type="info" variant="tonal" density="compact" class="mb-4">该账户只会执行这里处于“运行中”的策略，其他账户的绑定不会影响本账户。</v-alert>
+          <div class="runtime-section-title strategy-performance-toggle" @click="showAccountDeployments = !showAccountDeployments">
+            <h3>运行实例与策略操作</h3>
+            <span>{{ showAccountDeployments ? '绑定、启停和结束策略' : ((selectedAccount.deployments?.length || 0) ? (selectedAccount.deployments.length + ' 个实例 · 点击展开') : '点击展开') }}</span>
+            <v-icon size="18">{{ showAccountDeployments ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+          </div>
+          <div v-show="showAccountDeployments">
           <section v-if="selectedAccount.deployments?.length" class="active-deployment-strip live">
             <span>当前运行实例</span>
             <div>
@@ -772,6 +787,7 @@
                 <v-btn v-if="isLiveAccount(selectedAccount)" icon="mdi-link-variant-off" size="small" variant="text" color="error" @click="removeAccountDeployment(deployment)" />
               </div>
             </article>
+          </div>
           </div>
         </v-card-text>
       </v-card>
@@ -843,6 +859,8 @@ const expandedPaperPositions = ref(new Set())
 const expandedLivePositions = ref(new Set())
 const showPaperStrategyPerformance = ref(false)
 const showLiveStrategyPerformance = ref(false)
+const showPaperDeployments = ref(false)
+const showAccountDeployments = ref(false)
 let equityChartInstance = null
 let liveEquityChartInstance = null
 let liveRefreshTimer = null
@@ -1284,6 +1302,7 @@ async function restoreManagedAccount() {
 function openStrategyManager(account) {
   selectedAccount.value = account
   accountStrategyId.value = ''
+  showAccountDeployments.value = false
   strategyDialog.value = true
   loadPaperContext()
 }
@@ -1418,6 +1437,7 @@ async function openPaperRuntime(account) {
     }
     expandedPaperPositions.value = new Set()
     showPaperStrategyPerformance.value = false
+    showPaperDeployments.value = false
     selectedStrategyId.value = ''
     paperReport.value = null
     reportStrategyId.value = ''
@@ -1580,6 +1600,7 @@ function closePaperRuntime() {
   paperDetail.value = null
   expandedPaperPositions.value = new Set()
   showPaperStrategyPerformance.value = false
+  showPaperDeployments.value = false
 }
 
 async function openLivePromotion(item) {
@@ -1855,6 +1876,7 @@ onBeforeUnmount(() => {
 .strategy-performance-toggle { cursor: pointer; user-select: none; }
 .strategy-performance-toggle h3 { flex: 0 0 auto; }
 .strategy-performance-toggle span { flex: 1; }
+.runtime-fold { margin-top: 13px; }
 .positions-card { margin-top: 13px; }
 .runtime-grid .orders-card { margin-top: 13px; }
 .equity-chart { width: 100%; height: 280px; }
