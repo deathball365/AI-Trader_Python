@@ -35,53 +35,55 @@
           </v-card-text>
         </v-card>
 
+        <v-row class="mb-4">
+          <v-col cols="12" md="7">
+            <v-card class="plan-card h-100">
+              <v-card-title>{{ hierarchyLabels[layer] }} · 交易计划</v-card-title>
+              <v-card-text>
+                <div v-if="layerPlans(layer).length" class="plan-grid compact-plans">
+                  <article v-for="plan in layerPlans(layer)" :key="plan.plan_id">
+                    <div class="card-head"><v-chip size="x-small" :color="plan.direction==='buy'?'success':plan.direction==='sell'?'error':'info'" variant="tonal">{{ plan.direction==='buy'?'买入':plan.direction==='sell'?'卖出':'观察' }}</v-chip><strong>{{ plan.setup_type }}</strong><span>{{ plan.status==='event_suppressed'?'暂停触发':(plan.status==='active'?'等待价格':'等待确认') }}</span></div>
+                    <div class="plan-values"><span>入场 {{ formatPlanPrice(plan.entry_price) }}</span><span>止损 {{ formatPlanPrice(plan.stop_loss) }}</span><span>止盈 {{ formatPlanPrice(plan.take_profit) }}</span></div>
+                    <p>{{ plan.reason || '结构条件尚未满足' }}</p>
+                  </article>
+                </div>
+                <div v-else class="empty">当前层级没有交易计划</div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+          <v-col cols="12" md="5">
+            <v-card class="summary h-100">
+              <v-card-title class="d-flex align-center justify-space-between flex-wrap ga-2">
+                <span>{{ hierarchyLabels[layer] }} · 结构事件</span>
+                <div class="event-filters">
+                  <v-chip size="x-small" :color="eventFilter==='structure'?'primary':'default'" :variant="eventFilter==='structure'?'tonal':'outlined'" @click="eventFilter='structure'">BOS / CHoCH</v-chip>
+                  <v-chip size="x-small" :color="eventFilter==='sweep'?'primary':'default'" :variant="eventFilter==='sweep'?'tonal':'outlined'" @click="eventFilter='sweep'">扫单</v-chip>
+                  <v-chip size="x-small" :color="eventFilter==='all'?'primary':'default'" :variant="eventFilter==='all'?'tonal':'outlined'" @click="eventFilter='all'">全部</v-chip>
+                </div>
+              </v-card-title>
+              <v-card-text>
+                <div v-if="layerEvents(layer).length" class="event-stack compact-events">
+                  <article v-for="item in layerEvents(layer)" :key="item.key" class="event-item" :class="item.direction==='up'?'event-up':'event-down'">
+                    <div class="event-main">
+                      <v-chip size="x-small" :color="eventColor(item.type)" variant="tonal">{{ eventLabel(item.type) }}</v-chip>
+                      <strong>{{ item.direction==='up'?'上':'下' }}</strong>
+                      <span>{{ formatEventLevel(item.level) }}</span>
+                      <span class="event-time">{{ barStamp(item.index) }}</span>
+                      <span v-if="item.count>1" class="event-count">×{{ item.count }}</span>
+                    </div>
+                  </article>
+                </div>
+                <div v-else class="empty">当前层级没有结构事件</div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+        </v-row>
+
         <v-card v-if="bars.length" class="chart-card mb-4">
           <v-card-title>{{ hierarchyLabels[layer] }} · K线与结构段</v-card-title>
           <v-card-text>
             <div :ref="el => setChartRef(layer, el)" class="chart" style="height:480px;width:100%"></div>
             <div class="legend"><span v-for="type in ['up','sideways','triangle','down','transition']" :key="type"><i :style="{background:legendColors[type]}"></i>{{ labels[type] }}</span></div>
-          </v-card-text>
-        </v-card>
-
-        <v-card class="mb-4 plan-card">
-          <v-card-title>{{ hierarchyLabels[layer] }} · 交易计划</v-card-title>
-          <v-card-subtitle>只显示该层可执行或观察中的计划。</v-card-subtitle>
-          <v-card-text>
-            <div v-if="layerPlans(layer).length" class="plan-grid">
-              <article v-for="plan in layerPlans(layer)" :key="plan.plan_id">
-                <div class="card-head"><v-chip size="small" :color="plan.direction==='buy'?'success':plan.direction==='sell'?'error':'info'" variant="tonal">{{ plan.direction==='buy'?'买入':plan.direction==='sell'?'卖出':'观察' }}</v-chip><strong>{{ plan.setup_type }}</strong><span>{{ plan.status==='event_suppressed'?'暂停触发':(plan.status==='active'?'等待价格':'等待确认') }}</span></div>
-                <div class="plan-values"><span>入场 {{ formatPlanPrice(plan.entry_price) }}</span><span>止损 {{ formatPlanPrice(plan.stop_loss) }}</span><span>止盈 {{ formatPlanPrice(plan.take_profit) }}</span></div>
-                <p>{{ plan.reason || '结构条件尚未满足' }}</p>
-              </article>
-            </div>
-            <div v-else class="empty">当前层级没有交易计划</div>
-          </v-card-text>
-        </v-card>
-
-        <v-card class="summary mb-4">
-          <v-card-title class="d-flex align-center justify-space-between flex-wrap ga-2">
-            <span>{{ hierarchyLabels[layer] }} · 结构事件</span>
-            <div class="event-filters">
-              <v-chip size="x-small" :color="eventFilter==='structure'?'primary':'default'" :variant="eventFilter==='structure'?'tonal':'outlined'" @click="eventFilter='structure'">BOS / CHoCH</v-chip>
-              <v-chip size="x-small" :color="eventFilter==='sweep'?'primary':'default'" :variant="eventFilter==='sweep'?'tonal':'outlined'" @click="eventFilter='sweep'">扫单</v-chip>
-              <v-chip size="x-small" :color="eventFilter==='all'?'primary':'default'" :variant="eventFilter==='all'?'tonal':'outlined'" @click="eventFilter='all'">全部类型</v-chip>
-            </div>
-          </v-card-title>
-          <v-card-text>
-            <div v-if="layerEvents(layer).length" class="event-stack">
-              <article v-for="item in layerEvents(layer)" :key="item.key" class="event-item" :class="item.direction==='up'?'event-up':'event-down'">
-                <div class="event-main">
-                  <v-chip size="x-small" :color="eventColor(item.type)" variant="tonal">{{ eventLabel(item.type) }}</v-chip>
-                  <strong>{{ item.direction==='up'?'向上':'向下' }}</strong>
-                  <span>{{ formatEventLevel(item.level) }}</span>
-                </div>
-                <div class="event-meta">
-                  <span>{{ barStamp(item.index) }}</span>
-                  <span v-if="item.count>1">同价位 {{ item.count }} 次 · 最近 {{ barStamp(item.latestIndex) }}</span>
-                </div>
-              </article>
-            </div>
-            <div v-else class="empty">当前层级没有结构事件</div>
           </v-card-text>
         </v-card>
 
@@ -337,9 +339,17 @@ watch(period,()=>{if(symbol.value){load();loadTradePlans()}});watch(symbol,()=>{
 <style scoped>
 .event-filters{display:flex;gap:6px;flex-wrap:wrap}
 .event-stack{display:flex;flex-direction:column;gap:8px}
+.compact-events{gap:4px;max-height:260px;overflow:auto}
 .event-item{padding:10px 12px;border:1px solid #dbe8e1;border-radius:10px;background:#fbfdfb}
+.compact-events .event-item{padding:6px 8px;border-radius:8px}
 .event-item.event-up{border-left:4px solid #2d9871}
 .event-item.event-down{border-left:4px solid #d45b52}
 .event-main{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:#29483f}
+.compact-events .event-main{gap:6px;font-size:.78rem}
+.event-time,.event-count{color:#71837b}
+.compact-plans{grid-template-columns:1fr;gap:8px}
+.compact-plans article{padding:10px 12px}
+.compact-plans p{margin:6px 0 0;font-size:.78rem}
+.h-100{height:100%}
 .event-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;color:#71837b;font-size:.78rem}
 </style>
