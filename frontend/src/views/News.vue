@@ -4,7 +4,7 @@
       <div>
         <div class="eyebrow">PUBLIC MARKET INTELLIGENCE</div>
         <h1>市场事件</h1>
-        <p>统一展示外部数据源灌入的财经日历、关键事件和实时市场快讯。</p>
+        <p>把预定发布、交易风控窗口、已筛选的关键事件和实时市场快讯分开管理。</p>
       </div>
       <div class="live-state" :class="{ online: wsConnected }">
         <span class="live-dot"></span>
@@ -102,7 +102,12 @@
       <article class="metric-card key-event">
         <span>关键事件</span>
         <strong>{{ status.key_event_count || 0 }}</strong>
-        <small>重点市场事件</small>
+        <small>已筛选的重点事件</small>
+      </article>
+      <article class="metric-card risk">
+        <span>市场风险日历</span>
+        <strong>{{ riskCalendar.length || 0 }}</strong>
+        <small>当前日期风险窗口</small>
       </article>
       <article class="metric-card flash">
         <span>市场快讯</span>
@@ -139,6 +144,13 @@
           >
             刷新
           </v-btn>
+        </div>
+      </div>
+      <div class="tab-context">
+        <v-icon size="18" :color="activeTabMeta.color">{{ activeTabMeta.icon }}</v-icon>
+        <div>
+          <strong>{{ activeTabMeta.title }}</strong>
+          <span>{{ activeTabMeta.description }}</span>
         </div>
       </div>
 
@@ -208,6 +220,7 @@
                   <v-chip size="x-small" variant="tonal">{{ item.category || '重要事件' }}</v-chip>
                 </div>
                 <p>{{ item.summary || item.description || item.content || '暂无补充说明' }}</p>
+                <small v-if="item.source === 'hermes_48h'" class="event-origin">HERMES 已完成品种影响评估；原始新闻请查看“市场快讯”</small>
                 <div v-if="visibleImpacts(item).length" class="impact-row">
                   <v-chip
                     v-for="impact in visibleImpacts(item)"
@@ -288,6 +301,33 @@ function localDateInput(date = new Date()) {
 }
 
 const activeTab = ref('calendar')
+const tabMeta = {
+  calendar: {
+    title: '预定财经日历',
+    description: '按北京时间查看即将发布或已经公布的中、高影响宏观数据。',
+    icon: 'mdi-calendar-month-outline',
+    color: 'primary',
+  },
+  'risk-calendar': {
+    title: '交易风险窗口',
+    description: '将财经事件和全球市场开盘转换成暂停或限制新开仓的时间窗口。',
+    icon: 'mdi-shield-clock-outline',
+    color: 'warning',
+  },
+  'key-events': {
+    title: '已筛选关键事件',
+    description: '只展示值得关注的重点事件及其对交易品种的方向和影响程度评估。',
+    icon: 'mdi-star-four-points-outline',
+    color: 'secondary',
+  },
+  flash: {
+    title: '实时市场快讯',
+    description: '展示金十等外部来源的原始即时消息；它不是预定的财经日历。',
+    icon: 'mdi-flash-outline',
+    color: 'error',
+  },
+}
+const activeTabMeta = computed(() => tabMeta[activeTab.value] || tabMeta.calendar)
 const selectedDate = ref(localDateInput())
 const status = ref({})
 const weekFocus = ref({ data: [] })
@@ -548,17 +588,23 @@ onUnmounted(() => {
 .live-state { display: flex; align-items: center; gap: 9px; padding: 10px 14px; white-space: nowrap; border: 1px solid rgba(255,255,255,.18); border-radius: 99px; background: rgba(0,0,0,.12); font-size: .78rem; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #d17b63; }
 .live-state.online .live-dot { background: #79d8a7; box-shadow: 0 0 0 5px rgba(121,216,167,.13); }
-.metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+.metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
 .metric-card { padding: 18px 20px; border: 1px solid rgba(22,65,53,.09); border-radius: 16px; background: rgba(255,255,255,.86); }
 .metric-card span, .metric-card small { display: block; color: #78837e; }
 .metric-card strong { display: block; margin: 3px 0; color: #173f35; font: 700 1.8rem Georgia, serif; }
 .metric-card.calendar { border-top: 3px solid #277d66; }
 .metric-card.key-event { border-top: 3px solid #c18b36; }
+.metric-card.risk { border-top: 3px solid #7665b5; }
 .metric-card.flash { border-top: 3px solid #c45e45; }
 .event-card { overflow: hidden; border: 1px solid rgba(22,65,53,.1); border-radius: 20px; background: rgba(255,255,255,.92); }
 .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 8px 18px; border-bottom: 1px solid #e2e8e4; }
 .toolbar-actions { display: flex; align-items: center; gap: 10px; min-width: 330px; }
 .toolbar-actions :deep(.v-input) { flex: 1; }
+.tab-context { display: flex; align-items: flex-start; gap: 10px; margin: 14px 20px 0; padding: 11px 13px; border: 1px solid #e2e8e4; border-radius: 11px; background: #f8fbf9; }
+.tab-context strong, .tab-context span { display: block; }
+.tab-context strong { color: #2a5145; font-size: .8rem; }
+.tab-context span { margin-top: 3px; color: #7a8680; font-size: .74rem; line-height: 1.45; }
+.event-origin { display: block; margin-top: 8px; color: #9a765c; font-size: .72rem; }
 .calendar-list, .flash-list { padding: 8px 20px 24px; }
 .risk-intro { display: flex; align-items: center; gap: 9px; margin: 18px 20px 6px; padding: 12px 14px; color: #6d624d; border: 1px solid #eadbb9; border-radius: 12px; background: #fffaf0; font-size: .82rem; }
 .risk-list { padding: 8px 20px 24px; }
@@ -593,11 +639,12 @@ onUnmounted(() => {
 @media (max-width: 800px) {
   .event-page { padding: 14px; }
   .event-hero, .toolbar { align-items: flex-start; flex-direction: column; }
-  .metric-grid { grid-template-columns: 1fr; }
+  .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .toolbar-actions { width: 100%; min-width: 0; }
   .calendar-row, .flash-row, .key-row { grid-template-columns: 1fr; gap: 8px; }
   .risk-row { grid-template-columns: 1fr; gap: 8px; }
   .value-strip { flex-wrap: wrap; }
   .key-grid { grid-template-columns: 1fr; }
 }
+@media (max-width: 520px) { .metric-grid { grid-template-columns: 1fr; } }
 </style>
