@@ -52,17 +52,45 @@ def _setup_defaults(base: Dict, setup: str) -> Dict:
     return item if isinstance(item, dict) else {}
 
 
+def _norm_symbol(value) -> str:
+    return str(value or "").strip().upper()
+
+
+def _norm_period(value) -> str:
+    return str(value or "").strip().upper()
+
+
+def select_overlay_rows(rows, symbol: str, period: str):
+    """Split overlays into */period, symbol/*, and symbol/period."""
+    wanted_symbol = _norm_symbol(symbol)
+    wanted_period = _norm_period(period)
+    period_wide = symbol_wide = exact = None
+    for row in rows or []:
+        row_symbol = _norm_symbol(row.get("symbol"))
+        row_period = _norm_period(row.get("period"))
+        if row_symbol == "*" and row_period == wanted_period:
+            period_wide = row
+        elif row_symbol == wanted_symbol and row_period == "*":
+            symbol_wide = row
+        elif row_symbol == wanted_symbol and row_period == wanted_period:
+            exact = row
+    return period_wide, symbol_wide, exact
+
+
 def _rows(storage, table: str, symbol: str, period: str, setup: str = ""):
+    wanted_symbol = _norm_symbol(symbol)
+    wanted_period = _norm_period(period)
     if table == "structure_symbol_period_configs":
         return storage.fetchall(
-            "SELECT period, config_json FROM structure_symbol_period_configs "
-            "WHERE user_id=0 AND symbol=? AND period IN (?, '*') AND status='active'",
-            (symbol, period),
+            "SELECT symbol, period, config_json FROM structure_symbol_period_configs "
+            "WHERE user_id=0 AND status='active' AND symbol IN (?, '*') AND period IN (?, '*')",
+            (wanted_symbol, wanted_period),
         )
     return storage.fetchall(
-        "SELECT period, config_json FROM structure_setup_configs "
-        "WHERE user_id=0 AND symbol=? AND period IN (?, '*') AND setup_type=? AND status='active'",
-        (symbol, period, setup),
+        "SELECT symbol, period, config_json FROM structure_setup_configs "
+        "WHERE user_id=0 AND status='active' AND symbol IN (?, '*') AND period IN (?, '*') "
+        "AND setup_type=?",
+        (wanted_symbol, wanted_period, setup),
     )
 
 
@@ -88,34 +116,47 @@ def resolve(symbol: str, period: str, setup_type: str, defaults: Dict,
         setup_rows = (_rows(storage, "structure_setup_configs", wanted_symbol, wanted_period, wanted_setup)
                       if wanted_setup and wanted_setup != "__builder__" else [])
         base = decode(default_row)
-        symbol_default_row = next((row for row in symbol_rows if str(row.get("period") or "") == "*"), None)
-        symbol_row = next((row for row in symbol_rows if str(row.get("period") or "").upper() == wanted_period), None)
-        setup_symbol_row = next((row for row in setup_rows if str(row.get("period") or "") == "*"), None)
-        setup_row = next((row for row in setup_rows if str(row.get("period") or "").upper() == wanted_period), None)
-        symbol_default, profile = decode(symbol_default_row), decode(symbol_row)
-        setup_symbol_profile, setup_profile = decode(setup_symbol_row), decode(setup_row)
+        period_wide_row, symbol_wide_row, exact_row = select_overlay_rows(
+            symbol_rows, wanted_symbol, wanted_period,
+        )
+        setup_period_wide_row, setup_symbol_wide_row, setup_exact_row = select_overlay_rows(
+            setup_rows, wanted_symbol, wanted_period,
+        )
+        period_wide, symbol_wide, profile = (
+            decode(period_wide_row), decode(symbol_wide_row), decode(exact_row),
+        )
+        setup_period_wide, setup_symbol_wide, setup_profile = (
+            decode(setup_period_wide_row), decode(setup_symbol_wide_row), decode(setup_exact_row),
+        )
         _merge(config, base, allowed)
         if wanted_setup and wanted_setup != "__builder__":
             _merge(config, _setup_defaults(base, wanted_setup), allowed, inherit_empty_lists=True)
-        _merge(config, symbol_default, allowed, inherit_empty_lists=True)
+        _merge(config, period_wide, allowed, inherit_empty_lists=True)
         if wanted_setup and wanted_setup != "__builder__":
-            _merge(config, setup_symbol_profile, allowed, inherit_empty_lists=True)
+            _merge(config, setup_period_wide, allowed, inherit_empty_lists=True)
+        _merge(config, symbol_wide, allowed, inherit_empty_lists=True)
+        if wanted_setup and wanted_setup != "__builder__":
+            _merge(config, setup_symbol_wide, allowed, inherit_empty_lists=True)
         _merge(config, profile, allowed, inherit_empty_lists=True)
         _merge(config, setup_profile, allowed, inherit_empty_lists=True)
         config["_structure_layers"] = {
             "default": base,
-            "symbol_period": symbol_default | profile,
+            "period_wide": period_wide,
+            "symbol_wide": symbol_wide,
+            "symbol_period": profile,
             "setup_default": _setup_defaults(base, wanted_setup),
-            "setup": setup_symbol_profile | setup_profile,
+            "setup": setup_period_wide | setup_symbol_wide | setup_profile,
         }
         if setup_type == "__builder__":
             rows = storage.fetchall(
-                "SELECT setup_type, period, config_json FROM structure_setup_configs "
-                "WHERE user_id=0 AND symbol=? AND period IN ('*',?) AND status='active' ORDER BY period DESC",
+                "SELECT symbol, setup_type, period, config_json FROM structure_setup_configs "
+                "WHERE user_id=0 AND status='active' AND symbol IN (?, '*') "
+                "AND period IN ('*', ?) ORDER BY (symbol='*'), (period='*')",
                 (wanted_symbol, wanted_period),
             )
             config["_setup_profiles"] = [
-                {"symbol": wanted_symbol, "period": str(row.get("period") or wanted_period).upper(),
+                {"symbol": _norm_symbol(row.get("symbol") or wanted_symbol),
+                 "period": _norm_period(row.get("period") or wanted_period),
                  "setup_type": str(row.get("setup_type") or "").lower(), **decode(row)}
                 for row in rows
             ]

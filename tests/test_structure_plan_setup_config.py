@@ -1,4 +1,4 @@
-from market.services.signal.structure_plan.config_resolver import resolve
+from market.services.signal.structure_plan.config_resolver import resolve, select_overlay_rows
 from market.services.signal.structure_plan_signal import (
     STRUCTURE_PLAN_DEFAULT_CONFIG,
     StructurePlanBuilder,
@@ -70,3 +70,19 @@ def test_disabled_setup_and_direction_are_filtered():
         {"setup_type": "trend_continuation", "direction": "buy"},
     ])
     assert plans == [{"setup_type": "range_breakout", "direction": "buy"}]
+
+
+def test_period_wide_star_symbol_is_less_specific_than_exact_symbol():
+    rows = [
+        {"symbol": "*", "period": "M5", "config_json": {"pivot_legs": 4}},
+        {"symbol": "GOLD#", "period": "*", "config_json": {"pivot_legs": 5}},
+        {"symbol": "GOLD#", "period": "M5", "config_json": {"pivot_legs": 6}},
+    ]
+    period_wide, symbol_wide, exact = select_overlay_rows(rows, "gold#", "m5")
+    assert period_wide["config_json"]["pivot_legs"] == 4
+    assert symbol_wide["config_json"]["pivot_legs"] == 5
+    assert exact["config_json"]["pivot_legs"] == 6
+    period_wide, symbol_wide, exact = select_overlay_rows(rows, "eurusd#", "m5")
+    assert period_wide["config_json"]["pivot_legs"] == 4
+    assert symbol_wide is None
+    assert exact is None

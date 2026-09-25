@@ -229,7 +229,7 @@
               <v-col cols="12" sm="6" md="3"><v-switch :class="structureFieldClass('enable_triangle_prebreakout')" v-model="structureEngineConfig.enable_triangle_prebreakout" color="primary" inset hide-details label="启用三角形提前入场" /></v-col>
             </v-row>
             <v-alert type="info" variant="tonal" density="compact" class="mt-4 mb-3">
-              配置按四层生效：<strong>公共结构 → 品种/周期结构 → 公共 SETUP → 品种/周期/SETUP</strong>。越靠后优先级越高；没填的字段沿用上一层。账户风险仍在交易账户页配置，不在这里。
+              配置按多层生效：<strong>公共默认 → 全部品种/该周期（*/M5）→ 该品种/所有周期（GOLD/*）→ 品种+周期 → SETUP 同样叠加</strong>。越靠后优先级越高；没填的字段沿用上一层。账户风险仍在交易账户页配置，不在这里。
             </v-alert>
             <div class="llm-section-head compact mt-4"><div><h3>五、SETUP 专项配置</h3><p>方向层级决定做多还是做空，入场层级决定什么时候进。两者可以不是同一层。例如 Swing 上涨、Internal 在箱体里震荡：方向仍看 Swing，入场看 Internal 的下沿回收或假突破，不会把 Internal 震荡当成新的方向。</p></div><div class="d-flex ga-2"><v-btn size="small" variant="tonal" color="secondary" :disabled="structureEngineSaving || !structureSetupScope" @click="openSaveAsStructureSetup">另存为当前范围 SETUP</v-btn></div></div>
             <div class="d-flex flex-wrap ga-2 align-center mb-2">
@@ -1521,12 +1521,12 @@
       <v-card>
         <v-card-title>另存为品种/周期配置</v-card-title>
         <v-card-text>
-          <p class="text-body-2 mb-4">将当前公共默认参数复制为指定品种和周期的专属覆盖。复制后仍可继续单独修改，不会改变公共默认参数。</p>
-          <v-select v-model="saveAsStructureProfileDraft.symbol" :items="symbols" label="品种" density="compact" variant="outlined" :disabled="structureEngineSaving" />
+          <p class="text-body-2 mb-4">将当前参数复制为专属覆盖。品种选「全部品种」并指定 M5，就是所有品种的 M5 共用这一套，例如转折点根数。GOLD# · M5 仍可再覆盖。</p>
+          <v-select v-model="saveAsStructureProfileDraft.symbol" :items="structureSaveAsSymbols" item-title="title" item-value="value" label="品种" density="compact" variant="outlined" :disabled="structureEngineSaving" />
           <v-select v-model="saveAsStructureProfileDraft.period" :items="[{title:'所有周期',value:'*'},{title:'M1',value:'M1'},{title:'M5',value:'M5'},{title:'M15',value:'M15'},{title:'H1',value:'H1'},{title:'H4',value:'H4'}]" item-title="title" item-value="value" label="周期" density="compact" variant="outlined" :disabled="structureEngineSaving" />
-          <v-alert type="info" variant="tonal" density="compact">如果该品种/周期已有配置，将用当前公共默认参数覆盖其字段；保存后自动切换到该专属配置。</v-alert>
+          <v-alert type="info" variant="tonal" density="compact">不要选「全部品种 · 所有周期」，那和公共默认重复。如果该范围已有配置，将覆盖其字段。</v-alert>
         </v-card-text>
-        <v-card-actions><v-spacer/><v-btn variant="text" @click="saveAsStructureProfileOpen=false">取消</v-btn><v-btn color="primary" :loading="structureEngineSaving" :disabled="!saveAsStructureProfileDraft.symbol" @click="saveAsStructureProfile">保存专属配置</v-btn></v-card-actions>
+        <v-card-actions><v-spacer/><v-btn variant="text" @click="saveAsStructureProfileOpen=false">取消</v-btn><v-btn color="primary" :loading="structureEngineSaving" :disabled="!saveAsStructureProfileDraft.symbol || (saveAsStructureProfileDraft.symbol === '*' && saveAsStructureProfileDraft.period === '*')" @click="saveAsStructureProfile">保存专属配置</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
@@ -1535,11 +1535,11 @@
         <v-card-title>另存为品种 · 周期 · SETUP 专项</v-card-title>
         <v-card-text>
           <p class="text-body-2 mb-4">从当前公共默认或已有专项复制参数。保存后只记录相对公共默认的显式覆盖，未修改字段继续继承公共默认。</p>
-          <v-select v-model="saveAsStructureSetupDraft.symbol" :items="symbols" label="品种" density="compact" variant="outlined" :disabled="structureEngineSaving" />
+          <v-select v-model="saveAsStructureSetupDraft.symbol" :items="structureSaveAsSymbols" item-title="title" item-value="value" label="品种" density="compact" variant="outlined" :disabled="structureEngineSaving" />
           <v-select v-model="saveAsStructureSetupDraft.period" :items="[{title:'所有周期',value:'*'},{title:'M1',value:'M1'},{title:'M5',value:'M5'},{title:'M15',value:'M15'},{title:'H1',value:'H1'},{title:'H4',value:'H4'}]" item-title="title" item-value="value" label="周期" density="compact" variant="outlined" :disabled="structureEngineSaving" />
           <v-select v-model="saveAsStructureSetupDraft.setup_type" :items="structureSetupTypes" item-title="label" item-value="value" label="SETUP" density="compact" variant="outlined" :disabled="structureEngineSaving" />
         </v-card-text>
-        <v-card-actions><v-spacer/><v-btn variant="text" @click="saveAsStructureSetupOpen=false">取消</v-btn><v-btn color="primary" :loading="structureEngineSaving" :disabled="!saveAsStructureSetupDraft.symbol || !saveAsStructureSetupDraft.setup_type" @click="saveAsStructureSetup">保存专项</v-btn></v-card-actions>
+        <v-card-actions><v-spacer/><v-btn variant="text" @click="saveAsStructureSetupOpen=false">取消</v-btn><v-btn color="primary" :loading="structureEngineSaving" :disabled="!saveAsStructureSetupDraft.symbol || !saveAsStructureSetupDraft.setup_type || (saveAsStructureSetupDraft.symbol === '*' && saveAsStructureSetupDraft.period === '*')" @click="saveAsStructureSetup">保存专项</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
@@ -1594,10 +1594,14 @@ export default {
     const structureProfileDraft = ref({ symbol: '', period: 'M5' })
     const saveAsStructureProfileOpen = ref(false)
     const saveAsStructureProfileDraft = ref({ symbol: '', period: 'M5' })
+    const structureSaveAsSymbols = computed(() => [
+      { title: '全部品种', value: '*' },
+      ...symbols.value.map(item => ({ title: item, value: item })),
+    ])
     const structureConfigScope = ref('default')
     const structureConfigScopes = computed(() => [
       { label: '公共默认配置', value: 'default' },
-      ...structureProfiles.value.map(item => ({ label: item.period === '*' ? `${item.symbol} · 所有周期` : `${item.symbol} · ${item.period}`, value: `${item.symbol}::${item.period}` })),
+      ...structureProfiles.value.map(item => ({ label: structureScopeLabel(item.symbol, item.period), value: `${item.symbol}::${item.period}` })),
     ])
     const structureConfigSourceLabel = computed(() => {
       if (structureConfigScope.value === 'default') return '当前显示：所有品种和周期使用的公共默认值'
@@ -1700,7 +1704,15 @@ export default {
       enable_liquidity_sweep: '启用流动性扫单计划',
       enable_trend: '启用趋势计划',
     }
-    const structureSourceLabel = value => ({ default: '公共默认', setup_default: '公共 SETUP 默认', symbol_period: '品种/周期', setup: '品种/周期/SETUP' }[value] || value || '--')
+    const structureScopeLabel = (symbol, period) => {
+      const s = String(symbol || '').trim()
+      const p = String(period || '').trim()
+      if (s === '*' && p === '*') return '全部品种 · 所有周期'
+      if (s === '*') return `全部品种 · ${p}`
+      if (p === '*') return `${s} · 所有周期`
+      return `${s} · ${p}`
+    }
+    const structureSourceLabel = value => ({ default: '公共默认', setup_default: '公共 SETUP 默认', symbol_period: '品种/周期', period_wide: '全部品种/周期', symbol_wide: '品种/所有周期', setup: '品种/周期/SETUP' }[value] || value || '--')
     const formatStructureValue = value => {
       if (value === null || value === undefined) return '--'
       if (typeof value === 'boolean') return value ? '是' : '否'
@@ -4551,6 +4563,8 @@ export default {
       structureOverrideFields,
       isStructureFieldOverridden,
       structureFieldClass,
+      structureSaveAsSymbols,
+      structureScopeLabel,
       saveAsStructureProfileOpen,
       saveAsStructureProfileDraft,
       openSaveAsStructureProfile,
