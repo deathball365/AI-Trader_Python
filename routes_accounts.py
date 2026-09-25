@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """统一交易账户管理接口。"""
 
+import json
 import time
 from datetime import datetime, time as datetime_time
 from typing import Dict, List, Optional
@@ -10,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from auth import AuthUser, require_auth
 from membership import MembershipService
+from market.services.decision_brief import build_decision_brief
 from market.services.account_strategy_performance import build_live_performance, build_paper_performance
 from market.services.today_trade_stats import today_trade_stats
 from market.models.trading_strategy import StrategyLifecycle
@@ -686,6 +688,64 @@ def create_account_routes(engine_manager: TradingEngineManager) -> APIRouter:
             return {"status": "ok", "detail": detail}
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+    @router.get("/accounts/{account_id}/positions/{position_key}/decision-brief")
+    async def get_position_decision_brief(
+        account_id: int,
+        position_key: str,
+        user: AuthUser = Depends(require_auth),
+    ) -> Dict:
+        account = repository.get_by_id(user.user_id, account_id)
+        if account is None:
+            raise HTTPException(status_code=404, detail="账户不存在")
+        storage = repository.storage
+        attribution = {}
+        position = {}
+        if account.account_type == "paper":
+            row = storage.fetchone(
+                "SELECT * FROM paper_positions WHERE user_id=? AND account_id=? AND position_id=?",
+                (int(user.user_id), int(account_id), str(position_key)),
+            )
+            if row is None:
+                raise HTTPException(status_code=404, detail="持仓不存在")
+            position = dict(row)
+            try:
+                attribution = json.loads(position.get("position_attribution_json") or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                attribution = {}
+        else:
+            try:
+                ticket = int(str(position_key).strip() or 0)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=404, detail="持仓不存在")
+            report = repositories.trade_execution.find_for_position(
+                int(user.user_id), int(account_id), ticket,
+            ) or {}
+            attribution = report.get("position_attribution") or {}
+            position = {
+                "symbol": report.get("symbol") or "",
+                "direction": attribution.get("direction") or "",
+                "entry_price": report.get("executed_price") or report.get("requested_price"),
+                "volume": report.get("executed_volume") or report.get("requested_volume"),
+                "opened_at": report.get("reported_at"),
+                "strategy_id": report.get("strategy_id") or attribution.get("strategy_id"),
+            }
+            if not attribution:
+                raise HTTPException(status_code=404, detail="这笔持仓没有策略决策记录")
+        plan_id = str(attribution.get("trade_plan_id") or "")
+        plan = {}
+        if plan_id:
+            plan_row = storage.fetchone(
+                "SELECT payload_json FROM structure_trade_plans WHERE user_id=? AND plan_id=? LIMIT 1",
+                (int(user.user_id), plan_id),
+            )
+            if plan_row:
+                try:
+                    plan = json.loads(plan_row.get("payload_json") or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    plan = {}
+        return {"status": "ok", "brief": build_decision_brief(attribution, plan, position)}
 
     @router.get("/accounts/{account_id}/paper/runtime-logs")
     async def get_paper_runtime_logs(

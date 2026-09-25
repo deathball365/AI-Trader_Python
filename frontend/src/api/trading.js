@@ -329,6 +329,13 @@ export const accountAPI = {
     return response.data
   },
 
+  async getPositionDecisionBrief(accountId, positionKey) {
+    const response = await api.get(
+      `/accounts/${encodeURIComponent(accountId)}/positions/${encodeURIComponent(positionKey)}/decision-brief`
+    )
+    return response.data
+  },
+
   async getPaperDetail(accountId, page = 1, pageSize = 30, equityFrom = null, equityTo = null) {
     const params = { page, page_size: pageSize }
     if (equityFrom != null) params.equity_from = equityFrom

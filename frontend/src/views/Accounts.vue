@@ -427,6 +427,7 @@
                   </div>
                   <div class="paper-position-actions">
                     <v-chip size="x-small" :color="Number(position.stop_loss) && Number(position.take_profit) ? 'success' : 'warning'" variant="tonal">{{ paperProtectionLabel(position) }}</v-chip>
+                    <v-btn size="x-small" variant="tonal" color="secondary" @click.stop="openDecisionBrief(paperDetail.account.account_id, position.position_id)">决策说明</v-btn>
                     <v-btn size="x-small" variant="tonal" color="primary" @click="togglePaperPosition(position.position_id)">
                       {{ expandedPaperPositions.has(position.position_id) ? '收起轨迹' : '查看轨迹' }}
                     </v-btn>
@@ -632,6 +633,7 @@
                   </div>
                   <div class="paper-position-actions">
                     <v-chip size="x-small" :color="Number(position.sl) || Number(position.tp) ? 'success' : 'warning'" variant="tonal">{{ paperProtectionLabel({ stop_loss: position.sl, take_profit: position.tp }) }}</v-chip>
+                    <v-btn size="x-small" variant="tonal" color="secondary" @click.stop="openDecisionBrief(liveDetail.account.account_id, position.ticket)">决策说明</v-btn>
                     <v-btn size="x-small" variant="tonal" color="primary" @click="toggleLivePosition(position.ticket)">{{ expandedLivePositions.has(position.ticket) ? '收起轨迹' : '查看轨迹' }}</v-btn>
                   </div>
                 </div>
@@ -792,6 +794,30 @@
         </v-card-text>
       </v-card>
     </v-dialog>
+
+    <v-dialog v-model="decisionBriefDialog" max-width="720" scrollable>
+      <v-card class="binding-dialog" elevation="0">
+        <v-card-title class="binding-header">
+          <div>
+            <div class="section-tag">DECISION BRIEF</div>
+            <h2>{{ decisionBrief?.title || '决策说明' }}</h2>
+            <span>{{ decisionBrief?.summary || '根据当时结构计划和持仓归因生成' }}</span>
+          </div>
+          <v-btn icon="mdi-close" variant="text" @click="decisionBriefDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text>
+          <div v-if="decisionBriefLoading" class="runtime-empty compact">正在生成决策说明</div>
+          <div v-else-if="decisionBriefError" class="runtime-empty compact">{{ decisionBriefError }}</div>
+          <div v-else>
+            <article v-for="section in decisionBrief?.sections || []" :key="section.title" class="decision-brief-section">
+              <strong>{{ section.title }}</strong>
+              <p>{{ section.body }}</p>
+            </article>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -861,6 +887,10 @@ const showPaperStrategyPerformance = ref(false)
 const showLiveStrategyPerformance = ref(false)
 const showPaperDeployments = ref(false)
 const showAccountDeployments = ref(false)
+const decisionBriefDialog = ref(false)
+const decisionBriefLoading = ref(false)
+const decisionBriefError = ref('')
+const decisionBrief = ref(null)
 let equityChartInstance = null
 let liveEquityChartInstance = null
 let liveRefreshTimer = null
@@ -1019,6 +1049,20 @@ function paperEventLabel(type) {
     max_holding_bars: '时间退出',
   }[type] || type || '持仓管理'
 }
+async function openDecisionBrief(accountId, positionKey) {
+  decisionBriefDialog.value = true
+  decisionBriefLoading.value = true
+  decisionBriefError.value = ''
+  decisionBrief.value = null
+  try {
+    const data = await accountAPI.getPositionDecisionBrief(accountId, positionKey)
+    decisionBrief.value = data.brief || data
+  } catch (error) {
+    decisionBriefError.value = error.response?.data?.detail || '生成决策说明失败'
+  } finally {
+    decisionBriefLoading.value = false
+  }
+}
 function togglePaperPosition(positionId) {
   const next = new Set(expandedPaperPositions.value)
   if (next.has(positionId)) next.delete(positionId)
@@ -1092,9 +1136,17 @@ function setupLabel(value) {
   return {
     range_reversal: '箱体反转',
     range_breakout: '箱体突破',
+    range_false_breakout: '箱体假突破',
+    range_lower_reversal: '箱体下沿反转',
+    range_upper_reversal: '箱体上沿反转',
     trend_pullback: '趋势回调',
     trend_breakout: '趋势突破',
-    triangle_breakout: '三角突破',
+    triangle_breakout: '三角形突破',
+    structure_location_pullback: '结构位置回撤',
+    liquidity_sweep_reclaim: '流动性扫单回收',
+    trend_continuation: '趋势延续',
+    choch_reversal: 'CHOCH 反转',
+    structure_reversal: '结构反转',
     reversal: '转折入场',
     generic_entry: '通用入场',
   }[value] || value || '通用入场'
@@ -1887,7 +1939,11 @@ onBeforeUnmount(() => {
 .paper-position-head strong,.paper-position-head span { display: block; }
 .paper-position-head strong { margin-top: 2px; color: #31554b; font-size: .78rem; }
 .paper-position-head span { color: #84908a; font-size: .64rem; }
-.paper-position-actions { display: flex; align-items: center; gap: 7px; }
+.paper-position-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.decision-brief-section { padding: 12px 0; border-top: 1px dashed #e3ece7; }
+.decision-brief-section:first-child { border-top: 0; padding-top: 0; }
+.decision-brief-section strong { display: block; color: #31554b; font-size: .82rem; }
+.decision-brief-section p { margin: 6px 0 0; color: #526860; font-size: .88rem; line-height: 1.55; }
 .paper-position-metrics { display: grid; grid-template-columns: repeat(5, minmax(88px, 1fr)); gap: 7px; }
 .paper-position-metrics span { display: flex; flex-direction: column; padding: 8px; border-radius: 9px; background: #f2f7f4; color: #7d8b85; font-size: .62rem; }
 .paper-position-metrics b { margin-top: 2px; font-size: .72rem; }
