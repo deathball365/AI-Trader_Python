@@ -308,10 +308,12 @@
           </section>
 
           <section class="strategy-performance-card">
-            <div class="runtime-section-title">
+            <div class="runtime-section-title strategy-performance-toggle" @click="showPaperStrategyPerformance = !showPaperStrategyPerformance">
               <h3>策略收益贡献</h3>
-              <span>按部署实例统计 · 分批平仓合并为一笔完整交易</span>
+              <span>{{ showPaperStrategyPerformance ? '按部署实例统计 · 分批平仓合并为一笔完整交易' : '点击展开' }}</span>
+              <v-icon size="18">{{ showPaperStrategyPerformance ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
             </div>
+            <div v-show="showPaperStrategyPerformance">
             <div v-if="!paperDetail.strategy_performance?.length" class="runtime-empty compact">该账户暂无策略部署</div>
             <article v-for="item in paperStrategyPerformance" :key="item.deployment_id" class="strategy-performance-row">
               <header>
@@ -336,6 +338,7 @@
                 <span>最大回撤 / 连亏<b>{{ Number(item.max_drawdown || 0).toFixed(2) }} / {{ item.max_consecutive_losses }} 次</b></span>
               </div>
             </article>
+            </div>
           </section>
 
           <section v-if="paperReport" class="paper-report">
@@ -402,9 +405,8 @@
             </div>
           </section>
 
-          <section class="runtime-grid">
-            <div class="runtime-table-card">
-              <div class="runtime-section-title"><h3>当前持仓</h3><span>{{ paperDetail.positions.length }} 笔</span></div>
+          <section class="runtime-table-card positions-card">
+              <div class="runtime-section-title"><h3>当前持仓</h3><span>{{ paperDetail.positions.length }} 笔 · 每 6 秒自动刷新</span></div>
               <div v-if="!paperDetail.positions.length" class="runtime-empty compact">暂无持仓</div>
               <div v-for="position in paperDetail.positions" :key="position.position_id" class="paper-position-card">
                 <div class="paper-position-head">
@@ -438,9 +440,11 @@
                   </div>
                 </div>
               </div>
-            </div>
+          </section>
+
+          <section class="runtime-grid">
             <div class="runtime-table-card">
-              <div class="runtime-section-title"><h3>最近成交</h3><span>最多显示 20 笔</span></div>
+              <div class="runtime-section-title"><h3>订单成交</h3><span>最近 20 笔已平仓</span></div>
               <div v-if="!paperDetail.trades.length" class="runtime-empty compact">暂无成交</div>
               <div v-for="trade in paperDetail.trades.slice(0, 20)" :key="trade.trade_id" class="runtime-row trade-row">
                 <span>{{ formatTime(trade.closed_at) }}</span>
@@ -452,10 +456,8 @@
                 <strong :class="trade.net_profit >= 0 ? 'positive' : 'negative'">{{ signedMoney(trade.net_profit) }}</strong>
               </div>
             </div>
-          </section>
-
-          <section class="runtime-table-card orders-card">
-            <div class="runtime-section-title"><h3>模拟订单流水</h3><span>最近 30 条 · 包含拒单和取消订单</span></div>
+            <div class="runtime-table-card orders-card">
+            <div class="runtime-section-title"><h3>订单流水</h3><span>最近 30 条 · 含拒单和取消</span></div>
             <div v-if="!paperDetail.orders.length" class="runtime-empty compact">暂无订单</div>
             <div v-for="order in paperDetail.orders.slice(0, 30)" :key="order.order_id" class="runtime-row order-row">
               <span>{{ formatTime(order.requested_at) }}</span>
@@ -466,6 +468,7 @@
               <span>{{ order.filled_price ?? order.requested_price }}</span>
               <v-chip size="x-small" variant="tonal" :color="orderStatus(order.status).color">{{ orderStatus(order.status).label }}</v-chip>
               <span class="reject-reason">{{ order.open_reason || order.rejection_reason || '--' }}</span>
+            </div>
             </div>
           </section>
 
@@ -578,10 +581,12 @@
           </section>
 
           <section class="strategy-performance-card">
-            <div class="runtime-section-title">
+            <div class="runtime-section-title strategy-performance-toggle" @click="showLiveStrategyPerformance = !showLiveStrategyPerformance">
               <h3>策略收益贡献</h3>
-              <span>按部署实例统计 · 手工成交不计入策略</span>
+              <span>{{ showLiveStrategyPerformance ? '按部署实例统计 · 手工成交不计入策略' : '点击展开' }}</span>
+              <v-icon size="18">{{ showLiveStrategyPerformance ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
             </div>
+            <div v-show="showLiveStrategyPerformance">
             <div v-if="!liveDetail.strategy_performance?.length" class="runtime-empty compact">该账户暂无实盘策略部署</div>
             <article v-for="item in liveDetail.strategy_performance || []" :key="item.deployment_id" class="strategy-performance-row">
               <header>
@@ -603,11 +608,11 @@
                 <span>最大回撤 / 连亏<b>{{ Number(item.max_drawdown || 0).toFixed(2) }} / {{ item.max_consecutive_losses }} 次</b></span>
               </div>
             </article>
+            </div>
           </section>
 
-          <section class="runtime-grid">
-            <div class="runtime-table-card">
-              <div class="runtime-section-title"><h3>当前实盘持仓</h3><span>{{ liveDetail.positions.length }} 笔</span></div>
+          <section class="runtime-table-card positions-card">
+              <div class="runtime-section-title"><h3>当前持仓</h3><span>{{ liveDetail.positions.length }} 笔 · 每 6 秒自动刷新</span></div>
               <div v-if="!liveDetail.positions.length" class="runtime-empty compact">暂无持仓</div>
               <div v-for="position in liveDetail.positions" :key="position.ticket" class="paper-position-card">
                 <div class="paper-position-head">
@@ -633,9 +638,11 @@
                   <div v-for="event in position.management_events || []" :key="event.event_id" class="paper-event-row"><span>{{ formatTime(event.event_time) }}</span><b>{{ paperEventLabel(event.rule_type) }}</b><span>{{ event.message }}</span><small>SL {{ price(event.stop_loss) }} · TP {{ price(event.take_profit) }}</small></div>
                 </div>
               </div>
-            </div>
+          </section>
+
+          <section class="runtime-grid">
             <div class="runtime-table-card">
-              <div class="runtime-section-title"><h3>最近 MT5 成交</h3><span>最多 20 笔</span></div>
+              <div class="runtime-section-title"><h3>订单成交</h3><span>最近 20 笔</span></div>
               <div v-if="!liveDetail.trades.length" class="runtime-empty compact">暂无成交上报</div>
               <div v-for="trade in liveDetail.trades.slice(0, 20)" :key="trade.ticket" class="runtime-row trade-row">
                 <span>{{ trade.time || '--' }}</span>
@@ -646,10 +653,8 @@
                 <strong :class="Number(trade.profit) >= 0 ? 'positive' : 'negative'">{{ signedMoney(trade.profit) }}</strong>
               </div>
             </div>
-          </section>
-
-          <section class="runtime-table-card orders-card">
-            <div class="runtime-section-title"><h3>策略下单与执行回报</h3><span>最近 30 条 · 服务端指令在 MT5 的实际成交情况</span></div>
+            <div class="runtime-table-card orders-card">
+            <div class="runtime-section-title"><h3>订单流水</h3><span>最近 30 条 · 策略指令与 MT5 回报</span></div>
             <div v-if="!liveDetail.execution_reports.length" class="runtime-empty compact">暂无策略指令执行回报</div>
             <div v-for="report in liveDetail.execution_reports" :key="report.id" class="runtime-row order-row">
               <span>{{ formatTime(report.reported_at) }}</span>
@@ -660,6 +665,7 @@
               <v-chip size="x-small" :color="report.success ? 'success' : 'error'" variant="tonal">{{ report.success ? '已成交' : '失败' }}</v-chip>
               <span v-if="report.setup_type">{{ setupLabel(report.setup_type) }} · {{ report.setup_profile_name || '默认持仓方案' }}</span>
               <span class="reject-reason">{{ report.action === 'position_modify_sl' ? `实际 SL ${price(report.executed_price)}${report.retcode ? ` · retcode ${report.retcode}` : ''}` : (report.open_reason || report.error_message || `滑点 ${Number(report.slippage || 0).toFixed(5)}`) }}</span>
+            </div>
             </div>
           </section>
         </v-card-text>
@@ -835,10 +841,14 @@ const paperEquityRange = ref('all')
 const liveEquityRange = ref('all')
 const expandedPaperPositions = ref(new Set())
 const expandedLivePositions = ref(new Set())
+const showPaperStrategyPerformance = ref(false)
+const showLiveStrategyPerformance = ref(false)
 let equityChartInstance = null
 let liveEquityChartInstance = null
 let liveRefreshTimer = null
 let liveRefreshInFlight = false
+let paperRefreshTimer = null
+let paperRefreshInFlight = false
 const message = ref('')
 const messageType = ref('success')
 const currencies = ['USD', 'CNY', 'EUR', 'GBP', 'JPY']
@@ -1407,10 +1417,13 @@ async function openPaperRuntime(account) {
       strategy_performance: data.detail.strategy_performance || [],
     }
     expandedPaperPositions.value = new Set()
+    showPaperStrategyPerformance.value = false
     selectedStrategyId.value = ''
     paperReport.value = null
     reportStrategyId.value = ''
     paperDialog.value = true
+    clearInterval(paperRefreshTimer)
+    paperRefreshTimer = setInterval(() => refreshPaperDetail({ reloadAccounts: false }), 6000)
     await nextTick()
     // 策略上下文只服务于绑定/筛选，不阻塞运行台首屏。
     loadPaperContext().catch(() => {})
@@ -1436,6 +1449,7 @@ async function openLiveRuntime(account) {
       strategy_performance: data.detail.strategy_performance || [],
     }
     expandedLivePositions.value = new Set()
+    showLiveStrategyPerformance.value = false
     liveDialog.value = true
     clearInterval(liveRefreshTimer)
     liveRefreshTimer = setInterval(refreshLiveDetail, 6000)
@@ -1502,6 +1516,7 @@ function closeLiveRuntime() {
   liveEquityChartInstance = null
   liveDetail.value = null
   expandedLivePositions.value = new Set()
+  showLiveStrategyPerformance.value = false
 }
 
 async function loadPaperReport() {
@@ -1557,10 +1572,14 @@ async function closePaperAccount(account) {
 
 function closePaperRuntime() {
   paperDialog.value = false
+  clearInterval(paperRefreshTimer)
+  paperRefreshTimer = null
+  paperRefreshInFlight = false
   equityChartInstance?.dispose()
   equityChartInstance = null
   paperDetail.value = null
   expandedPaperPositions.value = new Set()
+  showPaperStrategyPerformance.value = false
 }
 
 async function openLivePromotion(item) {
@@ -1620,21 +1639,35 @@ function closeLivePromotion() {
   livePromotionResult.value = null
 }
 
-async function refreshPaperDetail() {
-  const accountId = paperDetail.value.account.account_id
-  const data = await accountAPI.getPaperDetail(accountId, 1, 30, ...equityRangeParams(paperEquityRange.value))
-  paperDetail.value = {
-    ...data.detail,
-    equity_curve: paperDetail.value.equity_curve || [],
-    today_trade_stats: paperDetail.value.today_trade_stats,
-    execution_funnel: paperDetail.value.execution_funnel,
-    strategy_performance: paperDetail.value.strategy_performance,
+async function refreshPaperDetail(options = {}) {
+  if (!paperDetail.value) return
+  const reloadAccounts = options.reloadAccounts !== false
+  if (!reloadAccounts && paperRefreshInFlight) return
+  paperRefreshInFlight = true
+  try {
+    const accountId = paperDetail.value.account.account_id
+    const data = await accountAPI.getPaperDetail(accountId, 1, 30, ...equityRangeParams(paperEquityRange.value))
+    if (!paperDetail.value) return
+    paperDetail.value = {
+      ...data.detail,
+      equity_curve: paperDetail.value.equity_curve || [],
+      today_trade_stats: paperDetail.value.today_trade_stats,
+      execution_funnel: paperDetail.value.execution_funnel,
+      strategy_performance: paperDetail.value.strategy_performance,
+    }
+    await nextTick()
+    renderEquityChart()
+    applyRuntimeStats(paperDetail, accountId).catch(() => {})
+    loadPaperRuntimeLogs(accountId).catch(() => {})
+    if (reloadAccounts) await loadAccounts()
+  } catch (error) {
+    if (reloadAccounts) {
+      messageType.value = 'error'
+      message.value = error.response?.data?.detail || '刷新模拟运行数据失败'
+    }
+  } finally {
+    paperRefreshInFlight = false
   }
-  await nextTick()
-  renderEquityChart()
-  applyRuntimeStats(paperDetail, accountId).catch(() => {})
-  loadPaperRuntimeLogs(accountId).catch(() => {})
-  await loadAccounts()
 }
 
 async function deploySelectedStrategy() {
@@ -1730,6 +1763,7 @@ function renderLiveEquityChart() {
 loadAccounts()
 onBeforeUnmount(() => {
   clearInterval(liveRefreshTimer)
+  clearInterval(paperRefreshTimer)
   equityChartInstance?.dispose()
   liveEquityChartInstance?.dispose()
 })
@@ -1817,7 +1851,12 @@ onBeforeUnmount(() => {
 .report-breakdowns { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:10px; }.report-breakdowns>div { padding:12px; border-radius:10px; background:rgba(255,255,255,.07); }.report-breakdowns h4 { margin:0 0 7px; font-size:.72rem; }.report-breakdowns p { display:flex; justify-content:space-between; gap:8px; margin:5px 0; color:rgba(255,255,255,.72); font-size:.62rem; }
 .benchmark-panel { margin-top:12px; padding:14px; border-radius:11px; background:rgba(255,255,255,.08); }.benchmark-title { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; }.benchmark-title span { color:#d7b36f; font-size:.58rem; font-weight:800; letter-spacing:.12em; }.benchmark-title h4 { margin:2px 0; }.benchmark-title small { color:rgba(255,255,255,.55); font-size:.6rem; }.benchmark-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:7px; margin-top:10px; }.benchmark-grid article { padding:10px; border-radius:8px; background:rgba(255,255,255,.07); }.benchmark-grid span,.benchmark-grid strong,.benchmark-grid small { display:block; }.benchmark-grid span { color:rgba(255,255,255,.57); font-size:.59rem; }.benchmark-grid strong { margin:3px 0; font-size:.8rem; }.benchmark-grid small { color:rgba(255,255,255,.62); font-size:.56rem; line-height:1.45; }
 .setup-performance-panel { margin-top:12px; padding:14px; border-radius:11px; background:rgba(255,255,255,.08); }.setup-empty { margin-top:10px; padding:14px; border:1px dashed rgba(255,255,255,.2); border-radius:8px; color:rgba(255,255,255,.62); font-size:.65rem; text-align:center; }.setup-performance-table { margin-top:10px; overflow-x:auto; }.setup-performance-table article { display:grid; grid-template-columns:minmax(120px,1.4fr) minmax(125px,1.2fr) repeat(5,minmax(72px,.8fr)); gap:8px; align-items:center; min-width:760px; padding:9px 8px; border-top:1px solid rgba(255,255,255,.1); font-size:.63rem; }.setup-performance-table article:first-child { border-top:0; }.setup-performance-table strong { color:#fff; }.setup-performance-table span { color:rgba(255,255,255,.72); }.setup-performance-table .setup-performance-head { color:rgba(255,255,255,.48); font-weight:700; }.setup-direction-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:7px; margin-top:9px; }.setup-direction-grid div { padding:9px 10px; border-radius:8px; background:rgba(255,255,255,.06); }.setup-direction-grid b,.setup-direction-grid span { display:block; }.setup-direction-grid b { font-size:.66rem; }.setup-direction-grid span { margin-top:3px; color:rgba(255,255,255,.6); font-size:.58rem; }
-.runtime-section-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }.runtime-section-title h3 { margin: 0; color: #31554b; font-size: .84rem; }.runtime-section-title span { color: #89948f; font-size: .65rem; }
+.runtime-section-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }.runtime-section-title h3 { margin: 0; color: #31554b; font-size: .84rem; }.runtime-section-title span { color: #89948f; font-size: .65rem; }
+.strategy-performance-toggle { cursor: pointer; user-select: none; }
+.strategy-performance-toggle h3 { flex: 0 0 auto; }
+.strategy-performance-toggle span { flex: 1; }
+.positions-card { margin-top: 13px; }
+.runtime-grid .orders-card { margin-top: 13px; }
 .equity-chart { width: 100%; height: 280px; }
 .runtime-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }.runtime-grid .runtime-table-card { margin-top: 13px; }
 .runtime-row { display: grid; align-items: center; gap: 8px; padding: 8px 5px; border-top: 1px solid #edf1ee; color: #6f7d77; font-size: .67rem; }.position-row { grid-template-columns: 45px 1fr 1fr auto; }.trade-row { grid-template-columns: 130px 1fr 80px auto; }.order-row { grid-template-columns: 130px minmax(110px, 1.1fr) 45px 1fr 90px 65px minmax(100px,1fr); }.execution-strategy { color: #243f34; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
