@@ -23,10 +23,10 @@ def _pivots(rows):
     return pivots
 
 
-def test_both_rails_down_beyond_10_degrees_are_not_a_range():
+def test_both_rails_down_beyond_5_degrees_are_not_a_range():
     rows = _rows_channel()
     box = _range(rows, _pivots(rows), atr=0.00030, config=DEFAULT_CONFIG)
     assert box is not None
     assert box["pattern"] in {"descending_channel", "range"}
-    if abs(box.get("high_angle", 0)) > 10 and abs(box.get("low_angle", 0)) > 10:
+    if abs(box.get("high_angle", 0)) > 5 and abs(box.get("low_angle", 0)) > 5:
         assert box["pattern"] == "descending_channel"

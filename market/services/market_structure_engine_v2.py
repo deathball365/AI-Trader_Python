@@ -18,7 +18,7 @@ DEFAULT_CONFIG = {
     "trend_retest_required": True,
     "range_touch_tolerance": 0.003, "range_touch_atr": 0.45,
     "range_min_touches": 2, "range_min_inside_ratio": 0.65,
-    "range_max_atr": 8.0, "range_min_bars": 24, "range_flat_angle_degrees": 10.0,
+    "range_max_atr": 8.0, "range_min_bars": 24, "range_flat_angle_degrees": 5.0,
     "min_segment_bars": 12,
     "trendline_touch_atr": 0.5, "trendline_min_touches": 2,
     "trendline_min_bars": 18,
@@ -241,7 +241,7 @@ def _range(rows: List[Dict], pivots: List[Dict], atr: float, config: Dict) -> Op
         span = max(top - bottom, atr * 0.5, 1e-12)
         high_angle = math.degrees(math.atan(hs * length / span))
         low_angle = math.degrees(math.atan(ls * length / span))
-        flat = max(1.0, float(config.get("range_flat_angle_degrees") or 10.0))
+        flat = max(1.0, float(config.get("range_flat_angle_degrees") or 5.0))
         hf, lf = abs(high_angle) <= flat, abs(low_angle) <= flat
         if hf and lf:
             pattern = "range"
