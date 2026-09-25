@@ -558,16 +558,27 @@ def _local_patterns(rows: List[Dict], box: Optional[Dict], trendlines: List[Dict
     return patterns
 
 
-def _scope_window(rows: List[Dict], pivots: List[Dict], scope: str) -> Tuple[List[Dict], List[Dict]]:
-    """Keep geometry local to the hierarchy being classified.
-
-    Internal must not scan the full 600-bar chart; otherwise a short-lived
-    box is drowned by the longer Swing path and collapses to "trend".
-    """
+def _active_scope_segment(rows: List[Dict], events: List[Dict], pivots: List[Dict],
+                          config: Dict) -> Dict:
+    """Use the latest BOS/CHoCH segment of this hierarchy as the geometry window."""
     if not rows:
-        return rows, pivots
-    bars = {"internal": 80, "swing": 180, "external": 360}.get(scope, len(rows))
-    start = max(0, len(rows) - max(24, bars))
+        return {"start_index": 0, "end_index": 0, "bars": 0, "event": None}
+    scoped = _segments(rows, events or [], None, pivots or [], pivots or [], 1.0, config)
+    current = scoped[-1] if scoped else {"start_index": 0, "end_index": max(0, len(rows) - 1)}
+    start = max(0, int(current.get("start_index") or 0))
+    end = min(len(rows) - 1, int(current.get("end_index") or (len(rows) - 1)))
+    if end < start:
+        start, end = 0, len(rows) - 1
+    return {
+        "start_index": start,
+        "end_index": end,
+        "bars": end - start + 1,
+        "event": current.get("event"),
+        "type": current.get("type"),
+    }
+
+
+def _scope_window(rows: List[Dict], pivots: List[Dict], start: int) -> Tuple[List[Dict], List[Dict]]:
     window = rows[start:]
     local = []
     for pivot in pivots or []:
@@ -586,20 +597,19 @@ def _scope_window(rows: List[Dict], pivots: List[Dict], scope: str) -> Tuple[Lis
 
 
 def _scope_pattern(rows: List[Dict], pivots: List[Dict], atr: float,
-                   config: Dict, bias: str, scope: str = "swing") -> Dict:
-    """Classify geometry independently for one hierarchy scope.
-
-    Direction (``bias``) comes from that scope's pivot state machine.  The
-    pattern is geometric: a range/triangle is only reported when its own
-    boundary and inside-ratio checks pass; otherwise a directional scope is a
-    trend and an unresolved scope is neutral.
-    """
-    window, local_pivots = _scope_window(rows, pivots, scope)
+                   config: Dict, bias: str, scope: str = "swing",
+                   events: Optional[List[Dict]] = None) -> Dict:
+    """Classify geometry on the current structure segment of this hierarchy."""
+    segment = _active_scope_segment(rows, events or [], pivots or [], config)
+    start = int(segment["start_index"])
+    window, local_pivots = _scope_window(rows, pivots, start)
     scoped = dict(config)
+    scoped["range_min_bars"] = min(int(config.get("range_min_bars") or 24), max(8, min(18, segment["bars"])))
     if scope == "internal":
-        scoped["range_min_bars"] = min(int(config.get("range_min_bars") or 24), 18)
         scoped["range_min_inside_ratio"] = min(float(config.get("range_min_inside_ratio") or 0.65), 0.58)
-    box = _range(window, local_pivots, atr, scoped)
+    box = _range(window, local_pivots, atr, scoped) if len(window) >= 8 else None
+    detail = {"segment_bars": segment["bars"], "segment_start_index": start,
+              "segment_end_index": segment["end_index"]}
     if box:
         pattern = {
             "range": "range",
@@ -612,10 +622,10 @@ def _scope_pattern(rows: List[Dict], pivots: List[Dict], atr: float,
         phase = "breakout_confirmed" if status == "breakout_confirmed" else (
             "mature" if bool(box.get("active")) else "forming"
         )
-        return {"pattern": pattern, "phase": phase, "detail": box}
+        return {"pattern": pattern, "phase": phase, "detail": {**box, **detail}, "segment": segment}
     if bias in {"up", "down"}:
-        return {"pattern": "trend", "phase": "continuation", "detail": {}}
-    return {"pattern": "none", "phase": "forming", "detail": {}}
+        return {"pattern": "trend", "phase": "continuation", "detail": detail, "segment": segment}
+    return {"pattern": "none", "phase": "forming", "detail": detail, "segment": segment}
 
 
 def _primary_structure(swing: Dict, external: Dict) -> str:
@@ -1008,12 +1018,13 @@ def analyze(symbol: str, period: str, rows: List[Dict], config: Dict = None) -> 
         ("swing", "medium", major_state, major_events),
         ("external", "large", external_state, external_events),
     ):
-        geometry = _scope_pattern(rows, levels[pivot_key], atr, cfg, state, name)
+        geometry = _scope_pattern(rows, levels[pivot_key], atr, cfg, state, name, events)
         last_event = events[-1] if events else None
         hierarchy[name].update({
             "pattern": geometry["pattern"],
             "pattern_phase": geometry["phase"],
             "pattern_detail": geometry["detail"],
+            "segment": geometry.get("segment") or {},
             "event": last_event,
         })
     primary_structure = _primary_structure(hierarchy["swing"], hierarchy["external"])

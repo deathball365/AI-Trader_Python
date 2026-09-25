@@ -290,8 +290,10 @@ class MarketStructureEngineTests(unittest.TestCase):
             "range_min_touches": 2, "range_min_inside_ratio": 0.55, "range_max_atr": 10,
             "break_confirm_bars": 2, "break_buffer_atr": 0.1,
         }
-        internal = _scope_pattern(rows, sorted(pivots, key=lambda item: item["index"]), 1.0, config, "up", "internal")
+        events = [{"type": "bos", "direction": "up", "confirmed_at": 520, "index": 520}]
+        internal = _scope_pattern(rows, sorted(pivots, key=lambda item: item["index"]), 1.0, config, "up", "internal", events)
         self.assertEqual(internal["pattern"], "range")
+        self.assertEqual(internal["segment"]["bars"], 80)
         self.assertIn(internal["phase"], {"forming", "mature"})
 
     def test_local_pattern_does_not_override_swing_bias(self):

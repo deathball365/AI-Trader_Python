@@ -15,7 +15,7 @@
         <div class="state-row"><span>Phase</span><strong>{{ patternPhaseLabel(item.pattern, item.pattern_phase || item.phase) }}</strong></div>
         <div class="state-row"><span>Event</span><v-chip size="x-small" :color="eventColor(item.event)" variant="tonal">{{ eventLabel(item.event) }}</v-chip></div>
         <p v-if="patternDetail(item.pattern_detail)">{{ patternDetail(item.pattern_detail) }}</p>
-        <small>{{ item.pivot_count || 0 }} 个 Pivot · {{ setupMappingLabel(item) }}</small>
+        <small>当前结构段 {{ item.segment?.bars || item.pattern_detail?.segment_bars || 0 }} 根 · {{ item.pivot_count || 0 }} 个 Pivot · {{ setupMappingLabel(item) }}</small>
         <small v-if="levelPrice(item.protected_high)">保护高点 {{ formatPlanPrice(levelPrice(item.protected_high)) }}</small>
         <small v-if="levelPrice(item.protected_low)">保护低点 {{ formatPlanPrice(levelPrice(item.protected_low)) }}</small>
       </article></div></v-card-text>
@@ -185,8 +185,8 @@ const eventColor=value=>{const event=typeof value==='string'?value:(value?.type|
 const patternDetail=value=>{
   if(typeof value==='string') return value
   if(!value||typeof value!=='object') return ''
-  const labels={pattern:'形态',status:'状态',high_touches:'上沿触碰',low_touches:'下沿触碰',inside_ratio:'内部收盘',width_atr:'宽度ATR'}
-  return ['pattern','status','high_touches','low_touches','inside_ratio','width_atr']
+  const labels={pattern:'形态',status:'状态',segment_bars:'结构段K线',high_touches:'上沿触碰',low_touches:'下沿触碰',inside_ratio:'内部收盘',width_atr:'宽度ATR'}
+  return ['pattern','status','segment_bars','high_touches','low_touches','inside_ratio','width_atr']
     .filter(key=>value[key]!==null&&value[key]!==undefined&&value[key]!=='')
     .slice(0,4)
     .map(key=>`${labels[key]} ${typeof value[key]==='number'?Number(value[key]).toFixed(2):value[key]}`)
