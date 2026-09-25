@@ -11,6 +11,7 @@ from ...models import SignalSource, TradingSignal
 from ...store import KlineStore
 from ...store.structure_plan_store import StructureTradePlanRepository
 from ..market_structure_engine_v2 import analyze_incremental as analyze
+from .structure_state import derive_structure_state
 from mysql_repositories import RuntimeStateRepository
 from .structure_plan.price_calculator import (
     calculate_next_target, protected_reference, exit_candidates,
@@ -774,6 +775,13 @@ class StructurePlanBuilder:
             "opportunity_family_id": family_id,
             "opportunity_cycle": cycle,
         }
+        payload["structure_state"] = derive_structure_state(
+            snapshot,
+            setup_type=setup_type,
+            direction=direction,
+            entry_mode=entry_mode,
+            event=evidence,
+        )
         setup_family = self._setup_family(setup_type)
         box = snapshot.get("range") or {}
         pattern_type = box.get("pattern") or snapshot.get("current_pattern") or ""
@@ -1088,6 +1096,7 @@ class StructurePlanBuilder:
             "structure_revision": structure.get("structure_revision") or "",
             "active_segment": structure.get("active_segment") or {},
         }
+        snapshot["structure_state"] = derive_structure_state(snapshot)
         pressure_plans = self._pressure_plans(
             source_id, symbol, period, rows, structure, snapshot, bar_time, seconds,
         )
