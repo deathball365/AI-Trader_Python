@@ -89,7 +89,33 @@
     <v-card v-if="bars.length" class="chart-card mb-4"><v-card-title>K线与结构段</v-card-title><v-card-text><div ref="chartRef" class="chart" style="height:480px;width:100%"></div><div class="structure-strip-title">结构时间轴（按 K 线数量）</div><div class="structure-strip"><div v-for="(item,index) in segments" :key="`strip-${item.id}`" class="structure-strip-segment" :style="stripStyle(item,index)" :title="`${labels[item.type]||item.type} · ${item.start} → ${item.end} · 强度 ${item.strength ?? item.confidence ?? 0}%`"><span>{{ labels[item.type]||item.type }}</span></div></div><div class="legend"><span v-for="type in ['up','sideways','triangle','down','transition']" :key="type"><i :style="{background:legendColors[type]}"></i>{{ labels[type] }}</span></div></v-card-text></v-card>
     <v-row v-if="structureResult">
       <v-col cols="12" md="4"><v-card class="summary"><v-card-text><small>主结构</small><h2>{{ primaryStructureLabel(structureResult.primary_structure) }}</h2><div class="stats flex-wrap"><span>Internal：{{ stateLabel(structureResult.structure_hierarchy?.internal?.bias) }} / {{ patternLabel(structureResult.structure_hierarchy?.internal?.pattern) }}</span><span>Swing：{{ stateLabel(structureResult.structure_hierarchy?.swing?.bias) }} / {{ patternLabel(structureResult.structure_hierarchy?.swing?.pattern) }}</span><span>External：{{ stateLabel(structureResult.structure_hierarchy?.external?.bias) }} / {{ patternLabel(structureResult.structure_hierarchy?.external?.pattern) }}</span><span>趋势健康度：{{ trendPhaseLabel(structureResult.trend_phase) }}</span><span>ATR {{ Number(structureResult.atr || 0).toFixed(2) }}</span></div><v-alert v-if="structureResult.trend_phase==='weakening'" type="warning" density="compact" variant="tonal" class="mt-3">趋势推进力度衰减或回撤加深，已暂停追涨/追跌趋势延续计划。</v-alert><v-alert v-if="structureResult.trend_phase==='failed'" type="error" density="compact" variant="tonal" class="mt-3">保护结构已被收盘突破，原趋势延续计划失效，等待反转确认。</v-alert><v-alert v-if="structureResult.active_candidate" type="warning" density="compact" variant="tonal" class="mt-3">正在等待{{ structureResult.active_candidate.direction === 'up' ? '向上' : '向下' }}反转确认；K线图以橙色虚线显示候选段</v-alert><v-alert v-if="structureResult.range?.status === 'failed_breakout'" type="info" density="compact" variant="tonal" class="mt-2">价格突破后重新收回区间，当前判定为假突破并恢复原区间</v-alert></v-card-text></v-card></v-col>
-      <v-col cols="12" md="8"><v-card class="summary"><v-card-title>结构事件</v-card-title><v-card-text><div class="event-list"><span v-for="(event,index) in recentEvents" :key="`event-${index}`" :class="event.direction==='up'?'event-up':'event-down'">{{ eventLabel(event) }} · {{ event.direction==='up'?'向上':'向下' }} · {{ event.level ? Number(event.level).toFixed(2) : '--' }} · {{ barStamp(event.index) }}</span><span v-if="!recentEvents.length" class="empty">暂无已确认结构事件</span></div></v-card-text></v-card></v-col>
+      <v-col cols="12" md="8"><v-card class="summary">
+        <v-card-title class="d-flex align-center justify-space-between flex-wrap ga-2">
+          <span>结构事件</span>
+          <div class="event-filters">
+            <v-chip size="x-small" :color="eventFilter==='all'?'primary':'default'" :variant="eventFilter==='all'?'tonal':'outlined'" @click="eventFilter='all'">全部</v-chip>
+            <v-chip size="x-small" :color="eventFilter==='structure'?'primary':'default'" :variant="eventFilter==='structure'?'tonal':'outlined'" @click="eventFilter='structure'">BOS / CHoCH</v-chip>
+            <v-chip size="x-small" :color="eventFilter==='sweep'?'primary':'default'" :variant="eventFilter==='sweep'?'tonal':'outlined'" @click="eventFilter='sweep'">扫单</v-chip>
+          </div>
+        </v-card-title>
+        <v-card-text>
+          <div v-if="groupedStructureEvents.length" class="event-stack">
+            <article v-for="item in groupedStructureEvents" :key="item.key" class="event-item" :class="item.direction==='up'?'event-up':'event-down'">
+              <div class="event-main">
+                <v-chip size="x-small" :color="eventColor(item.type)" variant="tonal">{{ eventLabel(item.type) }}</v-chip>
+                <strong>{{ item.direction==='up'?'向上':'向下' }}</strong>
+                <span>{{ formatEventLevel(item.level) }}</span>
+              </div>
+              <div class="event-meta">
+                <span>{{ barStamp(item.index) }}</span>
+                <span v-if="item.count>1">同价位 {{ item.count }} 次 · 最近 {{ barStamp(item.latestIndex) }}</span>
+                <span v-if="item.scope">{{ hierarchyScopeLabel(item.scope) }}</span>
+              </div>
+            </article>
+          </div>
+          <div v-else class="empty">当前筛选下没有结构事件</div>
+        </v-card-text>
+      </v-card></v-col>
     </v-row>
     <v-row v-if="current">
       <v-col cols="12" md="4"><v-card class="summary"><v-card-text><small>当前结构</small><h2>{{ labels[current.type] || current.type }}</h2><v-chip :color="colors[current.type] || 'grey'" variant="tonal">{{ current.status }}</v-chip><p>{{ current.reason }}</p><div class="stats"><span>持续 {{ current.bars }} 根K线</span><span>结构强度 {{ current.strength ?? current.confidence }}%</span><span v-if="current.evidence">方向一致率 {{ Math.round((current.evidence.direction_ratio || 0) * 100) }}%</span><span v-if="current.evidence">方向效率 {{ Math.round((current.evidence.direction_efficiency || 0) * 100) }}%</span></div></v-card-text></v-card></v-col>
@@ -152,7 +178,41 @@ const stripStyle=()=>({display:'none'})
 const stateLabel=value=>({up:'上涨趋势',down:'下跌趋势',bullish:'上涨趋势',bearish:'下跌趋势',range:'箱体/三角形',undetermined:'尚未确认'}[value]||'结构过渡')
 const trendPhaseLabel=value=>({strong:'强势',mature:'成熟',weakening:'衰竭预警',failed:'趋势失败',undetermined:'尚未确认'}[value]||'未评估')
 const barStamp=index=>bars.value[index]?stamp(bars.value[index]):''
-const recentEvents=computed(()=>Array.isArray(structureResult.value?.events)?structureResult.value.events.slice(-10).reverse():[])
+const eventFilter=ref('all')
+const hierarchyScopeLabel=value=>({internal:'Internal',small:'Internal',swing:'Swing',medium:'Swing',major:'Swing',external:'External',large:'External'}[value]||'')
+const formatEventLevel=value=>{const number=Number(value);if(!Number.isFinite(number)||number<=0)return '--';const decimals=number<10?5:number<1000?3:2;return number.toLocaleString('zh-CN',{minimumFractionDigits:decimals,maximumFractionDigits:decimals})}
+const groupedStructureEvents=computed(()=>{
+  const rows=Array.isArray(structureResult.value?.events)?[...structureResult.value.events].reverse():[]
+  const wanted=eventFilter.value
+  const filtered=rows.filter(event=>{
+    const type=String(event?.type||'')
+    if(wanted==='structure') return type==='bos'||type==='choch'
+    if(wanted==='sweep') return type==='liquidity_sweep'
+    return Boolean(type)
+  })
+  const grouped=[]
+  for(const event of filtered){
+    const type=String(event.type||'')
+    const direction=String(event.direction||'')
+    const level=Number(event.level||0)
+    const scope=String(event.scope||'')
+    const rounded=Number.isFinite(level)?level.toFixed(2):''
+    const last=grouped.at(-1)
+    const sameSweep=type==='liquidity_sweep' && last && last.type==='liquidity_sweep' && last.direction===direction && last.rounded===rounded && last.scope===scope
+    if(sameSweep){
+      last.count += 1
+      last.latestIndex = event.index
+      continue
+    }
+    grouped.push({
+      key:`${type}-${direction}-${event.index}-${grouped.length}`,
+      type, direction, level, scope, rounded,
+      index: event.index, latestIndex: event.index, count: 1,
+    })
+    if(grouped.length>=8) break
+  }
+  return grouped
+})
 function renderChartUnsafe(){
   if(!chartRef.value||!bars.value.length)return
   if(chart)chart.dispose(); chart=echarts.init(chartRef.value)
@@ -220,4 +280,14 @@ watch(period,()=>{if(symbol.value){load();loadTradePlans()}});watch(symbol,()=>{
 .review-summary{margin:14px 0;color:#29483f;font-size:1rem}.review-metrics{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}.review-metrics span{padding:6px 10px;border-radius:8px;background:#edf5f1;color:#42665a;font-size:.8rem}
 .review-card h3{margin:15px 0 8px;color:#315f50;font-size:.95rem}.review-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.review-list article{padding:12px;border:1px solid #e0ebe5;border-radius:10px;background:#fff}.review-list article strong{margin-left:6px;color:#315f50}.review-list p{margin:7px 0;color:#526860}.review-list small{color:#71837b}.review-history{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:16px;padding-top:12px;border-top:1px dashed #d7e3dd;color:#71837b;font-size:.8rem}
 @media(max-width:850px){.review-list{grid-template-columns:1fr}}
+</style>
+
+<style scoped>
+.event-filters{display:flex;gap:6px;flex-wrap:wrap}
+.event-stack{display:flex;flex-direction:column;gap:8px}
+.event-item{padding:10px 12px;border:1px solid #dbe8e1;border-radius:10px;background:#fbfdfb}
+.event-item.event-up{border-left:4px solid #2d9871}
+.event-item.event-down{border-left:4px solid #d45b52}
+.event-main{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:#29483f}
+.event-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;color:#71837b;font-size:.78rem}
 </style>
