@@ -94,7 +94,10 @@
         <v-card-title class="d-flex align-center justify-space-between flex-wrap ga-2">
           <span>结构事件</span>
           <div class="event-filters">
-            <v-chip size="x-small" :color="eventFilter==='all'?'primary':'default'" :variant="eventFilter==='all'?'tonal':'outlined'" @click="eventFilter='all'">全部</v-chip>
+            <v-chip size="x-small" :color="eventScope==='swing'?'primary':'default'" :variant="eventScope==='swing'?'tonal':'outlined'" @click="eventScope='swing'">Swing</v-chip>
+            <v-chip size="x-small" :color="eventScope==='internal'?'primary':'default'" :variant="eventScope==='internal'?'tonal':'outlined'" @click="eventScope='internal'">Internal</v-chip>
+            <v-chip size="x-small" :color="eventScope==='external'?'primary':'default'" :variant="eventScope==='external'?'tonal':'outlined'" @click="eventScope='external'">External</v-chip>
+            <v-chip size="x-small" :color="eventFilter==='all'?'primary':'default'" :variant="eventFilter==='all'?'tonal':'outlined'" @click="eventFilter='all'">全部类型</v-chip>
             <v-chip size="x-small" :color="eventFilter==='structure'?'primary':'default'" :variant="eventFilter==='structure'?'tonal':'outlined'" @click="eventFilter='structure'">BOS / CHoCH</v-chip>
             <v-chip size="x-small" :color="eventFilter==='sweep'?'primary':'default'" :variant="eventFilter==='sweep'?'tonal':'outlined'" @click="eventFilter='sweep'">扫单</v-chip>
           </div>
@@ -204,11 +207,24 @@ const stripStyle=()=>({display:'none'})
 const stateLabel=value=>({up:'上涨趋势',down:'下跌趋势',bullish:'上涨趋势',bearish:'下跌趋势',range:'箱体/三角形',undetermined:'尚未确认'}[value]||'结构过渡')
 const trendPhaseLabel=value=>({strong:'强势',mature:'成熟',weakening:'衰竭预警',failed:'趋势失败',undetermined:'尚未确认'}[value]||'未评估')
 const barStamp=index=>bars.value[index]?stamp(bars.value[index]):''
-const eventFilter=ref('all')
+const eventFilter=ref('structure')
+const eventScope=ref('swing')
 const hierarchyScopeLabel=value=>({internal:'Internal',small:'Internal',swing:'Swing',medium:'Swing',major:'Swing',external:'External',large:'External'}[value]||'')
+const normalizeEventScope=value=>{
+  const scope=String(value||'').toLowerCase()
+  if(['internal','small'].includes(scope)) return 'internal'
+  if(['external','large'].includes(scope)) return 'external'
+  return 'swing'
+}
 const formatEventLevel=value=>{const number=Number(value);if(!Number.isFinite(number)||number<=0)return '--';const decimals=number<10?5:number<1000?3:2;return number.toLocaleString('zh-CN',{minimumFractionDigits:decimals,maximumFractionDigits:decimals})}
 const groupedStructureEvents=computed(()=>{
-  const rows=Array.isArray(structureResult.value?.events)?[...structureResult.value.events].reverse():[]
+  const source=structureResult.value||{}
+  const byScope={
+    internal: Array.isArray(source.internal_events)?source.internal_events:[],
+    swing: Array.isArray(source.major_events)?source.major_events:[],
+    external: Array.isArray(source.external_events)?source.external_events:[],
+  }
+  const rows=[...byScope[eventScope.value]||[]].reverse()
   const wanted=eventFilter.value
   const filtered=rows.filter(event=>{
     const type=String(event?.type||'')
@@ -232,7 +248,7 @@ const groupedStructureEvents=computed(()=>{
     }
     grouped.push({
       key:`${type}-${direction}-${event.index}-${grouped.length}`,
-      type, direction, level, scope, rounded,
+      type, direction, level, scope: scope || eventScope.value, rounded,
       index: event.index, latestIndex: event.index, count: 1,
     })
     if(grouped.length>=8) break
