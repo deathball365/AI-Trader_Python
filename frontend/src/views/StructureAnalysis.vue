@@ -21,10 +21,10 @@
               <v-card class="summary">
                 <v-card-title class="d-flex align-center justify-space-between flex-wrap ga-2">
                   <span>{{ hierarchyLabels[layer] }}</span>
-                  <v-chip size="small" :color="patternColor(layerState(layer).pattern)" variant="tonal">{{ patternLabel(layerState(layer).pattern) }}</v-chip>
+                  <v-chip size="small" :color="patternColor(layerState(layer).pattern, layerState(layer).bias)" variant="tonal">{{ patternLabel(layerState(layer).pattern, layerState(layer).bias) }}</v-chip>
                 </v-card-title>
                 <v-card-text>
-                  <div class="state-row"><span>Pattern</span><strong>{{ patternLabel(layerState(layer).pattern) }}</strong></div>
+                  <div class="state-row"><span>Pattern</span><strong>{{ patternLabel(layerState(layer).pattern, layerState(layer).bias) }}</strong></div>
                   <div class="state-row"><span>Phase</span><strong>{{ patternPhaseLabel(layerState(layer).pattern, layerState(layer).pattern_phase || layerState(layer).phase) }}</strong></div>
                   <div class="state-row"><span>Event</span><v-chip size="x-small" :color="eventColor(layerState(layer).event)" variant="tonal">{{ eventLabel(layerState(layer).event) }}</v-chip></div>
                   <p v-if="patternDetail(layerState(layer).pattern_detail)">{{ patternDetail(layerState(layer).pattern_detail) }}</p>
@@ -170,8 +170,21 @@ const gateColor=value=>value==='eligible'?'success':(['snapshot_missing','claim_
 const hierarchyLabels={internal:'Internal 内部结构',swing:'Swing 主结构',external:'External 外部结构'}
 const primaryStructureLabel=value=>({trend_up:'上涨趋势',trend_down:'下跌趋势',range:'箱体背景',transition:'结构过渡'}[value]||'结构过渡')
 const primaryColor=value=>value==='trend_up'?'success':value==='trend_down'?'error':value==='range'?'info':'warning'
-const patternLabel=value=>({range:'箱体震荡',trend:'趋势整理',triangle:'三角形',converging_triangle:'收敛三角形',diverging_triangle:'扩散三角形',ascending_triangle:'上升三角形',descending_triangle:'下降三角形',trendline:'趋势线',none:'未形成'}[value]||value||'未识别')
-const patternColor=value=>value==='range'||String(value||'').includes('triangle')?'info':value==='trend'?'secondary':'grey'
+const patternLabel=(value,bias)=>{
+  const pattern=String(value||'')
+  if(pattern==='trend'){
+    if(bias==='up') return '上涨趋势'
+    if(bias==='down') return '下跌趋势'
+    return '趋势'
+  }
+  return {range:'箱体震荡',triangle:'三角形',converging_triangle:'收敛三角形',diverging_triangle:'扩散三角形',ascending_triangle:'上升三角形',descending_triangle:'下降三角形',trendline:'趋势线',none:'未形成'}[pattern]||pattern||'未识别'
+}
+const patternColor=(value,bias)=>{
+  const pattern=String(value||'')
+  if(pattern==='range'||pattern.includes('triangle')) return 'info'
+  if(pattern==='trend') return bias==='down'?'error':bias==='up'?'success':'secondary'
+  return 'grey'
+}
 const patternPhaseLabel=(pattern,value)=>{
   const phase=String(value||'')
   if(String(pattern||'').includes('triangle') || pattern==='range'){
