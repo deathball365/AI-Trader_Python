@@ -15,41 +15,42 @@
 
     <v-window v-model="activeLayer">
       <v-window-item v-for="layer in layerKeys" :key="layer" :value="layer">
-        <v-card class="summary mb-4">
-          <v-card-title class="d-flex align-center justify-space-between flex-wrap ga-2">
-            <span>{{ hierarchyLabels[layer] }}</span>
-            <v-chip size="small" :color="patternColor(layerState(layer).pattern)" variant="tonal">{{ patternLabel(layerState(layer).pattern) }}</v-chip>
-          </v-card-title>
-          <v-card-text>
-            <div class="state-row"><span>Pattern</span><strong>{{ patternLabel(layerState(layer).pattern) }}</strong></div>
-            <div class="state-row"><span>Phase</span><strong>{{ patternPhaseLabel(layerState(layer).pattern, layerState(layer).pattern_phase || layerState(layer).phase) }}</strong></div>
-            <div class="state-row"><span>Event</span><v-chip size="x-small" :color="eventColor(layerState(layer).event)" variant="tonal">{{ eventLabel(layerState(layer).event) }}</v-chip></div>
-            <p v-if="patternDetail(layerState(layer).pattern_detail)">{{ patternDetail(layerState(layer).pattern_detail) }}</p>
-            <div class="stats flex-wrap">
-              <span>当前结构段 {{ layerState(layer).segment?.bars || layerState(layer).pattern_detail?.segment_bars || 0 }} 根</span>
-              <span>{{ layerState(layer).pivot_count || 0 }} 个 Pivot</span>
-              <span>{{ setupMappingLabel(layerState(layer)) }}</span>
-              <span v-if="levelPrice(layerState(layer).protected_high)">保护高点 {{ formatPlanPrice(levelPrice(layerState(layer).protected_high)) }}</span>
-              <span v-if="levelPrice(layerState(layer).protected_low)">保护低点 {{ formatPlanPrice(levelPrice(layerState(layer).protected_low)) }}</span>
-            </div>
-          </v-card-text>
-        </v-card>
-
-        <v-row class="mb-4">
+        <v-row class="mb-4 align-stretch">
           <v-col cols="12" md="7">
-            <v-card class="plan-card h-100">
-              <v-card-title>{{ hierarchyLabels[layer] }} · 交易计划</v-card-title>
-              <v-card-text>
-                <div v-if="layerPlans(layer).length" class="plan-grid compact-plans">
-                  <article v-for="plan in layerPlans(layer)" :key="plan.plan_id">
-                    <div class="card-head"><v-chip size="x-small" :color="plan.direction==='buy'?'success':plan.direction==='sell'?'error':'info'" variant="tonal">{{ plan.direction==='buy'?'买入':plan.direction==='sell'?'卖出':'观察' }}</v-chip><strong>{{ plan.setup_type }}</strong><span>{{ plan.status==='event_suppressed'?'暂停触发':(plan.status==='active'?'等待价格':'等待确认') }}</span></div>
-                    <div class="plan-values"><span>入场 {{ formatPlanPrice(plan.entry_price) }}</span><span>止损 {{ formatPlanPrice(plan.stop_loss) }}</span><span>止盈 {{ formatPlanPrice(plan.take_profit) }}</span></div>
-                    <p>{{ plan.reason || '结构条件尚未满足' }}</p>
-                  </article>
-                </div>
-                <div v-else class="empty">当前层级没有交易计划</div>
-              </v-card-text>
-            </v-card>
+            <div class="stacked-panels">
+              <v-card class="summary">
+                <v-card-title class="d-flex align-center justify-space-between flex-wrap ga-2">
+                  <span>{{ hierarchyLabels[layer] }}</span>
+                  <v-chip size="small" :color="patternColor(layerState(layer).pattern)" variant="tonal">{{ patternLabel(layerState(layer).pattern) }}</v-chip>
+                </v-card-title>
+                <v-card-text>
+                  <div class="state-row"><span>Pattern</span><strong>{{ patternLabel(layerState(layer).pattern) }}</strong></div>
+                  <div class="state-row"><span>Phase</span><strong>{{ patternPhaseLabel(layerState(layer).pattern, layerState(layer).pattern_phase || layerState(layer).phase) }}</strong></div>
+                  <div class="state-row"><span>Event</span><v-chip size="x-small" :color="eventColor(layerState(layer).event)" variant="tonal">{{ eventLabel(layerState(layer).event) }}</v-chip></div>
+                  <p v-if="patternDetail(layerState(layer).pattern_detail)">{{ patternDetail(layerState(layer).pattern_detail) }}</p>
+                  <div class="stats flex-wrap">
+                    <span>当前结构段 {{ layerState(layer).segment?.bars || layerState(layer).pattern_detail?.segment_bars || 0 }} 根</span>
+                    <span>{{ layerState(layer).pivot_count || 0 }} 个 Pivot</span>
+                    <span>{{ setupMappingLabel(layerState(layer)) }}</span>
+                    <span v-if="levelPrice(layerState(layer).protected_high)">保护高点 {{ formatPlanPrice(levelPrice(layerState(layer).protected_high)) }}</span>
+                    <span v-if="levelPrice(layerState(layer).protected_low)">保护低点 {{ formatPlanPrice(levelPrice(layerState(layer).protected_low)) }}</span>
+                  </div>
+                </v-card-text>
+              </v-card>
+              <v-card class="plan-card">
+                <v-card-title>{{ hierarchyLabels[layer] }} · 交易计划</v-card-title>
+                <v-card-text>
+                  <div v-if="layerPlans(layer).length" class="plan-grid compact-plans">
+                    <article v-for="plan in layerPlans(layer)" :key="plan.plan_id">
+                      <div class="card-head"><v-chip size="x-small" :color="plan.direction==='buy'?'success':plan.direction==='sell'?'error':'info'" variant="tonal">{{ plan.direction==='buy'?'买入':plan.direction==='sell'?'卖出':'观察' }}</v-chip><strong>{{ plan.setup_type }}</strong><span>{{ plan.status==='event_suppressed'?'暂停触发':(plan.status==='active'?'等待价格':'等待确认') }}</span></div>
+                      <div class="plan-values"><span>入场 {{ formatPlanPrice(plan.entry_price) }}</span><span>止损 {{ formatPlanPrice(plan.stop_loss) }}</span><span>止盈 {{ formatPlanPrice(plan.take_profit) }}</span></div>
+                      <p>{{ plan.reason || '结构条件尚未满足' }}</p>
+                    </article>
+                  </div>
+                  <div v-else class="empty">当前层级没有交易计划</div>
+                </v-card-text>
+              </v-card>
+            </div>
           </v-col>
           <v-col cols="12" md="5">
             <v-card class="summary h-100">
@@ -62,7 +63,7 @@
                 </div>
               </v-card-title>
               <v-card-text>
-                <div v-if="layerEvents(layer).length" class="event-stack compact-events">
+                <div v-if="layerEvents(layer).length" class="event-stack compact-events tall-events">
                   <article v-for="item in layerEvents(layer)" :key="item.key" class="event-item" :class="item.direction==='up'?'event-up':'event-down'">
                     <div class="event-main">
                       <v-chip size="x-small" :color="eventColor(item.type)" variant="tonal">{{ eventLabel(item.type) }}</v-chip>
@@ -339,7 +340,10 @@ watch(period,()=>{if(symbol.value){load();loadTradePlans()}});watch(symbol,()=>{
 <style scoped>
 .event-filters{display:flex;gap:6px;flex-wrap:wrap}
 .event-stack{display:flex;flex-direction:column;gap:8px}
+.stacked-panels{display:flex;flex-direction:column;gap:12px}
 .compact-events{gap:4px;max-height:260px;overflow:auto}
+.tall-events{max-height:420px}
+
 .event-item{padding:10px 12px;border:1px solid #dbe8e1;border-radius:10px;background:#fbfdfb}
 .compact-events .event-item{padding:6px 8px;border-radius:8px}
 .event-item.event-up{border-left:4px solid #2d9871}
