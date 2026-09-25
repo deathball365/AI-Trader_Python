@@ -28,6 +28,7 @@ from ..market_event_risk_service import active_event
 
 PERIOD_SECONDS = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600, "H4": 14400}
 MARKET_STRUCTURE_PLAN_SOURCE_ID = "market-structure"
+LEGACY_NON_EXECUTION_SETUPS = {"pressure_reversal", "pressure_zone_breakout"}
 
 # Public, market-layer defaults.  These parameters describe how a structure
 # becomes a trade plan; they intentionally do not belong to a deployment.
@@ -2159,6 +2160,13 @@ class StructurePlanSignalGenerator:
             self.user_id, 0, "",
             source_id, symbol, period,
         )
+        # Historical density plans remain in the database for auditability,
+        # but density is no longer an execution setup. Do not let legacy
+        # rows reach tick triggering or account-level risk filters.
+        plans = [
+            plan for plan in plans
+            if str(plan.get("setup_type") or "") not in LEGACY_NON_EXECUTION_SETUPS
+        ]
         self._cache[key] = plans
         return plans
 
