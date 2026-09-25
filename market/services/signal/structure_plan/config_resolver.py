@@ -1,153 +1,126 @@
-"""Resolve market-layer structure-plan configuration."""
+"""Resolve the four-layer market-structure configuration model."""
 from __future__ import annotations
 
 import json
-from typing import Callable, Dict
+from typing import Any, Callable, Dict, Iterable
+
+_GROUPS = {"structure", "hierarchy", "structure_hierarchy", "primary_structure_rules",
+           "pattern_rules", "event_rules", "execution", "plan", "runtime"}
 
 
-def resolve(
-    symbol: str,
-    period: str,
-    setup_type: str,
-    defaults: Dict,
-    repository_factory: Callable[[], object],
-) -> Dict:
-    """Apply defaults, symbol/period overrides, then setup override.
+def decode(row: Dict | None) -> Dict:
+    if not row:
+        return {}
+    value = row.get("config_json")
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+    return value if isinstance(value, dict) else {}
 
-    Storage is injected to keep this resolver deterministic in tests and free
-    of a hard dependency on the runtime repository implementation.
+
+def _leaves(layer: Any) -> Iterable[tuple[str, Any]]:
+    if not isinstance(layer, dict):
+        return
+    for key, value in layer.items():
+        if key == "setup_defaults":
+            yield key, value
+        elif isinstance(value, dict):
+            yield from _leaves(value)
+        else:
+            yield key, value
+
+
+def _runtime_values(layer: Dict, allowed: set[str]) -> Dict:
+    return {key: value for key, value in _leaves(layer) if key in allowed}
+
+
+def _merge(target: Dict, layer: Dict, allowed: set[str], *, inherit_empty_lists=False) -> None:
+    for key, value in _runtime_values(layer, allowed).items():
+        if (inherit_empty_lists and key in {"allowed_directions", "blocked_hours", "blocked_setups"}
+                and isinstance(value, list) and not value):
+            continue
+        target[key] = value
+
+
+def _setup_defaults(base: Dict, setup: str) -> Dict:
+    values = base.get("setup_defaults")
+    if not isinstance(values, dict):
+        return {}
+    item = values.get(setup)
+    return item if isinstance(item, dict) else {}
+
+
+def _rows(storage, table: str, symbol: str, period: str, setup: str = ""):
+    if table == "structure_symbol_period_configs":
+        return storage.fetchall(
+            "SELECT period, config_json FROM structure_symbol_period_configs "
+            "WHERE user_id=0 AND symbol=? AND period IN (?, '*') AND status='active'",
+            (symbol, period),
+        )
+    return storage.fetchall(
+        "SELECT period, config_json FROM structure_setup_configs "
+        "WHERE user_id=0 AND symbol=? AND period IN (?, '*') AND setup_type=? AND status='active'",
+        (symbol, period, setup),
+    )
+
+
+def resolve(symbol: str, period: str, setup_type: str, defaults: Dict,
+            repository_factory: Callable[[], object] | None = None) -> Dict:
+    """Resolve public structure, symbol-period, public SETUP and SETUP layers.
+
+    ``repository_factory`` is retained for caller compatibility, but legacy
+    runtime-state configuration is deliberately no longer consulted.
     """
     config = dict(defaults)
+    allowed = set(defaults)
+    wanted_symbol = str(symbol or "").strip().upper()
+    wanted_period = str(period or "").strip().upper()
+    wanted_setup = str(setup_type or "").strip().lower()
     try:
-        # Normalized MySQL configuration is authoritative.  Keep the legacy
-        # runtime entity as a fallback for old installations/tests.
-        normalized = None
-        try:
-            from mysql_repositories import get_storage
-            storage = get_storage()
-            wanted_symbol = str(symbol or "").upper()
-            wanted_period = str(period or "").upper()
-            wanted_setup = str(setup_type or "").strip().lower()
-            default_row = storage.fetchone(
-                "SELECT config_json FROM structure_default_configs WHERE user_id=0 AND status='active'"
-            )
-            symbol_rows = storage.fetchall(
-                "SELECT period, config_json FROM structure_symbol_period_configs WHERE user_id=0 AND symbol=? AND period IN (?, '*') AND status='active'",
+        from mysql_repositories import get_storage
+        storage = get_storage()
+        default_row = storage.fetchone(
+            "SELECT config_json FROM structure_default_configs WHERE user_id=0 AND status='active'"
+        )
+        symbol_rows = _rows(storage, "structure_symbol_period_configs", wanted_symbol, wanted_period)
+        setup_rows = (_rows(storage, "structure_setup_configs", wanted_symbol, wanted_period, wanted_setup)
+                      if wanted_setup and wanted_setup != "__builder__" else [])
+        base = decode(default_row)
+        symbol_default_row = next((row for row in symbol_rows if str(row.get("period") or "") == "*"), None)
+        symbol_row = next((row for row in symbol_rows if str(row.get("period") or "").upper() == wanted_period), None)
+        setup_symbol_row = next((row for row in setup_rows if str(row.get("period") or "") == "*"), None)
+        setup_row = next((row for row in setup_rows if str(row.get("period") or "").upper() == wanted_period), None)
+        symbol_default, profile = decode(symbol_default_row), decode(symbol_row)
+        setup_symbol_profile, setup_profile = decode(setup_symbol_row), decode(setup_row)
+        _merge(config, base, allowed)
+        if wanted_setup and wanted_setup != "__builder__":
+            _merge(config, _setup_defaults(base, wanted_setup), allowed, inherit_empty_lists=True)
+        _merge(config, symbol_default, allowed, inherit_empty_lists=True)
+        if wanted_setup and wanted_setup != "__builder__":
+            _merge(config, setup_symbol_profile, allowed, inherit_empty_lists=True)
+        _merge(config, profile, allowed, inherit_empty_lists=True)
+        _merge(config, setup_profile, allowed, inherit_empty_lists=True)
+        config["_structure_layers"] = {
+            "default": base,
+            "symbol_period": symbol_default | profile,
+            "setup_default": _setup_defaults(base, wanted_setup),
+            "setup": setup_symbol_profile | setup_profile,
+        }
+        if setup_type == "__builder__":
+            rows = storage.fetchall(
+                "SELECT setup_type, period, config_json FROM structure_setup_configs "
+                "WHERE user_id=0 AND symbol=? AND period IN ('*',?) AND status='active' ORDER BY period DESC",
                 (wanted_symbol, wanted_period),
             )
-            symbol_row = next((row for row in symbol_rows if str(row.get("period") or "").upper() == wanted_period), None)
-            symbol_default_row = next((row for row in symbol_rows if str(row.get("period") or "") == "*"), None)
-            setup_row = None
-            setup_symbol_row = None
-            if wanted_setup and wanted_setup != "__builder__":
-                setup_rows = storage.fetchall(
-                    "SELECT period, config_json FROM structure_setup_configs WHERE user_id=0 AND symbol=? AND period IN (?, '*') AND setup_type=? AND status='active'",
-                    (wanted_symbol, wanted_period, wanted_setup),
-                )
-                setup_row = next((row for row in setup_rows if str(row.get("period") or "").upper() == wanted_period), None)
-                setup_symbol_row = next((row for row in setup_rows if str(row.get("period") or "") == "*"), None)
-            def decode(row):
-                if not row:
-                    return {}
-                value = row.get("config_json")
-                if isinstance(value, str):
-                    try:
-                        value = json.loads(value)
-                    except (TypeError, ValueError):
-                        return {}
-                return value if isinstance(value, dict) else {}
-            if default_row or symbol_default_row or symbol_row or setup_symbol_row or setup_row:
-                normalized = (decode(default_row), decode(symbol_default_row), decode(symbol_row), decode(setup_symbol_row), decode(setup_row))
-        except Exception as exc:
-            print(f"[StructurePlan] 规范化配置读取失败，回退旧配置: {exc}")
-        if normalized is not None:
-            base, symbol_default, profile, setup_symbol_profile, setup_profile = normalized
-            allowed = set(defaults)
-            setup_defaults = base.get("setup_defaults") if isinstance(base.get("setup_defaults"), dict) else {}
-            list_inherit = {"allowed_setups", "allowed_directions", "blocked_hours"}
-            def merge_layer(target, layer, inherit_empty_lists=False):
-                for key, value in layer.items():
-                    if key not in allowed:
-                        continue
-                    if inherit_empty_lists and key in list_inherit and isinstance(value, list) and not value:
-                        continue
-                    target[key] = value
-            # setup_defaults is a nested public layer, not an engine option.
-            # Apply it between public structure defaults and symbol/period.
-            merge_layer(config, base)
-            if wanted_setup and wanted_setup != "__builder__":
-                merge_layer(config, setup_defaults.get(wanted_setup, {}), inherit_empty_lists=True)
-            merge_layer(config, symbol_default, inherit_empty_lists=True)
-            if wanted_setup and wanted_setup != "__builder__":
-                merge_layer(config, setup_symbol_profile, inherit_empty_lists=True)
-            merge_layer(config, profile, inherit_empty_lists=True)
-            merge_layer(config, setup_profile, inherit_empty_lists=True)
-            # A scalar supplied by a symbol/period (or its setup) is an
-            # explicit override.  The public default remains only a fallback;
-            # the zone engine uses its hidden per-period runtime default when
-            # this marker is absent.
-            config["_zone_lookback_override"] = (
-                "zone_lookback_bars" in symbol_default or "zone_lookback_bars" in profile or "zone_lookback_bars" in setup_symbol_profile or "zone_lookback_bars" in setup_profile
-            )
-            config["_zone_min_consecutive_override"] = (
-                "zone_min_consecutive_bars" in symbol_default or "zone_min_consecutive_bars" in profile or "zone_min_consecutive_bars" in setup_symbol_profile or "zone_min_consecutive_bars" in setup_profile
-            )
-            if setup_type == "__builder__":
-                try:
-                    rows = get_storage().fetchall(
-                        "SELECT setup_type, period, config_json FROM structure_setup_configs WHERE user_id=0 AND symbol=? AND period IN ('*',?) AND status='active' ORDER BY period DESC",
-                        (str(symbol or '').upper(), str(period or '').upper()),
-                    )
-                    config["_setup_profiles"] = [
-                        {"symbol": str(symbol or '').upper(), "period": str(row.get("period") or period).upper(),
-                         "setup_type": str(row.get("setup_type") or "").lower(), **(
-                             json.loads(row.get("config_json")) if isinstance(row.get("config_json"), str) else (row.get("config_json") or {})
-                         )} for row in rows
-                    ]
-                except Exception:
-                    config["_setup_profiles"] = []
-            return config
-
-        stored_items = repository_factory().list_entities("market_structure_config")
-        stored = stored_items[-1] if stored_items else {}
-        allowed = set(defaults)
-        if not isinstance(stored, dict):
-            stored = {}
-        list_inherit = {"allowed_setups", "allowed_directions", "blocked_hours"}
-        def merge_layer(target, layer, inherit_empty_lists=False):
-            for key, value in layer.items():
-                if key not in allowed:
-                    continue
-                if inherit_empty_lists and key in list_inherit and isinstance(value, list) and not value:
-                    continue
-                target[key] = value
-        merge_layer(config, stored)
-        setup_defaults = stored.get("setup_defaults") if isinstance(stored.get("setup_defaults"), dict) else {}
-        wanted_symbol = str(symbol or "").upper()
-        wanted_period = str(period or "").upper()
-        profiles = stored.get("profiles") or []
-        for profile in profiles:
-            if (str(profile.get("symbol") or "").upper() == wanted_symbol
-                    and str(profile.get("period") or "").upper() == wanted_period):
-                merge_layer(config, profile, inherit_empty_lists=True)
-                config["_zone_lookback_override"] = "zone_lookback_bars" in profile
-                config["_zone_min_consecutive_override"] = "zone_min_consecutive_bars" in profile
-                break
-        matching = [
-            profile for profile in (stored.get("setup_profiles") or [])
-            if (str(profile.get("symbol") or "").upper() == wanted_symbol
-                and str(profile.get("period") or "").upper() == wanted_period)
-        ]
-        wanted_setup = str(setup_type or "").strip().lower()
-        if wanted_setup and wanted_setup != "__builder__":
-            merge_layer(config, setup_defaults.get(wanted_setup, {}), inherit_empty_lists=True)
-        if wanted_setup:
-            for profile in matching:
-                if str(profile.get("setup_type") or "").strip().lower() == wanted_setup:
-                    merge_layer(config, profile, inherit_empty_lists=True)
-                    break
-        if setup_type == "__builder__":
-            config["_setup_profiles"] = matching
+            config["_setup_profiles"] = [
+                {"symbol": wanted_symbol, "period": str(row.get("period") or wanted_period).upper(),
+                 "setup_type": str(row.get("setup_type") or "").lower(), **decode(row)}
+                for row in rows
+            ]
     except Exception as exc:
-        print(f"[StructurePlan] 公共计划配置读取失败，使用默认值: {exc}")
+        print(f"[StructurePlan] 结构配置读取失败，使用公共默认值: {exc}")
+        if setup_type == "__builder__":
+            config["_setup_profiles"] = []
     return config

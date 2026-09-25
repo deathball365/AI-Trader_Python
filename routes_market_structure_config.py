@@ -9,7 +9,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends
 
 from auth import AuthUser, require_admin
-from mysql_repositories import RuntimeStateRepository, get_storage
+from mysql_repositories import get_storage
 from llm_governance import AI_SIGNAL_ANALYSIS, STRUCTURE_ANALYSIS
 
 
@@ -27,57 +27,36 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         "max_event_age_bars", "trend_max_event_age_bars_m1",
         "trend_max_event_age_bars_other", "trend_min_retest_bars",
         "trend_continuation_hold_bars",
-        "pressure_plan_valid_bars", "pressure_min_event_confidence",
-        "zone_lookback_bars", "zone_min_visits", "zone_min_consecutive_bars", "zone_consecutive_gap_bars", "zone_identity_max_gap_bars", "zone_target_count",
-        "pressure_min_rejections", "pivot_zone_min_points", "pivot_zone_target_count",
         "confirmation_bars", "max_plan_lifetime_bars",
         "max_entries_per_opportunity", "cooldown_minutes",
         "false_breakout_confirmation_bars",
     }
     list_keys = {"allowed_setups", "blocked_setups", "allowed_directions", "blocked_hours"}
     bool_keys = {
-        "enabled", "require_reclaim", "enable_zone_pressure",
-        "zone_pressure_enabled", "pivot_zone_enabled", "require_retest",
+        "enabled", "require_reclaim", "require_retest",
         "invalidate_on_zone_return",
         "false_breakout_require_reclaim_close",
     }
     string_keys = {"entry_mode"}
     inherit_empty_list_keys = {"allowed_setups", "blocked_setups", "allowed_directions", "blocked_hours"}
 
-    ratio_keys = {"zone_min_close_ratio", "pressure_reclaim_ratio", "pressure_min_efficiency"}
+    ratio_keys = set()
     nonnegative_integer_keys = {"cooldown_minutes"}
+    grouped_keys = {"structure", "hierarchy", "structure_hierarchy", "primary_structure_rules",
+                    "pattern_rules", "event_rules", "execution", "plan", "runtime"}
 
-    def migrate_legacy_config(storage, stored):
-        """Materialize the legacy JSON config into normalized MySQL tables."""
-        if not isinstance(stored, dict):
-            return
-        now = int(time.time())
-        base = {k: v for k, v in stored.items() if k in allowed or k == setup_default_key}
-        if isinstance(stored.get(setup_default_key), dict):
-            base[setup_default_key] = stored[setup_default_key]
-        storage.execute(
-            "INSERT INTO structure_default_configs(user_id,version,config_json,updated_at) VALUES(0,1,?,?) "
-            "ON DUPLICATE KEY UPDATE config_json=config_json",
-            (json.dumps(base, ensure_ascii=False), now),
-        )
-        for item in stored.get("profiles") or []:
-            if not isinstance(item, dict) or not item.get("symbol") or not item.get("period"):
-                continue
-            cfg = {k: v for k, v in item.items() if k not in {"symbol", "period", "setup_profiles", "profiles"}}
-            storage.execute(
-                "INSERT INTO structure_symbol_period_configs(user_id,symbol,period,config_json,updated_at) VALUES(0,?,?,?,?) "
-                "ON DUPLICATE KEY UPDATE symbol=symbol",
-                (str(item["symbol"]).upper(), str(item["period"]).upper(), json.dumps(cfg, ensure_ascii=False), now),
-            )
-        for item in stored.get("setup_profiles") or []:
-            if not isinstance(item, dict) or not item.get("symbol") or not item.get("period") or not item.get("setup_type"):
-                continue
-            cfg = {k: v for k, v in item.items() if k not in {"symbol", "period", "setup_type"}}
-            storage.execute(
-                "INSERT INTO structure_setup_configs(user_id,symbol,period,setup_type,config_json,updated_at) VALUES(0,?,?,?,?,?) "
-                "ON DUPLICATE KEY UPDATE setup_type=setup_type",
-                (str(item["symbol"]).upper(), str(item["period"]).upper(), str(item["setup_type"]).lower(), json.dumps(cfg, ensure_ascii=False), now),
-            )
+    def clean_group(value):
+        if isinstance(value, dict):
+            return {str(k): clean_group(v) for k, v in value.items()
+                    if isinstance(v, (dict, list, str, int, float, bool))}
+        return value
+
+    def public_payload(cfg):
+        result = {k: cfg.get(k) for k in allowed if k in cfg}
+        result.update({key: clean_group(cfg[key]) for key in grouped_keys if isinstance(cfg.get(key), dict)})
+        if isinstance(cfg.get(setup_default_key), dict):
+            result[setup_default_key] = clean_group(cfg[setup_default_key])
+        return result
 
     def read_normalized(storage):
         default = storage.fetchone("SELECT * FROM structure_default_configs WHERE user_id=0 AND status='active'") or {}
@@ -91,59 +70,6 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             return value if isinstance(value, dict) else {}
         return default, profiles, setups, decode
 
-    def migrate_zone_public_defaults(storage, row, decoded):
-        """Tighten untouched legacy public zone defaults once.
-
-        Existing administrators may have deliberately tuned these values, so
-        only the original built-in tuple is migrated.  Symbol/period/setup
-        rows are never changed; they continue to override the public layer.
-        """
-        if not row or not isinstance(decoded, dict):
-            return decoded
-        tightened = {
-            "zone_bin_atr": 0.35, "zone_min_close_ratio": 0.15,
-            "zone_min_visits": 4, "zone_min_consecutive_bars": 30,
-            "zone_consecutive_gap_bars": 0, "zone_leave_atr": 0.7,
-            "zone_max_width_atr": 1.2, "pressure_touch_atr": 0.3,
-            "pressure_min_rejections": 4,
-            "pressure_min_displacement_atr": 1.0,
-            "pressure_min_efficiency": 0.6, "pivot_zone_merge_atr": 0.35,
-            "pivot_zone_min_points": 3, "pivot_zone_target_count": 6,
-        }
-        legacy_tuples = (
-            {"zone_bin_atr": 0.5, "zone_min_close_ratio": 0.20, "zone_min_visits": 3,
-             "zone_leave_atr": 0.5, "zone_max_width_atr": 2.0, "pressure_touch_atr": 0.35,
-             "pressure_min_rejections": 3, "pressure_min_displacement_atr": 0.8,
-             "pressure_min_efficiency": 0.55, "pivot_zone_merge_atr": 0.45},
-            {"zone_bin_atr": 0.4, "zone_min_close_ratio": 0.25, "zone_min_visits": 4,
-             "zone_leave_atr": 0.7, "zone_max_width_atr": 1.5, "pressure_touch_atr": 0.3,
-             "pressure_min_rejections": 4, "pressure_min_displacement_atr": 1.0,
-             "pressure_min_efficiency": 0.6, "pivot_zone_merge_atr": 0.35},
-        )
-        def same(a, b):
-            try: return abs(float(a) - float(b)) < 1e-9
-            except (TypeError, ValueError): return a == b
-        if not any(all(key in decoded and same(decoded[key], value) for key, value in old.items()) for old in legacy_tuples):
-            # The previous public default used four Pivot points.  This is a
-            # deliberate global default change (not a symbol-specific tuning),
-            # so migrate that untouched value to the new minimum of three.
-            if same(decoded.get("pivot_zone_min_points"), 4):
-                updated = {**decoded, "pivot_zone_min_points": 3}
-                storage.execute(
-                    "UPDATE structure_default_configs SET config_json=?,version=version+1,updated_at=? "
-                    "WHERE user_id=0 AND status='active' AND version=?",
-                    (json.dumps(updated, ensure_ascii=False), int(time.time()), int(row.get("version") or 0)),
-                )
-                return updated
-            return decoded
-        updated = {**decoded, **tightened}
-        storage.execute(
-            "UPDATE structure_default_configs SET config_json=?,version=version+1,updated_at=? "
-            "WHERE user_id=0 AND status='active' AND version=?",
-            (json.dumps(updated, ensure_ascii=False), int(time.time()), int(row.get("version") or 0)),
-        )
-        return updated
-
     def persist_normalized(storage, cfg, profiles, setup_profiles, reason="手工保存结构分析配置"):
         now = int(time.time())
         old_default, old_profiles, old_setups, decode = read_normalized(storage)
@@ -152,7 +78,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         storage.execute(
             "INSERT INTO structure_default_configs(user_id,version,config_json,updated_by,updated_at) VALUES(0,?,?,0,?) "
             "ON DUPLICATE KEY UPDATE version=version+1,config_json=VALUES(config_json),updated_at=VALUES(updated_at)",
-            (default_version, json.dumps({k: cfg.get(k) for k in allowed if k in cfg} | ({setup_default_key: cfg.get(setup_default_key, {})} if isinstance(cfg.get(setup_default_key), dict) else {}), ensure_ascii=False), now),
+            (default_version, json.dumps(public_payload(cfg), ensure_ascii=False), now),
         )
         old_p = {(str(x.get('symbol')).upper(), str(x.get('period')).upper()): x for x in old_profiles}
         active_profiles = set()
@@ -188,7 +114,7 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             )
         storage.execute(
             "INSERT INTO structure_config_change_logs(user_id,scope,before_json,after_json,source,reason,created_at) VALUES(0,'default',?,?, 'manual', ?, ?) ",
-            (json.dumps(old_default_json, ensure_ascii=False), json.dumps({k: cfg.get(k) for k in allowed if k in cfg} | ({setup_default_key: cfg.get(setup_default_key, {})} if isinstance(cfg.get(setup_default_key), dict) else {}), ensure_ascii=False), reason, now),
+            (json.dumps(old_default_json, ensure_ascii=False), json.dumps(public_payload(cfg), ensure_ascii=False), reason, now),
         )
 
     def as_bool(value, default=False):
@@ -205,27 +131,16 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
     @router.get("/admin/market-structure/config", dependencies=[Depends(require_admin)])
     async def get_config(user: AuthUser = Depends(require_admin)):
         storage = get_storage()
-        items = RuntimeStateRepository(0, 0).list_entities("market_structure_config")
-        legacy = items[-1] if items and isinstance(items[-1], dict) else {}
-        # Old installations kept the complete configuration in runtime state.
-        # Materialize it once, then always read the normalized MySQL tables so
-        # the UI sees exactly what the save endpoint persisted.
-        migrate_legacy_config(storage, legacy)
         default_row, profile_rows, setup_rows, decode = read_normalized(storage)
         normalized_default = decode(default_row)
-        normalized_default = migrate_zone_public_defaults(storage, default_row, normalized_default)
         config = {**allowed, **normalized_default}
-        if not normalized_default:
-            config = {**allowed, **{k: v for k, v in legacy.items() if k in allowed}}
         if not isinstance(config.get(setup_default_key), dict):
-            config[setup_default_key] = legacy.get(setup_default_key, {}) if isinstance(legacy.get(setup_default_key), dict) else {}
+            config[setup_default_key] = {}
 
         profiles = []
         for row in profile_rows:
             item = {"symbol": row.get("symbol"), "period": row.get("period"), **decode(row)}
             profiles.append(item)
-        if not profiles and isinstance(legacy.get("profiles"), list):
-            profiles = legacy.get("profiles", [])
 
         setup_profiles = []
         for row in setup_rows:
@@ -236,11 +151,9 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
                 **decode(row),
             }
             setup_profiles.append(item)
-        if not setup_profiles and isinstance(legacy.get("setup_profiles"), list):
-            setup_profiles = legacy.get("setup_profiles", [])
         return {
             "status": "ok",
-            "config": {k: v for k, v in config.items() if k in allowed or k == setup_default_key},
+            "config": public_payload(config),
             "profiles": profiles,
             "setup_profiles": setup_profiles,
         }
@@ -334,13 +247,6 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         reason = f"删除 {symbol} · {period} 品种/周期及全部 SETUP 专项配置，恢复公共默认"
         persist_normalized(storage, cfg, profiles, setup_profiles, reason)
 
-        # Keep the legacy runtime snapshot aligned for older readers during the
-        # migration period; normalized MySQL tables remain the source of truth.
-        runtime = RuntimeStateRepository(0, 0)
-        runtime_cfg = {k: v for k, v in cfg.items() if k in allowed or k == setup_default_key}
-        runtime_cfg["profiles"] = profiles
-        runtime_cfg["setup_profiles"] = setup_profiles
-        runtime.upsert_entity("market_structure_config", "default", runtime_cfg, status="active")
         return {"status": "ok", "symbol": symbol, "period": period, "deleted": True,
                 "message": f"{symbol} · {period} 专项配置已删除，已恢复公共默认"}
 
@@ -393,7 +299,8 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             types; otherwise a value saved from the editor can compare unequal
             to the resolver's value (for example ``"2"`` vs ``2``).
             """
-            result = {}
+            result = {key: clean_group(item[key]) for key in grouped_keys
+                      if isinstance(item.get(key), dict)}
             for key in allowed:
                 if key in list_keys and key in item:
                     value = item.get(key)
@@ -460,6 +367,9 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
                                     else max(0.0, value))
                 except (TypeError, ValueError):
                     pass
+        for key in grouped_keys:
+            if isinstance(payload.get(key), dict):
+                cfg[key] = clean_group(payload[key])
         if not isinstance(cfg.get(setup_default_key), dict):
             cfg[setup_default_key] = {}
         profiles = [x for x in (normalize(item) for item in (payload.get("profiles") or []) if isinstance(item, dict)) if x]
@@ -473,9 +383,8 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             if normalized and any(k not in {"symbol", "period", "setup_type"} for k in normalized):
                 setup_profiles.append(normalized)
         cfg["profiles"] = profiles; cfg["setup_profiles"] = setup_profiles
-        RuntimeStateRepository(0, 0).upsert_entity("market_structure_config", "default", cfg, status="active")
         persist_normalized(get_storage(), cfg, profiles, setup_profiles, str(payload.get("reason") or "手工保存结构分析配置"))
-        return {"status": "ok", "config": {k: v for k, v in cfg.items() if k in allowed or k == setup_default_key}, "profiles": profiles, "setup_profiles": setup_profiles}
+        return {"status": "ok", "config": public_payload(cfg), "profiles": profiles, "setup_profiles": setup_profiles}
 
     @router.post("/admin/market-structure/optimize-setups", dependencies=[Depends(require_admin)])
     async def optimize_setups(payload: Dict | None = None, user: AuthUser = Depends(require_admin)):
@@ -497,8 +406,10 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
             return {"status": "failed", "reason": "时间范围无效：开始时间必须早于结束时间，且范围不超过365天"}
         days = max(1, round((end - start) / 86400, 2))
         storage = get_storage()
-        stored_items = RuntimeStateRepository(0, 0).list_entities("market_structure_config")
-        stored_config = stored_items[-1] if stored_items and isinstance(stored_items[-1], dict) else {}
+        default_row, profile_rows, setup_rows, decode = read_normalized(storage)
+        stored_config = decode(default_row)
+        stored_config["profiles"] = [{"symbol": x.get("symbol"), "period": x.get("period"), **decode(x)} for x in profile_rows]
+        stored_config["setup_profiles"] = [{"symbol": x.get("symbol"), "period": x.get("period"), "setup_type": x.get("setup_type"), **decode(x)} for x in setup_rows]
         existing_setup = {(str(item.get("symbol") or "").upper(), str(item.get("period") or "").upper(), str(item.get("setup_type") or "").lower()): item
                         for item in (stored_config.get("setup_profiles") or []) if isinstance(item, dict)}
         rows = storage.fetchall(
@@ -714,8 +625,10 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
         # otherwise selecting one setup would implicitly apply its whitelist.
         applied = False
         if bool(payload.get("apply")):
-            current = RuntimeStateRepository(0, 0).list_entities("market_structure_config")
-            stored = current[-1] if current and isinstance(current[-1], dict) else {}
+            default_row, profile_rows, setup_rows, decode = read_normalized(storage)
+            stored = decode(default_row)
+            stored["profiles"] = [{"symbol": x.get("symbol"), "period": x.get("period"), **decode(x)} for x in profile_rows]
+            stored["setup_profiles"] = [{"symbol": x.get("symbol"), "period": x.get("period"), "setup_type": x.get("setup_type"), **decode(x)} for x in setup_rows]
             existing = [item for item in (stored.get("setup_profiles") or []) if isinstance(item, dict)]
             index = {(str(item.get("symbol")).upper(), str(item.get("period")).upper(), str(item.get("setup_type")).lower()): item for item in existing}
             for item in proposals:
@@ -732,12 +645,6 @@ def create_market_structure_config_routes(market_defaults: Dict, plan_defaults: 
                 profile_index[key] = {**profile_index.get(key, {}), **item}
             cfg["profiles"] = list(profile_index.values())
             cfg["setup_profiles"] = merged
-            RuntimeStateRepository(0, 0).upsert_entity("market_structure_config", "default", cfg, status="active")
-            # Keep the direct API apply path consistent with the normal save
-            # path.  Without this write, a caller that applies the preview
-            # outside the UI would only update the legacy runtime snapshot and
-            # the normalized MySQL tables could immediately win on the next
-            # reload.
             persist_normalized(storage, cfg, list(profile_index.values()), merged,
                                reason="应用结构配置历史优化建议")
             applied = True

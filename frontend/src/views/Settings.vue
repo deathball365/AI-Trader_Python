@@ -155,6 +155,16 @@
               <span class="text-caption text-medium-emphasis">{{ structureConfigSourceLabel }}</span>
             </div>
             <v-divider class="my-5" />
+            <v-card variant="outlined" class="mb-4"><v-card-text>
+              <div class="text-subtitle-2 mb-2">结构状态模型（运行时自动计算）</div>
+              <div class="text-caption text-medium-emphasis mb-3">配置页只调整识别阈值和事件确认条件；<code>phase</code>、<code>event</code> 不手工填写。运行页会分别展示 Internal、Swing、External 的状态，并由 Swing/External 汇总出主结构。</div>
+              <v-row dense>
+                <v-col cols="12" md="4"><strong>Internal</strong><div class="text-caption">短线 Pivot 与局部形态，主要用于入场确认和回撤失效。</div></v-col>
+                <v-col cols="12" md="4"><strong>Swing</strong><div class="text-caption">中级别结构，决定趋势/箱体的主要方向和 BOS、CHOCH。</div></v-col>
+                <v-col cols="12" md="4"><strong>External</strong><div class="text-caption">大级别背景，用作方向过滤和突破质量约束。</div></v-col>
+              </v-row>
+              <div class="text-caption mt-3">每个层级都会识别 pattern（trend、range、triangle 等）；pattern 决定可用的 phase/event，event 满足后才允许对应 SETUP 执行。</div>
+            </v-card-text></v-card>
             <div class="llm-section-head compact"><div><h3>{{ structureConfigScope === 'default' ? '公共默认参数' : '品种/周期专属参数' }}</h3><p>规则引擎用于 Pivot、趋势线、箱体和突破确认。下拉框切换配置范围，所有参数都在这里编辑；未覆盖的字段自动继承公共默认值。</p></div><div class="d-flex ga-2 flex-wrap"><v-btn variant="tonal" color="secondary" :disabled="structureEngineSaving" @click="openSaveAsStructureProfile">另存为品种/周期配置</v-btn><v-btn color="primary" :loading="structureEngineSaving" @click="saveStructureEngineConfig">{{ structureConfigScope === 'default' ? '保存公共默认参数' : '保存当前品种/周期参数' }}</v-btn></div></div>
             <v-alert v-if="structureConfigScope !== 'default'" type="warning" variant="tonal" density="compact" class="mt-3">
               <strong>{{ structureConfigSourceLabel }}</strong><br />
@@ -162,7 +172,6 @@
               <v-chip v-for="field in structureOverrideFields" :key="field" size="x-small" color="warning" class="mx-1 mt-1">{{ field }}</v-chip>
               <span v-if="!structureOverrideFields.length">暂无专属字段，当前全部继承公共默认值。</span>
             </v-alert>
-            <v-card variant="tonal" class="mb-4 mt-3"><v-card-text><div class="text-subtitle-2 mb-1">允许交易 SETUP</div><div class="text-caption text-medium-emphasis mb-2">默认全部选中。品种/周期配置可以单独调整；未保存专项覆盖时继承公共默认。</div><v-select :class="structureFieldClass('allowed_setups')" v-model="structureEngineConfig.allowed_setups" :items="structureSetupTypes" item-title="label" item-value="value" multiple chips closable-chips label="选择允许自动生成交易计划的 SETUP" hint="这里只控制结构计划是否允许交易，不影响结构识别和第三层 SETUP 专属参数。" persistent-hint density="compact" variant="outlined" /></v-card-text></v-card>
             <v-row class="mt-2">
               <v-col cols="12"><div class="structure-zone-heading"><div class="text-subtitle-2">一、市场结构识别 · 三层 Pivot</div><div class="text-caption text-medium-emphasis">识别 Internal、Swing、External 高低点和结构段；这里只决定“看见什么结构”，不决定是否下单。</div></div></v-col>
               <v-col cols="12" sm="6" md="3"><v-text-field :class="structureFieldClass('pivot_legs')" v-model.number="structureEngineConfig.pivot_legs" type="number" min="2" max="12" label="小级别 Pivot 腿数" hint="左右各观察几根K线" persistent-hint density="compact" variant="outlined" /></v-col>
@@ -1606,6 +1615,17 @@ export default {
     const llmWorkspaceTab = ref('providers')
     const structureEngineConfig = ref({ allowed_setups: [], pivot_legs: 3, medium_pivot_legs: 8, large_pivot_legs: 25, min_reversal_atr: 0.5, break_buffer_atr: 0.1, break_confirm_bars: 2, retest_bars: 2, displacement_atr: 0.8, range_touch_tolerance: 0.003, range_touch_atr: 0.45, range_min_touches: 2, range_min_inside_ratio: 0.65, range_min_bars: 24, range_max_atr: 8, min_segment_bars: 12, trendline_touch_atr: 0.5, trendline_min_touches: 2, trendline_min_bars: 18, trend_min_direction_ratio: 0.62, trend_relaxed_direction_ratio: 0.55, trend_min_efficiency: 0.30, trend_min_net_change_atr: 1.5, trend_push_decay_ratio: 0.75, trend_mature_pullback_ratio: 0.45, trend_weakening_pullback_ratio: 0.618, trend_require_healthy_phase: true, trend_mature_retest_only: true, trend_normal_stop_atr: 2.5, trend_retest_stop_atr: 4, trend_max_stop_atr: 6, choch_max_stop_atr: 3, entry_zone_atr: 0.35, stop_buffer_atr: 0.25, min_real_risk_reward: 1.2, trend_min_real_risk_reward: 0.5, location_reclaim_min_body_atr: 0.3, location_reclaim_min_close_extension_atr: 0.1, location_require_swing_external_alignment: true, location_require_internal_confirmation: true, min_breakout_displacement_atr: 0.6, trend_max_event_age_bars_m1: 5, trend_max_event_age_bars_other: 3, trend_continuation_hold_bars: 2, breakout_target_atr: 3, breakout_retest_valid_bars: 6, triangle_breakout_min_body_atr: 0.5, triangle_breakout_min_close_extension_atr: 0.1, triangle_breakout_require_swing_external_alignment: true, enable_triangle_prebreakout: true, require_location_reclaim: true, event_risk_enabled: true, event_risk_rules: [], event_risk_min_importance: 3, event_risk_calendar_before_minutes: 30, event_risk_calendar_after_minutes: 45, event_risk_major_before_minutes: 45, event_risk_resume_confirmation_bars: 1, enable_zone_pressure: true, zone_pressure_enabled: true, zone_lookback_bars: 80, zone_bin_atr: 0.35, zone_width_mode: 'auto', zone_bin_atr_min: 0.20, zone_bin_atr_max: 0.80, zone_target_count: 3, zone_min_close_ratio: 0.15, zone_min_visits: 4, zone_min_consecutive_bars: 30, zone_consecutive_gap_bars: 0, zone_leave_atr: 0.7, zone_max_width_atr: 1.2, zone_identity_match_atr: 0.75, zone_identity_max_gap_bars: 2, pressure_touch_atr: 0.3, pressure_min_rejections: 4, pressure_reclaim_ratio: 0.5, pressure_min_displacement_atr: 1.0, pressure_min_efficiency: 0.6, pivot_zone_enabled: true, pivot_zone_merge_atr: 0.35, pivot_zone_min_points: 3, pivot_zone_target_count: 6, pressure_plan_valid_bars: 6, pressure_breakout_target_multiple: 2, pressure_min_event_confidence: 65 })
     const structureGlobalConfig = ref({ ...structureEngineConfig.value })
+    // Density/pressure was removed from the structure model.  Strip those
+    // names when loading a freshly cleared database so stale rows can never
+    // leak back into the editor or into a new save payload.
+    const removedStructureFields = ['enable_zone_pressure', 'zone_pressure_enabled', 'zone_lookback_bars', 'zone_bin_atr', 'zone_width_mode', 'zone_bin_atr_min', 'zone_bin_atr_max', 'zone_target_count', 'zone_min_close_ratio', 'zone_min_visits', 'zone_min_consecutive_bars', 'zone_consecutive_gap_bars', 'zone_leave_atr', 'zone_max_width_atr', 'zone_identity_match_atr', 'zone_identity_max_gap_bars', 'pressure_touch_atr', 'pressure_min_rejections', 'pressure_reclaim_ratio', 'pressure_min_displacement_atr', 'pressure_min_efficiency', 'pivot_zone_enabled', 'pivot_zone_merge_atr', 'pivot_zone_min_points', 'pivot_zone_target_count', 'pressure_plan_valid_bars', 'pressure_breakout_target_multiple', 'pressure_min_event_confidence']
+    const stripRemovedStructureFields = value => {
+      const cleaned = { ...(value || {}) }
+      removedStructureFields.forEach(key => { delete cleaned[key] })
+      return cleaned
+    }
+    structureEngineConfig.value = stripRemovedStructureFields(structureEngineConfig.value)
+    structureGlobalConfig.value = stripRemovedStructureFields(structureGlobalConfig.value)
     const structureEngineSaving = ref(false)
     const structureProfiles = ref([])
     const structureProfileDraft = ref({ symbol: '', period: 'M5' })
@@ -1727,8 +1747,6 @@ export default {
       trend_min_efficiency: '趋势最小方向效率',
       trend_min_net_change_atr: '趋势最小净位移 ATR',
       trend_continuation_hold_bars: '趋势延续保持 K 线数',
-      zone_min_consecutive_bars: '连续聚集最少 K 线',
-      zone_consecutive_gap_bars: '连续聚集允许间隔',
       target_multiple: '目标倍数',
       enable_range_boundary: '启用箱体边界计划',
       enable_range_breakout: '启用箱体突破计划',
@@ -1747,12 +1765,12 @@ export default {
     // Optimization previews can contain booleans, arrays, or null values;
     // keep the conflict table readable instead of exposing raw JSON values.
     const formatOptimizationValue = value => formatStructureValue(value)
-    const structureSetupProfileDraft = ref({ symbol: '', period: 'M5', setup_type: 'structure_location_pullback', enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '', confirmation_bars: null, min_displacement_atr: null, min_body_atr: null, require_reclaim: null, min_real_risk_reward: null, entry_zone_atr: null, stop_buffer_atr: null, target_buffer_atr: null, pressure_min_rejections: null, pressure_min_displacement_atr: null, pressure_min_efficiency: null, target_multiple: null, max_entries_per_opportunity: null, cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null, invalidate_on_zone_return: null, false_breakout_require_reclaim_close: null, false_breakout_confirmation_bars: null, false_breakout_min_reclaim_atr: null })
+    const structureSetupProfileDraft = ref({ symbol: '', period: 'M5', setup_type: 'structure_location_pullback', enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '', confirmation_bars: null, min_displacement_atr: null, min_body_atr: null, require_reclaim: null, min_real_risk_reward: null, entry_zone_atr: null, stop_buffer_atr: null, target_buffer_atr: null, target_multiple: null, max_entries_per_opportunity: null, cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null, invalidate_on_zone_return: null, false_breakout_require_reclaim_close: null, false_breakout_confirmation_bars: null, false_breakout_min_reclaim_atr: null })
     const setupTypeNames = { structure_location_pullback: '结构位置回撤', range_lower_reversal: '箱体下沿反转', range_upper_reversal: '箱体上沿反转', range_breakout: '箱体突破', range_false_breakout: '箱体假突破', triangle_breakout: '三角形突破', triangle_breakout_watch: '三角形突破观察', triangle_prebreakout_pullback: '三角形提前回撤', choch_reversal: 'CHOCH反转', liquidity_sweep_reclaim: '流动性扫单回收', trend_continuation: '趋势延续', structure_reversal: '结构反转' }
     const setupTypeLabel = type => setupTypeNames[type] || type
     const structureSetupTypes = Object.keys(setupTypeNames).map(value => ({ value, label: setupTypeNames[value] }))
-    const setupFieldKeys = ['enabled', 'allowed_directions', 'entry_mode', 'confirmation_bars', 'min_displacement_atr', 'min_body_atr', 'require_reclaim', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'target_buffer_atr', 'pressure_min_rejections', 'pressure_min_displacement_atr', 'pressure_min_efficiency', 'target_multiple', 'max_entries_per_opportunity', 'cooldown_minutes', 'require_retest', 'retest_tolerance_atr', 'invalidate_on_zone_return', 'false_breakout_require_reclaim_close', 'false_breakout_confirmation_bars', 'false_breakout_min_reclaim_atr', 'max_plan_lifetime_bars']
-    const setupFieldLabels = { enabled: '允许交易', allowed_directions: '允许方向', entry_mode: '入场方式', confirmation_bars: '确认 K 线数', min_displacement_atr: '最小位移 ATR', min_body_atr: '突破实体 ATR', require_reclaim: '要求回收', min_real_risk_reward: '最低盈亏比', entry_zone_atr: '入场 ATR', stop_buffer_atr: '止损 ATR', target_buffer_atr: '止盈 ATR', pressure_min_rejections: '密集区拒绝次数', pressure_min_displacement_atr: '密集区最小位移 ATR', pressure_min_efficiency: '密集区最小效率', target_multiple: '目标倍数', max_entries_per_opportunity: '机会最大入场次数', cooldown_minutes: '冷却分钟', require_retest: '要求回踩', retest_tolerance_atr: '回踩容差 ATR', invalidate_on_zone_return: '回到区域即失效', false_breakout_require_reclaim_close: '假突破要求收盘回收', false_breakout_confirmation_bars: '假突破确认 K 线数', false_breakout_min_reclaim_atr: '假突破最小回收 ATR', max_plan_lifetime_bars: '最大计划 K 线数' }
+    const setupFieldKeys = ['enabled', 'allowed_directions', 'entry_mode', 'confirmation_bars', 'min_displacement_atr', 'min_body_atr', 'require_reclaim', 'min_real_risk_reward', 'entry_zone_atr', 'stop_buffer_atr', 'target_buffer_atr', 'target_multiple', 'max_entries_per_opportunity', 'cooldown_minutes', 'require_retest', 'retest_tolerance_atr', 'invalidate_on_zone_return', 'false_breakout_require_reclaim_close', 'false_breakout_confirmation_bars', 'false_breakout_min_reclaim_atr', 'max_plan_lifetime_bars']
+    const setupFieldLabels = { enabled: '允许交易', allowed_directions: '允许方向', entry_mode: '入场方式', confirmation_bars: '确认 K 线数', min_displacement_atr: '最小位移 ATR', min_body_atr: '突破实体 ATR', require_reclaim: '要求回收', min_real_risk_reward: '最低盈亏比', entry_zone_atr: '入场 ATR', stop_buffer_atr: '止损 ATR', target_buffer_atr: '止盈 ATR', target_multiple: '目标倍数', max_entries_per_opportunity: '机会最大入场次数', cooldown_minutes: '冷却分钟', require_retest: '要求回踩', retest_tolerance_atr: '回踩容差 ATR', invalidate_on_zone_return: '回到区域即失效', false_breakout_require_reclaim_close: '假突破要求收盘回收', false_breakout_confirmation_bars: '假突破确认 K 线数', false_breakout_min_reclaim_atr: '假突破最小回收 ATR', max_plan_lifetime_bars: '最大计划 K 线数' }
     // The API may return an older/incomplete setup_defaults row.  Keep the
     // editor aligned with the runtime resolver by filling every setup field
     // from the same conservative public defaults before applying saved
@@ -1762,8 +1780,7 @@ export default {
       enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '',
       confirmation_bars: 1, min_displacement_atr: 0, min_body_atr: 0, require_reclaim: false,
       min_real_risk_reward: 1.2, entry_zone_atr: 0.35, stop_buffer_atr: 0.25,
-      target_buffer_atr: 0.1, pressure_min_rejections: 3,
-      pressure_min_displacement_atr: 0.8, pressure_min_efficiency: 0.55,
+      target_buffer_atr: 0.1,
       target_multiple: 2, max_entries_per_opportunity: 1, cooldown_minutes: 0,
       require_retest: true, retest_tolerance_atr: 0.35,
       invalidate_on_zone_return: true,
@@ -2268,7 +2285,7 @@ export default {
         for (const item of structureSetupTypes) {
           if (!structureSetupDefaults.value[item.value]) structureSetupDefaults.value[item.value] = { enabled: true, allowed_directions: ['buy', 'sell'] }
         }
-        structureGlobalConfig.value = { ...structureGlobalConfig.value, ...structureConfig }
+        structureGlobalConfig.value = stripRemovedStructureFields({ ...structureGlobalConfig.value, ...structureConfig })
         structureEngineConfig.value = { ...structureGlobalConfig.value }
         structureProfiles.value = (Array.isArray(data.profiles) ? data.profiles : []).map(profile => ({ ...profile, allowed_setups: normalizeSetupValues(profile.allowed_setups) }))
         structureSetupProfiles.value = (Array.isArray(data.setup_profiles) ? data.setup_profiles : []).map(item => ({ ...item, allowed_directions: normalizeSetupValues(item.allowed_directions) }))
@@ -2301,7 +2318,7 @@ export default {
             structureSetupDefaults.value[item.value] = { enabled: true, allowed_directions: ['buy', 'sell'] }
           }
         }
-        structureEngineConfig.value = { ...structureEngineConfig.value, ...structureConfig }
+        structureEngineConfig.value = stripRemovedStructureFields({ ...structureEngineConfig.value, ...structureConfig })
         structureEngineConfig.value.allowed_setups = effectiveAllowedSetups(structureEngineConfig.value.allowed_setups)
         structureGlobalConfig.value = { ...structureEngineConfig.value }
         structureProfiles.value = (Array.isArray(engineData.profiles) ? engineData.profiles : [])
@@ -2340,13 +2357,13 @@ export default {
           const savedConfig = data.config || {}
           const { setup_defaults: savedSetupDefaults, ...savedStructureConfig } = savedConfig
           if (savedSetupDefaults && typeof savedSetupDefaults === 'object') structureSetupDefaults.value = { ...structureSetupDefaults.value, ...savedSetupDefaults }
-          structureEngineConfig.value = { ...structureEngineConfig.value, ...savedStructureConfig }
+          structureEngineConfig.value = stripRemovedStructureFields({ ...structureEngineConfig.value, ...savedStructureConfig })
           structureGlobalConfig.value = { ...structureEngineConfig.value }
         } else {
           const [symbol, period] = structureConfigScope.value.split('::')
           const savedProfile = structureProfiles.value.find(x => x.symbol === symbol && x.period === period)
           structureEngineConfig.value = savedProfile
-            ? { ...structureGlobalConfig.value, ...savedProfile }
+            ? { ...structureGlobalConfig.value, ...stripRemovedStructureFields(savedProfile) }
             : { ...structureEngineConfig.value }
         }
         // Use the normalized response as the source of truth after every save.
@@ -2384,7 +2401,7 @@ export default {
       const [symbol, period] = structureConfigScope.value.split('::')
       const profile = structureProfiles.value.find(x => x.symbol === symbol && x.period === period)
       structureEngineConfig.value = profile
-        ? { ...structureGlobalConfig.value, ...profile, allowed_setups: effectiveAllowedSetups(profile.allowed_setups, structureGlobalConfig.value.allowed_setups) }
+        ? { ...structureGlobalConfig.value, ...stripRemovedStructureFields(profile), allowed_setups: effectiveAllowedSetups(profile.allowed_setups, structureGlobalConfig.value.allowed_setups) }
         : { ...structureGlobalConfig.value }
       structureProfileDraft.value = {
         ...structureProfileDraft.value,
@@ -2415,7 +2432,7 @@ export default {
         period: item.period,
       }
       structureConfigScope.value = `${item.symbol}::${item.period}`
-      structureEngineConfig.value = { ...structureGlobalConfig.value, ...item }
+      structureEngineConfig.value = stripRemovedStructureFields({ ...structureGlobalConfig.value, ...item })
       saveAsStructureProfileOpen.value = false
       await saveStructureEngineConfig()
       await loadStructureOverview()
@@ -2456,8 +2473,7 @@ export default {
       enabled: true, allowed_directions: ['buy', 'sell'], entry_mode: '',
       confirmation_bars: null, min_displacement_atr: null, min_body_atr: null, require_reclaim: null,
       min_real_risk_reward: null, entry_zone_atr: null, stop_buffer_atr: null,
-      target_buffer_atr: null, pressure_min_rejections: null,
-      pressure_min_displacement_atr: null, pressure_min_efficiency: null,
+      target_buffer_atr: null,
       target_multiple: null, max_entries_per_opportunity: null,
       cooldown_minutes: null, require_retest: null, retest_tolerance_atr: null,
       invalidate_on_zone_return: null,
