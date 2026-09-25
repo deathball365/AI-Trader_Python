@@ -558,6 +558,50 @@ def _local_patterns(rows: List[Dict], box: Optional[Dict], trendlines: List[Dict
     return patterns
 
 
+def _scope_pattern(rows: List[Dict], pivots: List[Dict], atr: float,
+                   config: Dict, bias: str) -> Dict:
+    """Classify geometry independently for one hierarchy scope.
+
+    Direction (``bias``) comes from that scope's pivot state machine.  The
+    pattern is geometric: a range/triangle is only reported when its own
+    boundary and inside-ratio checks pass; otherwise a directional scope is a
+    trend and an unresolved scope is neutral.
+    """
+    box = _range(rows, pivots, atr, config)
+    if box:
+        pattern = {
+            "range": "range",
+            "triangle": "triangle",
+            "ascending_triangle": "ascending_triangle",
+            "descending_triangle": "descending_triangle",
+            "broadening": "broadening",
+        }.get(str(box.get("pattern") or ""), str(box.get("pattern") or "range"))
+        status = str(box.get("status") or "candidate")
+        phase = "breakout_confirmed" if status == "breakout_confirmed" else (
+            "mature" if bool(box.get("active")) else "forming"
+        )
+        return {"pattern": pattern, "phase": phase, "detail": box}
+    if bias in {"up", "down"}:
+        return {"pattern": "trend", "phase": "continuation", "detail": {}}
+    return {"pattern": "none", "phase": "forming", "detail": {}}
+
+
+def _primary_structure(swing: Dict, external: Dict) -> str:
+    """Summarize the main structure from Swing plus external context."""
+    swing_bias = str(swing.get("bias") or "undetermined")
+    external_bias = str(external.get("bias") or "undetermined")
+    swing_pattern = str(swing.get("pattern") or "none")
+    if swing_bias == "up":
+        return "trend_up"
+    if swing_bias == "down":
+        return "trend_down"
+    if swing_pattern == "range":
+        return "range"
+    if external_bias in {"up", "down"}:
+        return "transition"
+    return "transition"
+
+
 def _trend_regime(
     trendlines: List[Dict], levels: Dict[str, List[Dict]], atr: float,
     config: Dict, box: Optional[Dict],
@@ -927,6 +971,20 @@ def analyze(symbol: str, period: str, rows: List[Dict], config: Dict = None) -> 
         {"internal": internal_state, "swing": major_state, "external": external_state},
         {"internal": internal_events, "swing": major_events, "external": external_events},
     )
+    for name, pivot_key, state, events in (
+        ("internal", "small", internal_state, internal_events),
+        ("swing", "medium", major_state, major_events),
+        ("external", "large", external_state, external_events),
+    ):
+        geometry = _scope_pattern(rows, levels[pivot_key], atr, cfg, state)
+        last_event = events[-1] if events else None
+        hierarchy[name].update({
+            "pattern": geometry["pattern"],
+            "pattern_phase": geometry["phase"],
+            "pattern_detail": geometry["detail"],
+            "event": last_event,
+        })
+    primary_structure = _primary_structure(hierarchy["swing"], hierarchy["external"])
     local_patterns = _local_patterns(rows, box, trendlines)
     trend_phase, trend_phase_evidence = _trend_health(
         rows, levels["medium"], major_state, atr, cfg,
@@ -965,6 +1023,7 @@ def analyze(symbol: str, period: str, rows: List[Dict], config: Dict = None) -> 
             "external_events": external_events,
             "candidates": major_candidates + external_candidates[-5:] + internal_candidates[-10:], "segments": segments[-5:],
             "structure_hierarchy": hierarchy, "local_patterns": local_patterns,
+            "primary_structure": primary_structure,
             "active_segment": active_segment,
             "structure_segment_id": segment_id,
             "structure_revision": structure_revision,

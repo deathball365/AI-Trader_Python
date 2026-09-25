@@ -1013,6 +1013,7 @@ class StructurePlanBuilder:
         snapshot = {
             "bar_time": bar_time, "atr": atr,
             "major_state": structure.get("major_state"),
+            "primary_structure": structure.get("primary_structure") or "transition",
             "internal_state": structure.get("internal_state"),
             "external_state": structure.get("external_state"),
             "trend_phase": structure.get("trend_phase", "undetermined"),

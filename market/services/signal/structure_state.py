@@ -86,19 +86,28 @@ def derive_structure_state(
     source = structure or {}
     box = source.get("range") or {}
     major = str(source.get("major_state") or "undetermined").lower()
+    primary = str(source.get("primary_structure") or "").lower()
     local = _local_pattern(box)
     latest = dict(event or _latest_event(source))
     event_type = str(latest.get("type") or "none").lower()
     if event_type == "zone_breakout_confirmed":
         event_type = "breakout"
-    if major == "up":
-        primary = "trend_up"
+    if primary in {"trend_up", "trend_down", "range", "transition"}:
+        primary_value = primary
+    elif major == "up":
+        primary_value = "trend_up"
     elif major == "down":
-        primary = "trend_down"
+        primary_value = "trend_down"
     elif local == "range":
+        primary_value = "range"
+    else:
+        primary_value = "transition"
+    if primary_value == "trend_up":
+        primary = "trend_up"
+    elif primary_value == "trend_down":
+        primary = "trend_down"
+    elif primary_value == "range":
         primary = "range"
-    elif local == "triangle":
-        primary = "transition"
     else:
         primary = "transition"
     if event_type == "none" and str(box.get("status") or "").lower() == "breakout_confirmed":
